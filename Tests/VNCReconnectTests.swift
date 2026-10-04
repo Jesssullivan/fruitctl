@@ -14,6 +14,13 @@ private final class RecordedEvents {
     var values: [String] { lock.lock(); defer { lock.unlock() }; return events }
 }
 
+private final class ManualTime {
+    private let lock = NSLock()
+    private var value: UInt64 = 1_000_000_000
+    func now() -> UInt64 { lock.lock(); defer { lock.unlock() }; return value }
+    func advance(_ nanoseconds: UInt64) { lock.lock(); value += nanoseconds; lock.unlock() }
+}
+
 private final class ManualScheduler {
     struct Job { let queue: DispatchQueue; let delay: TimeInterval; let work: DispatchWorkItem }
     private let lock = NSLock()
@@ -54,6 +61,8 @@ private final class FakeNative {
     private var buffersReleased = 0
     private var duplicateBufferReleases = 0
     private var allocationRequests: [Int] = []
+    private var fullUpdateRequests = 0
+    private var incrementalUpdateRequests = 0
     var allocateBeforeFailure = false
     // Existing lifecycle cases model a complete initial update during init.
     // First-frame cases turn this off and deliver the actual callback later.
@@ -61,6 +70,7 @@ private final class FakeNative {
     var beforeInitialize: (() -> Void)?
     var afterFramebufferAllocation: (() -> Void)?
     var beforePoll: ((VNCClientOperations.Client) -> Void)?
+    var beforeFullUpdate: ((VNCClientOperations.Client) -> Bool)?
 
     init(outcomes: [Bool] = [true], polls: [Bool] = [false]) {
         self.outcomes = outcomes; self.polls = polls
@@ -72,6 +82,8 @@ private final class FakeNative {
     var observedTimeouts: [(UInt32, UInt32)] { lock.lock(); defer { lock.unlock() }; return timeouts }
     var observedPollIntervals: [UInt32] { lock.lock(); defer { lock.unlock() }; return pollIntervals }
     var observedAllocationRequests: [Int] { lock.lock(); defer { lock.unlock() }; return allocationRequests }
+    var observedFullUpdates: Int { lock.lock(); defer { lock.unlock() }; return fullUpdateRequests }
+    var observedIncrementalUpdates: Int { lock.lock(); defer { lock.unlock() }; return incrementalUpdateRequests }
     var bufferCounts: (allocated: Int, released: Int, live: Int, duplicate: Int) {
         lock.lock(); defer { lock.unlock() }
         return (buffersAllocated, buffersReleased, buffers.count, duplicateBufferReleases)
@@ -124,7 +136,12 @@ private final class FakeNative {
             lock.lock(); defer { lock.unlock() }
             pollIntervals.append(interval)
             return polls.isEmpty ? true : polls.removeFirst()
-        }, incrementalUpdate: { _ in }, allocateFramebuffer: { [self] size in
+        }, incrementalUpdate: { [self] _ in
+            lock.lock(); incrementalUpdateRequests += 1; lock.unlock()
+        }, fullUpdate: { [self] client in
+            lock.lock(); fullUpdateRequests += 1; lock.unlock()
+            return beforeFullUpdate?(client) ?? true
+        }, allocateFramebuffer: { [self] size in
             lock.lock(); allocationRequests.append(size); lock.unlock()
             // The owned fixture never allocates a server-sized large buffer,
             // even if a regression incorrectly reaches the allocation seam.
@@ -143,6 +160,73 @@ private final class FakeNative {
 }
 
 final class VNCReconnectTests: XCTestCase {
+    func testStagnantPartialCoverageRecoversOnlyAfterFullFrameRequest() async throws {
+        let native = FakeNative(polls: [true, true, true])
+        native.completeDuringInitialize = false
+        let scheduler = ManualScheduler(), time = ManualTime()
+        let bridge = VNCBridge(operations: native.operations, schedule: scheduler.schedule,
+                               monotonicNanoseconds: time.now)
+        try await bridge.connect()
+        XCTAssertEqual(native.observedFullUpdates, 1)
+        XCTAssertNil(bridge.withFramebuffer { buffer, _, _ in buffer.count })
+        native.beforePoll = { client in
+            vncGotFrameBufferUpdate(client, 0, 0, 2, 1)
+            vncFinishedFrameBufferUpdate(client)
+        }
+        time.advance(500_000_000); scheduler.runNext()
+        XCTAssertEqual(bridge.framebufferDiagnostics.pixelsRemaining, 2)
+        XCTAssertEqual(native.observedFullUpdates, 1)
+        XCTAssertNil(bridge.withFramebuffer { buffer, _, _ in buffer.count })
+        native.beforeFullUpdate = { [weak bridge] client in
+            XCTAssertNil(bridge?.withFramebuffer { buffer, _, _ in buffer.count })
+            completePixelUpdate(client)
+            return true
+        }
+        time.advance(500_000_000); scheduler.runNext()
+        try await bridge.waitForFramebuffer()
+        XCTAssertEqual(native.observedFullUpdates, 2)
+        XCTAssertEqual(native.observedIncrementalUpdates, 0)
+        XCTAssertEqual(bridge.withFramebuffer { buffer, _, _ in buffer.count }, 16)
+        native.beforePoll = nil
+        time.advance(100_000_000); scheduler.runNext()
+        XCTAssertEqual(native.observedFullUpdates, 2)
+        XCTAssertEqual(native.observedIncrementalUpdates, 1)
+        bridge.disconnect(); XCTAssertEqual(bridge.framebufferWidth, 0)
+    }
+
+    func testFailedFullFrameRequestsAreRateBoundedWithoutInventingCoverageOrRenewingDeadline() async throws {
+        let native = FakeNative(polls: []); native.completeDuringInitialize = false
+        native.beforeFullUpdate = { _ in false }
+        let scheduler = ManualScheduler(), deadline = ManualScheduler(), time = ManualTime()
+        let registered = expectation(description: "full-frame retries keep the original reader deadline")
+        deadline.onSchedule = { registered.fulfill() }
+        let bridge = VNCBridge(operations: native.operations, schedule: scheduler.schedule,
+                               scheduleFrameDeadline: deadline.schedule,
+                               monotonicNanoseconds: time.now)
+        try await bridge.connect()
+        let waiting = Task { try await bridge.waitForFramebuffer() }
+        await fulfillment(of: [registered], timeout: 3)
+        for _ in 0..<99 {
+            time.advance(10_000_000); scheduler.runNext()
+        }
+        XCTAssertEqual(native.observedFullUpdates, 1)
+        time.advance(10_000_000); scheduler.runNext()
+        XCTAssertEqual(native.observedFullUpdates, 2)
+        XCTAssertEqual(native.observedIncrementalUpdates, 0)
+        XCTAssertEqual(bridge.framebufferDiagnostics.pixelsRemaining, 4)
+        XCTAssertFalse(bridge.framebufferDiagnostics.complete)
+        XCTAssertNil(bridge.withFramebuffer { buffer, _, _ in buffer.count })
+        XCTAssertEqual(deadline.delays, [5])
+        deadline.runNext()
+        do { try await waiting.value; XCTFail("failed full-frame request admitted an empty frame") }
+        catch VNCError.sendFailed(let reason) {
+            let diagnostic = try timeoutDiagnostics(reason)
+            XCTAssertEqual(diagnostic["pixels_remaining"] as? Int, 4)
+            XCTAssertEqual(diagnostic["complete"] as? Bool, false)
+        } catch { XCTFail("unexpected error") }
+        bridge.disconnect(); XCTAssertEqual(bridge.framebufferWidth, 0)
+    }
+
     private func timeoutDiagnostics(_ reason: String,
                                     file: StaticString = #filePath, line: UInt = #line) throws -> [String: Any] {
         let prefix = "No complete framebuffer update within 5 seconds; diagnostics="
@@ -832,6 +916,7 @@ final class VNCReconnectTests: XCTestCase {
                                scheduleFrameDeadline: deadline.schedule)
         try await bridge.connect(); try await bridge.waitForFramebuffer()
         let original = bridge.framebufferDiagnostics
+        XCTAssertEqual(native.observedFullUpdates, 0)
         XCTAssertTrue(original.complete)
         XCTAssertEqual(original.rectangles, 1)
         native.completeDuringInitialize = false
@@ -839,6 +924,7 @@ final class VNCReconnectTests: XCTestCase {
         do { try await bridge.waitForFramebuffer(); XCTFail("lost connection accepted") }
         catch VNCError.notConnected {} catch { XCTFail("unexpected error") }
         clock.runNext() // successful reconnect, only allocated so far
+        XCTAssertEqual(native.observedFullUpdates, 1)
         XCTAssertTrue(bridge.connectionState.isConnected)
         XCTAssertNil(bridge.withFramebuffer { buffer, _, _ in buffer.count })
         let reconnected = bridge.framebufferDiagnostics
@@ -858,6 +944,7 @@ final class VNCReconnectTests: XCTestCase {
         native.beforePoll = { completePixelUpdate($0) }
         clock.runNext(); try await waiting.value
         XCTAssertEqual(bridge.framebufferDiagnostics.connectionGeneration, reconnected.connectionGeneration)
+        XCTAssertEqual(native.observedFullUpdates, 1)
         XCTAssertEqual(bridge.framebufferDiagnostics.rectangles, 1)
         XCTAssertEqual(bridge.framebufferDiagnostics.finishedUpdates, 1)
         XCTAssertEqual(bridge.framebufferDiagnostics.pixelsRemaining, 0)
@@ -883,6 +970,7 @@ final class VNCReconnectTests: XCTestCase {
         clock.runNext()
         XCTAssertNil(bridge.withFramebuffer { buffer, _, _ in buffer.count })
         let resized = bridge.framebufferDiagnostics
+        XCTAssertEqual(native.observedFullUpdates, 1)
         XCTAssertEqual(resized.allocations, 2)
         XCTAssertEqual(resized.width, 3)
         XCTAssertEqual(resized.height, 3)

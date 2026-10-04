@@ -68,9 +68,12 @@ final class VNCBridge: @unchecked Sendable {
     private let operations: VNCClientOperations
     private let schedule: VNCWorkScheduler
     private let scheduleFrameDeadline: VNCWorkScheduler
+    private let monotonicNanoseconds: () -> UInt64
     private let messageQueue = DispatchQueue(label: "vnc.message-loop", qos: .userInteractive)
     /// Only touched on messageQueue (message loop).
     private var lastUpdateRequestNs: UInt64 = 0
+    private var lastFullUpdateRequestNs: UInt64?
+    private static let incompleteFrameRefreshIntervalNs: UInt64 = 1_000_000_000
     private var reconnectCount = 0
     private let stateStreamStorage = OSAllocatedUnfairLock<AsyncStream<VNCConnectionState>.Continuation?>(initialState: nil)
     private var stateStreamContinuation: AsyncStream<VNCConnectionState>.Continuation? {
@@ -83,11 +86,13 @@ final class VNCBridge: @unchecked Sendable {
     init(config: VNCConfiguration = .init(),
          operations: VNCClientOperations = .native,
          schedule: @escaping VNCWorkScheduler = scheduleVNCWork,
-         scheduleFrameDeadline: @escaping VNCWorkScheduler = scheduleVNCWork) {
+         scheduleFrameDeadline: @escaping VNCWorkScheduler = scheduleVNCWork,
+         monotonicNanoseconds: @escaping () -> UInt64 = { DispatchTime.now().uptimeNanoseconds }) {
         self.config = config
         self.operations = operations
         self.schedule = schedule
         self.scheduleFrameDeadline = scheduleFrameDeadline
+        self.monotonicNanoseconds = monotonicNanoseconds
         messageQueue.setSpecific(key: queueKey, value: 1)
     }
 
@@ -115,6 +120,7 @@ final class VNCBridge: @unchecked Sendable {
     }
 
     private func releaseFramebuffer() {
+        lastFullUpdateRequestNs = nil
         initialFramebufferCoverage = []
         framebufferPixelsRemaining = 0
         copyRectanglePending = false
@@ -416,6 +422,7 @@ final class VNCBridge: @unchecked Sendable {
         }
         reconnectCount = 0
         lastUpdateRequestNs = 0
+        requestMissingFramebufferPixels()
         enqueuePoll(session)
     }
 
@@ -629,12 +636,7 @@ final class VNCBridge: @unchecked Sendable {
                     continuation.resume(throwing: VNCError.notConnected)
                     return
                 }
-                if SendFramebufferUpdateRequest(
-                    client, 0, 0,
-                    Int32(client.pointee.width),
-                    Int32(client.pointee.height),
-                    0
-                ) != 0 {
+                if operations.fullUpdate(client) {
                     continuation.resume()
                 } else {
                     continuation.resume(throwing: VNCError.sendFailed("framebuffer update request"))
@@ -644,6 +646,20 @@ final class VNCBridge: @unchecked Sendable {
     }
 
     // MARK: - Message Loop
+
+    /// Incremental updates may repeat changed regions forever without filling
+    /// an initial/reconnected/resized allocation. Ask for the whole screen,
+    /// at most once a second, until actual complete pixel coverage arrives.
+    /// A request never marks a frame ready or extends a reader's deadline.
+    private func requestMissingFramebufferPixels() {
+        guard !framebufferHasUpdate, framebufferPixelsRemaining > 0,
+              let client = activeClient else { return }
+        let now = monotonicNanoseconds()
+        if let previous = lastFullUpdateRequestNs,
+           now &- previous < Self.incompleteFrameRefreshIntervalNs { return }
+        lastFullUpdateRequestNs = now
+        _ = operations.fullUpdate(client)
+    }
 
     private func enqueuePoll(_ session: UUID) {
         guard wants(session) else { return }
@@ -661,8 +677,10 @@ final class VNCBridge: @unchecked Sendable {
                 return
             }
             guard self.wants(session) else { return }
-            let now = DispatchTime.now().uptimeNanoseconds
-            if now &- self.lastUpdateRequestNs > 50_000_000 {
+            let now = self.monotonicNanoseconds()
+            if !self.framebufferHasUpdate {
+                self.requestMissingFramebufferPixels()
+            } else if now &- self.lastUpdateRequestNs > 50_000_000 {
                 self.frameDiagnostics.withLock { $0.snapshot.phase = .requestingIncrementalUpdate }
                 self.operations.incrementalUpdate(client)
                 self.frameDiagnostics.withLock { $0.snapshot.phase = .idle }
