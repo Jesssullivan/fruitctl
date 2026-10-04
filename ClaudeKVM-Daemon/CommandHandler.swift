@@ -55,19 +55,20 @@ extension ClaudeKVMDaemon {
         let p = req.params
 
         do {
-            // A zeroed allocation is not a screenshot. Wait for the first whole
-            // update of this connection/size, without holding the receive queue.
+            // Screen observations require newly received full pixel coverage,
+            // then encode an owned copy bound to the admitted generation.
+            let capturedFrame: VNCBridge.FrameCapture?
             switch req.method {
             case "screenshot", "cursor_crop", "diff_check", "set_baseline", "detect_elements":
-                try await vnc.waitForFramebuffer()
-            default: break
+                capturedFrame = try await vnc.captureFreshFramebuffer()
+            default: capturedFrame = nil
             }
             switch req.method {
 
             // ── Screen ────────────────────────────────────────
 
             case "screenshot":
-                guard let imageData = vnc.withFramebuffer({ buf, w, h -> Data? in
+                guard let imageData = capturedFrame?.withFramebuffer({ buf, w, h -> Data? in
                     createPNGFromRGBA(buffer: buf, width: w, height: h)
                 }) ?? nil else {
                     throw VNCError.sendFailed("No framebuffer")
@@ -78,7 +79,7 @@ extension ClaudeKVMDaemon {
             case "cursor_crop":
                 let pos = input.cursorPosition
                 let scaledPos = scaling.toScaled(x: pos.x, y: pos.y)
-                guard let imageData = vnc.withFramebuffer({ buf, w, h -> Data? in
+                guard let imageData = capturedFrame?.withFramebuffer({ buf, w, h -> Data? in
                     cropWithCrosshair(buffer: buf, width: w, height: h,
                                       centerX: pos.x, centerY: pos.y, radius: input.timing.cursorCropRadius)
                 }) ?? nil else {
@@ -88,13 +89,13 @@ extension ClaudeKVMDaemon {
                                   x: scaledPos.x, y: scaledPos.y))
 
             case "diff_check":
-                guard let changed = vnc.withFramebuffer({ buf, _, _ -> Bool in
+                guard let changed = capturedFrame?.withFramebuffer({ buf, _, _ -> Bool in
                     diffCheck(buffer: buf)
                 }) else { throw VNCError.sendFailed("No framebuffer") }
                 respond(.success(id: id, detail: "changeDetected: \(changed)"))
 
             case "set_baseline":
-                guard vnc.withFramebuffer({ buf, _, _ in
+                guard capturedFrame?.withFramebuffer({ buf, _, _ in
                     Self.baselineBuffer = Data(buf)
                     return true
                 }) != nil else { throw VNCError.sendFailed("No framebuffer") }
@@ -191,7 +192,7 @@ extension ClaudeKVMDaemon {
             // ── Detection ──────────────────────────────────────
 
             case "detect_elements":
-                guard let elements = vnc.withFramebuffer({ buf, w, h -> [TextElement] in
+                guard let elements = capturedFrame?.withFramebuffer({ buf, w, h -> [TextElement] in
                     detectTextElements(buffer: buf, width: w, height: h, scaling: scaling)
                 }) else { throw VNCError.sendFailed("No framebuffer") }
                 respond(.success(id: id, detail: "\(elements.count) elements",

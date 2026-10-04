@@ -41,6 +41,7 @@ final class VNCBridge: @unchecked Sendable {
     private var copyRectanglePending = false
     private var framebufferHasUpdate = false
     private var ownedFramebuffer: UnsafeMutablePointer<UInt8>?
+    private var ownedFramebufferBytes = 0
     private final class FrameWaiter {
         let id = UUID()
         var continuation: CheckedContinuation<Void, Error>?
@@ -53,6 +54,38 @@ final class VNCBridge: @unchecked Sendable {
         var waiters: [UUID: FrameWaiter] = [:]
     }
     private let frameReadiness = OSAllocatedUnfairLock(initialState: FrameReadiness())
+    /// An owned copy, made on the native queue after fresh admission. Encoding
+    /// it cannot race a later disconnect, reconnect or framebuffer allocation.
+    struct FrameCapture {
+        let pixels: Data
+        let width: Int
+        let height: Int
+        let connectionGeneration: Int
+        let allocation: Int
+        func withFramebuffer<T>(_ body: (UnsafeRawBufferPointer, Int, Int) -> T) -> T {
+            pixels.withUnsafeBytes { body($0, width, height) }
+        }
+    }
+    private final class FreshFrameWaiter {
+        let session: UUID?
+        var continuation: CheckedContinuation<FrameCapture, Error>?
+        var deadline: DispatchWorkItem?
+        var cancelled = false
+        // Remaining fields are touched only on messageQueue.
+        var requestStarted = false
+        var generation = 0
+        var allocation = 0
+        var width = 0
+        var height = 0
+        var bytesPerPixel = 0
+        var byteCount = 0
+        var coverage: [UInt64] = []
+        var pixelsRemaining = 0
+        var copyRectanglePending = false
+        init(session: UUID?) { self.session = session }
+    }
+    // Single flight bounds additional coverage storage to one allocation.
+    private let freshFrameWaiter = OSAllocatedUnfairLock<FreshFrameWaiter?>(initialState: nil)
     private struct FrameDiagnosticsState {
         var snapshot = VNCFramebufferDiagnostics()
         var lastCallbackNs: UInt64?
@@ -120,11 +153,13 @@ final class VNCBridge: @unchecked Sendable {
     }
 
     private func releaseFramebuffer() {
+        refuseFreshCapture(VNCError.sendFailed("Framebuffer allocation changed during fresh capture"))
         lastFullUpdateRequestNs = nil
         initialFramebufferCoverage = []
         framebufferPixelsRemaining = 0
         copyRectanglePending = false
         framebufferHasUpdate = false
+        ownedFramebufferBytes = 0
         if let buffer = ownedFramebuffer {
             ownedFramebuffer = nil
             operations.freeFramebuffer(buffer)
@@ -132,6 +167,7 @@ final class VNCBridge: @unchecked Sendable {
     }
 
     private func cleanupClient() {
+        refuseFreshCapture(VNCError.notConnected)
         clientReady = false
         frameDiagnostics.withLock {
             $0.snapshot.phase = .disconnected
@@ -180,6 +216,7 @@ final class VNCBridge: @unchecked Sendable {
         guard let buffer = operations.allocateFramebuffer(size) else { return 0 }
         memset(buffer, 0, size)
         ownedFramebuffer = buffer
+        ownedFramebufferBytes = size
         native.pointee.frameBuffer = buffer
         initialFramebufferCoverage = Array(repeating: 0, count: (pixels + 63) / 64)
         framebufferPixelsRemaining = pixels
@@ -203,6 +240,7 @@ final class VNCBridge: @unchecked Sendable {
         // copy callback has already propagated validity from its source region.
         if copyRectanglePending {
             copyRectanglePending = false
+            freshFrameWaiter.withLock { $0 }?.copyRectanglePending = false
             frameDiagnostics.withLock { $0.snapshot.skippedCopyRectangles &+= 1 }
             return
         }
@@ -211,6 +249,24 @@ final class VNCBridge: @unchecked Sendable {
               Int64(y) + Int64(height) <= Int64(native.pointee.height) else {
             frameDiagnostics.withLock { $0.snapshot.rejectedRectangles &+= 1 }
             return
+        }
+        if let fresh = currentFreshCapture(for: native) {
+            if fresh.copyRectanglePending { fresh.copyRectanglePending = false }
+            else {
+                for row in Int(y)..<(Int(y) + Int(height)) {
+                    var offset = row * fresh.width + Int(x)
+                    let end = offset + Int(width)
+                    while offset < end {
+                        let word = offset / 64, bit = offset % 64
+                        let count = min(64 - bit, end - offset)
+                        let mask = (UInt64.max >> (64 - count)) << bit
+                        let unseen = mask & ~fresh.coverage[word]
+                        fresh.coverage[word] |= mask
+                        fresh.pixelsRemaining -= unseen.nonzeroBitCount
+                        offset += count
+                    }
+                }
+            }
         }
         guard !framebufferHasUpdate else { return }
         // Track the union, including rectangles split across update messages.
@@ -247,6 +303,8 @@ final class VNCBridge: @unchecked Sendable {
         }
         defer { frameDiagnostics.withLock { $0.snapshot.pixelsRemaining = framebufferPixelsRemaining } }
         copyRectanglePending = true
+        // CopyRect can copy historical pixels. It never supplies fresh pixels.
+        freshFrameWaiter.withLock { $0 }?.copyRectanglePending = true
         let stride = Int(native.pointee.width), rows = Int(native.pointee.height)
         guard let render = nativeCopyRectangle,
               sourceX >= 0, sourceY >= 0, destinationX >= 0, destinationY >= 0,
@@ -259,6 +317,26 @@ final class VNCBridge: @unchecked Sendable {
             return
         }
         render(native, sourceX, sourceY, width, height, destinationX, destinationY)
+        if let fresh = currentFreshCapture(for: native) {
+            // A copy preserves freshness only when its source was received
+            // after this request. Match renderer overlap order, including
+            // invalidating a fresh destination copied from historical pixels.
+            for rowIndex in 0..<Int(height) {
+                let row = destinationY > sourceY ? Int(height) - 1 - rowIndex : rowIndex
+                for columnIndex in 0..<Int(width) {
+                    let column = destinationX > sourceX ? Int(width) - 1 - columnIndex : columnIndex
+                    let source = (Int(sourceY) + row) * stride + Int(sourceX) + column
+                    let destination = (Int(destinationY) + row) * stride + Int(destinationX) + column
+                    let received = fresh.coverage[source / 64] & (UInt64(1) << (source % 64)) != 0
+                    let mask = UInt64(1) << (destination % 64)
+                    let wasReceived = fresh.coverage[destination / 64] & mask != 0
+                    if received != wasReceived {
+                        fresh.coverage[destination / 64] ^= mask
+                        fresh.pixelsRemaining += received ? -1 : 1
+                    }
+                }
+            }
+        }
         guard !framebufferHasUpdate else { return }
         for rowIndex in 0..<Int(height) {
             let row = destinationY > sourceY ? Int(height) - 1 - rowIndex : rowIndex
@@ -287,6 +365,21 @@ final class VNCBridge: @unchecked Sendable {
         frameDiagnostics.withLock {
             $0.snapshot.finishedUpdates &+= 1
             $0.lastCallbackNs = DispatchTime.now().uptimeNanoseconds
+        }
+        if let fresh = currentFreshCapture(for: native),
+           fresh.pixelsRemaining == 0 {
+            let diagnostics = framebufferDiagnostics
+            guard fresh.session == clientSession,
+                  fresh.generation == diagnostics.connectionGeneration,
+                  fresh.allocation == diagnostics.allocations,
+                  fresh.width == Int(native.pointee.width), fresh.height == Int(native.pointee.height) else {
+                finishFreshCapture(fresh, .failure(VNCError.notConnected))
+                return
+            }
+            let capture = FrameCapture(pixels: Data(bytes: native.pointee.frameBuffer!, count: fresh.byteCount),
+                                       width: fresh.width, height: fresh.height,
+                                       connectionGeneration: fresh.generation, allocation: fresh.allocation)
+            finishFreshCapture(fresh, .success(capture))
         }
         guard framebufferPixelsRemaining == 0 else { return }
         framebufferHasUpdate = true
@@ -554,6 +647,101 @@ final class VNCBridge: @unchecked Sendable {
         } onCancel: {
             self.finishFrameWait(waiter, cancelled: true)
         }
+    }
+
+    /// Cached completeness is insufficient for a current screenshot. Register
+    /// the independent deadline before queueing a full request, then require
+    /// newly received pixels and FinishedUpdate on that same allocation.
+    func captureFreshFramebuffer() async throws -> FrameCapture {
+        try Task.checkCancellation()
+        let waiter = FreshFrameWaiter(session: desiredSession.withLock { $0 })
+        return try await withTaskCancellationHandler {
+            let capture = try await withCheckedThrowingContinuation {
+                (continuation: CheckedContinuation<FrameCapture, Error>) in
+                let deadline = DispatchWorkItem { [weak self, weak waiter] in
+                    guard let self, let waiter else { return }
+                    self.finishFreshCapture(waiter, .failure(VNCError.sendFailed(
+                        "No fresh complete framebuffer update within 5 seconds; diagnostics=\(self.framebufferDiagnostics.encoded)")))
+                }
+                let refusal = freshFrameWaiter.withLock { current -> Error? in
+                    if waiter.cancelled { return CancellationError() }
+                    if current != nil { return VNCError.sendFailed("Fresh framebuffer capture already in progress") }
+                    waiter.continuation = continuation
+                    waiter.deadline = deadline
+                    current = waiter
+                    return nil
+                }
+                if let refusal { continuation.resume(throwing: refusal); return }
+                scheduleFrameDeadline(.global(qos: .userInitiated), 5, deadline)
+                messageQueue.async { [self] in
+                    guard freshFrameWaiter.withLock({ $0 === waiter }) else { return }
+                    guard let client = activeClient, waiter.session == clientSession else {
+                        finishFreshCapture(waiter, .failure(VNCError.notConnected)); return
+                    }
+                    let diagnostics = framebufferDiagnostics
+                    let width = Int(client.pointee.width), height = Int(client.pointee.height)
+                    let bpp = Int(client.pointee.format.bitsPerPixel) / 8
+                    let (pixels, pixelOverflow) = width.multipliedReportingOverflow(by: height)
+                    let (bytes, byteOverflow) = pixels.multipliedReportingOverflow(by: bpp)
+                    guard client.pointee.frameBuffer != nil,
+                          client.pointee.frameBuffer == ownedFramebuffer,
+                          width > 0, height > 0, bpp > 0,
+                          diagnostics.width == width, diagnostics.height == height,
+                          !pixelOverflow, !byteOverflow, bytes <= Self.maximumFramebufferBytes,
+                          bytes == ownedFramebufferBytes else {
+                        finishFreshCapture(waiter, .failure(VNCError.sendFailed("Fresh framebuffer allocation is unavailable or invalid"))); return
+                    }
+                    waiter.generation = diagnostics.connectionGeneration
+                    waiter.allocation = diagnostics.allocations
+                    waiter.width = width
+                    waiter.height = height
+                    waiter.bytesPerPixel = bpp
+                    waiter.byteCount = bytes
+                    waiter.pixelsRemaining = pixels
+                    waiter.coverage = Array(repeating: 0, count: (waiter.pixelsRemaining + 63) / 64)
+                    guard operations.fullUpdate(client) else {
+                        finishFreshCapture(waiter, .failure(VNCError.sendFailed("fresh framebuffer update request"))); return
+                    }
+                    waiter.requestStarted = true
+                }
+            }
+            try Task.checkCancellation()
+            return capture
+        } onCancel: {
+            self.finishFreshCapture(waiter, .failure(CancellationError()), cancelled: true)
+        }
+    }
+
+    private func finishFreshCapture(_ waiter: FreshFrameWaiter,
+                                    _ result: Result<FrameCapture, Error>, cancelled: Bool = false) {
+        let continuation = freshFrameWaiter.withLock { current -> CheckedContinuation<FrameCapture, Error>? in
+            if cancelled { waiter.cancelled = true }
+            guard current === waiter else { return nil }
+            current = nil
+            waiter.deadline?.cancel()
+            let continuation = waiter.continuation
+            waiter.continuation = nil
+            return continuation
+        }
+        continuation?.resume(with: result)
+    }
+
+    private func refuseFreshCapture(_ error: Error) {
+        if let waiter = freshFrameWaiter.withLock({ $0 }) { finishFreshCapture(waiter, .failure(error)) }
+    }
+
+    private func currentFreshCapture(for native: UnsafeMutablePointer<rfbClient>) -> FreshFrameWaiter? {
+        guard let fresh = freshFrameWaiter.withLock({ $0 }), fresh.requestStarted else { return nil }
+        let diagnostics = framebufferDiagnostics
+        guard fresh.session == clientSession, fresh.generation == diagnostics.connectionGeneration,
+              fresh.allocation == diagnostics.allocations,
+              fresh.width == Int(native.pointee.width), fresh.height == Int(native.pointee.height),
+              fresh.bytesPerPixel == Int(native.pointee.format.bitsPerPixel) / 8,
+              fresh.byteCount == ownedFramebufferBytes, native.pointee.frameBuffer == ownedFramebuffer else {
+            finishFreshCapture(fresh, .failure(VNCError.sendFailed("Framebuffer allocation changed during fresh capture")))
+            return nil
+        }
+        return fresh
     }
 
     func frameUpdates() -> AsyncStream<Void> {
