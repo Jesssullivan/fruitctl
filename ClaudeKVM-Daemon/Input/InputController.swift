@@ -10,6 +10,7 @@ final class InputController {
     private(set) var heldKeys: [UInt32] = []
     private(set) var heldButtons = false
     private var heldContext: VNCInputContext?
+    let inputPermit: NativeInputPermit
     typealias PointerSender = (Int, Int, Int, VNCInputContext?, Bool) async throws -> Void
     typealias KeySender = (UInt32, Bool, VNCInputContext?, Bool) async throws -> Void
     private let pointerSender: PointerSender
@@ -18,14 +19,18 @@ final class InputController {
 
     init(vnc: VNCBridge, timing: InputTiming = .init(),
          pointerSender: PointerSender? = nil, keySender: KeySender? = nil,
-         sleeper: ((UInt32) async throws -> Void)? = nil) {
+         sleeper: ((UInt32) async throws -> Void)? = nil,
+         inputPermit: NativeInputPermit = NativeInputPermit()) {
         self.vnc = vnc
         self.timing = timing
+        self.inputPermit = inputPermit
         self.pointerSender = pointerSender ?? { x, y, mask, context, release in
-            try await vnc.sendMouseEvent(x: x, y: y, buttonMask: mask, context: context, releaseOnly: release)
+            try await vnc.sendMouseEvent(x: x, y: y, buttonMask: mask, context: context,
+                                        releaseOnly: release, inputPermit: inputPermit)
         }
         self.keySender = keySender ?? { key, down, context, release in
-            try await vnc.sendKeyEvent(key: key, down: down, context: context, releaseOnly: release)
+            try await vnc.sendKeyEvent(key: key, down: down, context: context,
+                                      releaseOnly: release, inputPermit: inputPermit)
         }
         self.sleeper = sleeper ?? { microseconds in
             try await Task.sleep(nanoseconds: UInt64(microseconds) * 1000)
@@ -33,6 +38,11 @@ final class InputController {
     }
 
     var cursorPosition: (x: Int, y: Int) { (cursorX, cursorY) }
+
+    func checkInputAdmission() throws {
+        try Task.checkCancellation()
+        try inputPermit.check(context: context)
+    }
 
     func adoptObservation(_ expected: VNCInputContext, scaling: DisplayScaling) async throws {
         context = nil
@@ -42,19 +52,21 @@ final class InputController {
         let admitted = try await vnc.validateExternalObservation(expected)
         try Task.checkCancellation()
         scaling.updateGeometry(width: admitted.width, height: admitted.height)
+        try inputPermit.qualifyObservation(context: admitted,
+            scaledWidth: scaling.scaledWidth, scaledHeight: scaling.scaledHeight)
         cursorX = min(max(0, cursorX), admitted.width - 1)
         cursorY = min(max(0, cursorY), admitted.height - 1)
         context = admitted
     }
 
     func pause(_ microseconds: UInt32) async throws {
-        try Task.checkCancellation()
+        try checkInputAdmission()
         try await sleeper(microseconds)
-        try Task.checkCancellation()
+        try checkInputAdmission()
     }
 
     func emitPointer(x: Int, y: Int, buttonMask: Int = 0) async throws {
-        try Task.checkCancellation()
+        try checkInputAdmission()
         // A failed write may still have reached the server. Track before send.
         if buttonMask != 0 {
             if heldKeys.isEmpty && !heldButtons { heldContext = context }
@@ -66,7 +78,7 @@ final class InputController {
     }
 
     func emitKey(key: UInt32, down: Bool) async throws {
-        try Task.checkCancellation()
+        try checkInputAdmission()
         if down && !heldKeys.contains(key) {
             if heldKeys.isEmpty && !heldButtons { heldContext = context }
             heldKeys.append(key)

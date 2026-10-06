@@ -2,6 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
+import { randomUUID } from 'node:crypto';
 import { PassThrough, Writable } from 'node:stream';
 import { deflateSync } from 'node:zlib';
 import { createHostHelperExecutor } from '../lib/broker/host-helper.mjs';
@@ -40,7 +41,14 @@ const configuration = () => ({ sshHost: 'configured-target',
 
 function native({ health = {}, run, releaseError, releaseRun, adopt } = {}) {
   return {
-    display: { width: 256, height: 128 }, calls: [], closes: [], releases: [],
+    display: { width: 256, height: 128 }, calls: [], closes: [], releases: [], permitControls: [],
+    async inputPermitControl(method, params) {
+      this.permitControls.push({ method, params });
+      const { lease_remaining_ms, ...binding } = params;
+      return { id: 'native-permit', result: { ...binding, challenge: params.challenge || randomUUID(),
+        native_permit_protocol: 'fruitctl.native-input-permit.v1', input_permit_ms: 1000,
+        maximum_round_trip_ms: 500, native_permit_remaining_ms: 1000 } };
+    },
     async execute(actions, options = {}) {
       this.calls.push(...actions);
       if (actions[0].action === 'health') return [{ id: 'native-health', result: {

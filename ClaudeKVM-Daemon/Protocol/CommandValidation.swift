@@ -87,7 +87,7 @@ extension PCRequest {
     /// The broker owns SCK provenance/mapping qualification; native owns the
     /// exact live VNC allocation and the coordinate transform used for input.
     func externalObservation(scaling: DisplayScaling) throws -> VNCInputContext {
-        guard method == "adopt_observation", let p = params,
+        guard ["adopt_observation", "begin_input_permit", "grant_input_permit"].contains(method), let p = params,
               let width = p.nativeWidth, let height = p.nativeHeight,
               (1...65535).contains(width), (1...65535).contains(height),
               let scaledWidth = p.scaledWidth, let scaledHeight = p.scaledHeight,
@@ -101,5 +101,35 @@ extension PCRequest {
         }
         return VNCInputContext(width: width, height: height,
                                connectionGeneration: generation, allocation: allocation)
+    }
+
+    static let inputPermitMethods: Set<String> = ["begin_input_permit", "grant_input_permit"]
+
+    func inputPermitBinding(scaling: DisplayScaling) throws -> NativeInputPermit.Binding {
+        func token(_ value: String?) -> Bool {
+            guard let value, !value.isEmpty, value.utf8.count <= 256 else { return false }
+            return value.unicodeScalars.allSatisfy {
+                CharacterSet.alphanumerics.contains($0) || "_.:-".unicodeScalars.contains($0)
+            }
+        }
+        guard Self.inputPermitMethods.contains(method), let p = params,
+              token(p.instanceID), token(p.sessionID),
+              let instanceID = p.instanceID, let sessionID = p.sessionID,
+              let displayID = p.displayID, displayID > 0,
+              let displayGeneration = p.displayGeneration, displayGeneration >= 0,
+              let sequence = p.sequence, sequence > 0,
+              let scaledWidth = p.scaledWidth, let scaledHeight = p.scaledHeight else {
+            throw CommandValidationError.invalid("native input permit owner")
+        }
+        if method == "grant_input_permit" {
+            guard let challenge = p.challenge, UUID(uuidString: challenge) != nil,
+                  let remaining = p.leaseRemainingMilliseconds, (1...3_000).contains(remaining) else {
+                throw CommandValidationError.invalid("native input permit challenge")
+            }
+        }
+        return NativeInputPermit.Binding(instanceID: instanceID, sessionID: sessionID,
+            displayID: displayID, displayGeneration: displayGeneration,
+            context: try externalObservation(scaling: scaling),
+            scaledWidth: scaledWidth, scaledHeight: scaledHeight)
     }
 }

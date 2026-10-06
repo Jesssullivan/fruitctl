@@ -810,8 +810,10 @@ final class VNCBridge: @unchecked Sendable {
     }
 
     func sendMouseEvent(x: Int, y: Int, buttonMask: Int = 0,
-                        context: VNCInputContext? = nil, releaseOnly: Bool = false) async throws {
+                        context: VNCInputContext? = nil, releaseOnly: Bool = false,
+                        inputPermit: NativeInputPermit? = nil) async throws {
         try await sendOnNativeQueue(releaseOnly: releaseOnly) { [self] in
+            if !releaseOnly { try inputPermit?.check(context: context) }
             guard let client = activeClient else { throw VNCError.notConnected }
             guard admitsInput(context, releaseOnly: releaseOnly),
                   buttonMask >= 0, buttonMask <= 255, !releaseOnly || buttonMask == 0 else {
@@ -825,6 +827,7 @@ final class VNCBridge: @unchecked Sendable {
                   let nativeX = Int32(exactly: pointerX), let nativeY = Int32(exactly: pointerY) else {
                 throw VNCError.sendFailed("Pointer coordinates outside current framebuffer")
             }
+            if !releaseOnly { try inputPermit?.check(context: context) }
             guard SendPointerEvent(client, nativeX, nativeY, Int32(buttonMask)) != 0 else {
                 throw VNCError.sendFailed("pointer event")
             }
@@ -832,8 +835,10 @@ final class VNCBridge: @unchecked Sendable {
     }
 
     func sendKeyEvent(key: UInt32, down: Bool,
-                      context: VNCInputContext? = nil, releaseOnly: Bool = false) async throws {
+                      context: VNCInputContext? = nil, releaseOnly: Bool = false,
+                      inputPermit: NativeInputPermit? = nil) async throws {
         try await sendOnNativeQueue(releaseOnly: releaseOnly) { [self] in
+            if !releaseOnly { try inputPermit?.check(context: context) }
             guard let client = activeClient else { throw VNCError.notConnected }
             guard admitsInput(context, releaseOnly: releaseOnly), !releaseOnly || !down else {
                 throw VNCError.sendFailed("Observed display changed; take a new screenshot before input")
@@ -845,18 +850,22 @@ final class VNCBridge: @unchecked Sendable {
                 if key == 0xFFE8 { remappedKey = 0xFFEC }
             }
             let rfbDown: rfbBool = down ? -1 : 0
+            if !releaseOnly { try inputPermit?.check(context: context) }
             guard SendKeyEvent(client, remappedKey, rfbDown) != 0 else { throw VNCError.sendFailed("key event") }
         }
     }
 
-    func sendClipboardText(_ text: String, context: VNCInputContext? = nil) async throws {
+    func sendClipboardText(_ text: String, context: VNCInputContext? = nil,
+                           inputPermit: NativeInputPermit? = nil) async throws {
         try await sendOnNativeQueue { [self] in
+            try inputPermit?.check(context: context)
             guard let client = activeClient else { throw VNCError.notConnected }
             guard admitsInput(context, releaseOnly: false), text.utf8.count <= 1_048_576 else {
                 throw VNCError.sendFailed("Clipboard input is unavailable for the observed display")
             }
             var cStr = Array(text.utf8CString)
             let len = Int32(cStr.count - 1)
+            try inputPermit?.check(context: context)
             guard SendClientCutText(client, &cStr, len) != 0 else { throw VNCError.sendFailed("clipboard text") }
         }
     }

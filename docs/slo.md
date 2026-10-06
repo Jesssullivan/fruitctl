@@ -5,6 +5,15 @@ claims of measured attainment. Public support is best effort. Every result
 identifies the release, frontend, controller/target platform, capture mode,
 sample count, and measurement interval.
 
+xoxd-ai's product lead owns the objectives and promotion decisions. The core
+maintainer owns capture, startup, input and process measurements; the Host
+maintainer owns physical indicator, exclusion and Stop evidence. Each receipt
+names its responsible maintainer, and current assignments live in the
+[product delivery project](https://linear.app/tinyland/project/fruitctl-060da6f7dff9).
+The product lead reviews missing evidence and exhausted budgets at the weekly
+planning review. These initial thresholds are engineering targets pending a
+live baseline, not estimates derived from the offline test results.
+
 ## Indicators and budgets
 
 | Indicator | Initial target | Measurement |
@@ -15,7 +24,7 @@ sample count, and measurement interval.
 | Operation lifetime | 30-second operation deadline | Enforce an end-to-end deadline including queue wait and cancellation. Record terminal-response overhead; long-running text/batches require explicit bounded handling rather than silently extending the deadline. |
 | Input ownership | One active input owner per host; stop accepting input within 1 second of revoke/abort | Contention, expiry, cancellation, and disconnect tests against a configured target. This behavior requires qualification. |
 | Process lifecycle | No accumulating owned transport/daemon children after 100 lifecycle cycles | Return to the documented idle process set after connect/disconnect/cancel cycles; record child counts and RSS after warmup and teardown. |
-| Indicator lifecycle | Visible within 1 second of ownership acquisition; visible throughout the owned session; clear within 5 seconds of release/expiry/connection loss | Observe the physical display while recording the control lease and harness capture, including thinking gaps between commands. Applies only to qualified indicator modes. |
+| Indicator lifecycle | Visible within 1 second of the first admitted command; visible throughout the owned session; clear within 5 seconds of release/expiry/connection loss | Observe the physical display while recording the control lease and harness capture, including thinking gaps between commands. Applies only to qualified indicator modes. |
 
 The indicator starts with the first admitted command and persists while that
 client owns the target, including pauses between observations and input.
@@ -25,16 +34,22 @@ helper heartbeat renews its three-second target lease across command boundaries;
 returning a healthy command result does not clear the indicator. Qualification
 must demonstrate both visibility during a thinking gap and cleanup after each
 ownership-ending event.
+Measure the intended 72 BPM pulse on the physical display with a stated timing
+uncertainty and check the exact text; test reduced-motion static indication
+separately. A successful helper heartbeat is readiness evidence, not a
+measurement of the visible pulse.
 
 The five-second clear target assumes a responsive AppKit renderer. A frozen UI
 thread cannot currently promise visual cleanup within that interval; qualify
 and report that failure mode separately. Helper readiness loss must still
-revoke input. The broker checks an absolute one-second input permit and stops
-its owned native executor when renewal fails, but a frozen broker event loop
-cannot schedule that stop. A hard one-second stop under broker suspension is
-not qualified by the current native implementation. Record UI-hang and
-broker-suspension results explicitly rather than turning either into an
-unconditional guarantee.
+revoke input. Helper-backed source now checks an absolute one-second permit
+at the native writer, using its own monotonic challenge and current session /
+display binding. Owned synthetic broker-suspension tests demonstrate expiry
+without a running broker event loop when the native writer remains responsive.
+They do not qualify a real desktop. Held-state neutralization may follow expiry;
+an already blocked native write or suspended native process is outside that
+proof. Record those limits and UI-hang results explicitly. Neither synthetic
+expiry nor successful source checks establish this production SLO.
 
 An eligible capture has valid arguments and an admitted session for a supported
 combination. Preconditions are checked before admission. A network or desktop
@@ -75,6 +90,8 @@ public evidence. Offline results, historical observations, and live receipts
 must be labeled separately.
 
 Publish an initial seven-day baseline and its denominators on October 26.
+If qualification starts too late for seven days of measurements, publish the
+actual interval, pending combinations and a dated baseline reforecast.
 Until a 28-day interval exists, report the available interval without implying
 28-day attainment. The product lead reviews targets after the baseline;
 changes are dated and explain the user impact. Good events divided by eligible

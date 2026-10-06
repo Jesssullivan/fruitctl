@@ -32,7 +32,8 @@ extension InputController {
     /// Paste via VNC clipboard + combo. Always preferred over typeText.
     /// clientCutText → 30ms → cmd+v (macOS) or ctrl+v (other).
     func pasteText(_ text: String) async throws {
-        try await vnc.sendClipboardText(text, context: context)
+        try checkInputAdmission()
+        try await vnc.sendClipboardText(text, context: context, inputPermit: inputPermit)
         try await pause(timing.pasteSettleUs)
         if vnc.isMacOS {
             try await keyCombo("cmd+v")

@@ -66,11 +66,29 @@ runtime experimental. Junie CLI and Junie inside a JetBrains IDE are separate
 qualification surfaces. Generating MCP configuration, passing an offline test,
 or obtaining Apple notarization does not promote an adapter to supported.
 
+## Two delivery goals
+
+| Goal | Deliverable | Acceptance boundary |
+| --- | --- | --- |
+| G1: Production native control | Immutable native controller with fresh observations, current input mapping, bounded cancellation and process cleanup; independently qualified Host indication and capture | Qualify the installed release on each declared controller/target/mode. Host additionally needs simultaneous physical heartbeat/text and complete indicator-free observations, local human Stop, permission and input-mapping evidence. Source tests, signing and notarization cover only their recorded scopes. |
+| G2: Reviewable adoption and delivery | Pinned installers, one canonical skill, generic Home Manager consumption and the canonical public documentation route | Verify clean installation, upgrade, rollback, uninstall and preservation of unrelated configuration. Record reviewed source and immutable runtime identities separately. Tool/skill installation needs no desktop connection; real frontend rendering and the Linux SSH journey require their own receipts. |
+
+Native source lives in `ClaudeKVM-Daemon/` and `FruitctlHost/`; shared control
+and installation live in `lib/broker/` and `lib/install/`. The canonical skill
+is `skills/fruitctl/`, frontend contracts are in `integrations/`, and consumer
+configuration uses `nix/home-manager.nix`. Release schemas and the curated
+[release inventory](site/versions.json) describe artifacts and evidence;
+[public pages](site/README.md) are built from these repository sources.
+Fleet host configuration and activation remain consumer responsibilities.
+
 ## Delivery milestones
 
 Dates are initial forecasts in **America/New_York**. Weekly implementation work
 uses the existing Tuesday-to-Tuesday delivery cadence. Research and
 specification precede implementation; release promotion requires evidence.
+Dates do not establish completed acceptance. Missing evidence keeps the
+affected combination experimental and requires a dated reforecast without
+weakening the qualification criteria.
 
 | Milestone | Forecast | Acceptance |
 | --- | --- | --- |
