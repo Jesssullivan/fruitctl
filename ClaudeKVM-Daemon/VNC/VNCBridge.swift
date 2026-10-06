@@ -46,11 +46,15 @@ final class VNCBridge: @unchecked Sendable {
         var continuation: CheckedContinuation<Void, Error>?
         var cancelled = false
         var deadline: DispatchWorkItem?
+        var expiresAt: UInt64 = 0
     }
     private struct FrameReadiness {
         var available = false
         var complete = false
         var waiters: [UUID: FrameWaiter] = [:]
+        var allocation = UUID()
+        var refreshPending: UUID?
+        var refreshIssued = false
     }
     private let frameReadiness = OSAllocatedUnfairLock(initialState: FrameReadiness())
     private struct FrameDiagnosticsState {
@@ -68,6 +72,8 @@ final class VNCBridge: @unchecked Sendable {
     private let operations: VNCClientOperations
     private let schedule: VNCWorkScheduler
     private let scheduleFrameDeadline: VNCWorkScheduler
+    private let scheduleFrameRefresh: VNCWorkScheduler
+    private let monotonicNow: () -> UInt64
     private let messageQueue = DispatchQueue(label: "vnc.message-loop", qos: .userInteractive)
     /// Only touched on messageQueue (message loop).
     private var lastUpdateRequestNs: UInt64 = 0
@@ -83,11 +89,15 @@ final class VNCBridge: @unchecked Sendable {
     init(config: VNCConfiguration = .init(),
          operations: VNCClientOperations = .native,
          schedule: @escaping VNCWorkScheduler = scheduleVNCWork,
-         scheduleFrameDeadline: @escaping VNCWorkScheduler = scheduleVNCWork) {
+         scheduleFrameDeadline: @escaping VNCWorkScheduler = scheduleVNCWork,
+         scheduleFrameRefresh: @escaping VNCWorkScheduler = scheduleVNCWork,
+         monotonicNow: @escaping () -> UInt64 = { DispatchTime.now().uptimeNanoseconds }) {
         self.config = config
         self.operations = operations
         self.schedule = schedule
         self.scheduleFrameDeadline = scheduleFrameDeadline
+        self.scheduleFrameRefresh = scheduleFrameRefresh
+        self.monotonicNow = monotonicNow
         messageQueue.setSpecific(key: queueKey, value: 1)
     }
 
@@ -170,7 +180,7 @@ final class VNCBridge: @unchecked Sendable {
             state.snapshot.pixelsRemaining = pixels
             state.lastCallbackNs = DispatchTime.now().uptimeNanoseconds
         }
-        publishFrameReadiness(available: activeClient != nil, complete: false)
+        publishFrameReadiness(available: activeClient != nil, complete: false, newAllocation: true)
         guard let buffer = operations.allocateFramebuffer(size) else { return 0 }
         memset(buffer, 0, size)
         ownedFramebuffer = buffer
@@ -470,10 +480,15 @@ final class VNCBridge: @unchecked Sendable {
         }
     }
 
-    private func publishFrameReadiness(available: Bool, complete: Bool) {
+    private func publishFrameReadiness(available: Bool, complete: Bool, newAllocation: Bool = false) {
         let continuations = frameReadiness.withLock { state -> [CheckedContinuation<Void, Error>] in
             state.available = available
             state.complete = complete
+            if newAllocation || !available {
+                state.allocation = UUID()
+                state.refreshPending = nil
+                state.refreshIssued = false
+            }
             guard !available || complete else { return [] }
             let waiting = state.waiters.values.compactMap { waiter -> CheckedContinuation<Void, Error>? in
                 waiter.deadline?.cancel()
@@ -488,6 +503,46 @@ final class VNCBridge: @unchecked Sendable {
             if available { continuation.resume() }
             else { continuation.resume(throwing: VNCError.notConnected) }
         }
+        enqueueIncompleteFrameRefresh()
+    }
+
+    /// A refresh belongs to the current allocation and live capture waiters.
+    /// Registration coalesces duplicates; dispatch runs on the native queue,
+    /// after any decoder call. Never hold the readiness lock across a C call:
+    /// cancellation and the independent deadline must remain able to finish.
+    private func enqueueIncompleteFrameRefresh() {
+        guard config.refreshIncompleteFrame else { return }
+        let now = monotonicNow()
+        let request = frameReadiness.withLock { state -> (UUID, UUID)? in
+            guard state.available, !state.complete, !state.refreshIssued,
+                  state.refreshPending == nil,
+                  state.waiters.values.contains(where: {
+                      !$0.cancelled && $0.continuation != nil && now < $0.expiresAt
+                  }) else { return nil }
+            let id = UUID()
+            state.refreshPending = id
+            return (id, state.allocation)
+        }
+        guard let (id, allocation) = request else { return }
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, let client = self.activeClient,
+                  client.pointee.frameBuffer != nil else { return }
+            let now = self.monotonicNow()
+            let admitted = self.frameReadiness.withLock { state -> Bool in
+                guard state.allocation == allocation, state.refreshPending == id else { return false }
+                state.refreshPending = nil
+                guard state.available, !state.complete, !state.refreshIssued,
+                      state.waiters.values.contains(where: {
+                          !$0.cancelled && $0.continuation != nil && now < $0.expiresAt
+                      }) else { return false }
+                // Dispatch is the cancellation linearization point. A later
+                // cancellation cannot undo bytes already admitted for sending.
+                state.refreshIssued = true
+                return true
+            }
+            if admitted { _ = self.operations.fullUpdate(client) }
+        }
+        scheduleFrameRefresh(messageQueue, 0, work)
     }
 
     private func finishFrameWait(_ waiter: FrameWaiter, cancelled: Bool) {
@@ -537,11 +592,15 @@ final class VNCBridge: @unchecked Sendable {
                     if state.complete { return .success(()) }
                     waiter.continuation = continuation
                     waiter.deadline = deadline
+                    waiter.expiresAt = monotonicNow() &+ 5_000_000_000
                     state.waiters[waiter.id] = waiter
                     return nil
                 }
                 if let immediate { continuation.resume(with: immediate) }
-                else { scheduleFrameDeadline(.global(qos: .userInitiated), 5, deadline) }
+                else {
+                    scheduleFrameDeadline(.global(qos: .userInitiated), 5, deadline)
+                    enqueueIncompleteFrameRefresh()
+                }
             }
             try Task.checkCancellation()
         } onCancel: {
@@ -629,12 +688,7 @@ final class VNCBridge: @unchecked Sendable {
                     continuation.resume(throwing: VNCError.notConnected)
                     return
                 }
-                if SendFramebufferUpdateRequest(
-                    client, 0, 0,
-                    Int32(client.pointee.width),
-                    Int32(client.pointee.height),
-                    0
-                ) != 0 {
+                if operations.fullUpdate(client) {
                     continuation.resume()
                 } else {
                     continuation.resume(throwing: VNCError.sendFailed("framebuffer update request"))

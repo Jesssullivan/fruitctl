@@ -94,4 +94,7 @@ struct VNCConfiguration {
     var reconnectDelay: TimeInterval = 2.0
     var maxReconnectAttempts: Int = 10
     var messageLoopInterval: UInt32 = 500
+    // Opt-in recovery only; completion still requires all pixels and the
+    // finished-update callback within the original capture deadline.
+    var refreshIncompleteFrame: Bool = false
 }

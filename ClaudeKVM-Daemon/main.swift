@@ -183,6 +183,9 @@ struct ClaudeKVMDaemon: AsyncParsableCommand {
     @Flag(name: .long, help: "Disable auto-reconnect on connection loss.")
     var noReconnect: Bool = false
 
+    @Flag(name: .long, help: "Request one full update per incomplete allocation within the original capture deadline.")
+    var refreshIncompleteFrame: Bool = false
+
     // MARK: - General
 
     @Flag(name: [.short, .long], help: "Enable verbose logging to stderr.")
@@ -211,6 +214,7 @@ struct ClaudeKVMDaemon: AsyncParsableCommand {
         if let delay = reconnectDelay { vncConfig.reconnectDelay = delay }
         if let max = maxReconnectAttempts { vncConfig.maxReconnectAttempts = max }
         if noReconnect { vncConfig.autoReconnect = false }
+        vncConfig.refreshIncompleteFrame = refreshIncompleteFrame
 
         let vnc = VNCBridge(config: vncConfig)
         vnc.verbose = verbose

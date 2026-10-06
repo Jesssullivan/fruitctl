@@ -14,6 +14,13 @@ private final class RecordedEvents {
     var values: [String] { lock.lock(); defer { lock.unlock() }; return events }
 }
 
+private final class MonotonicClock {
+    private let lock = NSLock()
+    private var value: UInt64 = 0
+    func now() -> UInt64 { lock.lock(); defer { lock.unlock() }; return value }
+    func advance(_ nanoseconds: UInt64) { lock.lock(); value += nanoseconds; lock.unlock() }
+}
+
 private final class ManualScheduler {
     struct Job { let queue: DispatchQueue; let delay: TimeInterval; let work: DispatchWorkItem }
     private let lock = NSLock()
@@ -54,6 +61,7 @@ private final class FakeNative {
     private var buffersReleased = 0
     private var duplicateBufferReleases = 0
     private var allocationRequests: [Int] = []
+    private var fullUpdateRequests = 0
     var allocateBeforeFailure = false
     // Existing lifecycle cases model a complete initial update during init.
     // First-frame cases turn this off and deliver the actual callback later.
@@ -61,6 +69,7 @@ private final class FakeNative {
     var beforeInitialize: (() -> Void)?
     var afterFramebufferAllocation: (() -> Void)?
     var beforePoll: ((VNCClientOperations.Client) -> Void)?
+    var beforeFullUpdate: ((VNCClientOperations.Client) -> Bool)?
 
     init(outcomes: [Bool] = [true], polls: [Bool] = [false]) {
         self.outcomes = outcomes; self.polls = polls
@@ -72,6 +81,7 @@ private final class FakeNative {
     var observedTimeouts: [(UInt32, UInt32)] { lock.lock(); defer { lock.unlock() }; return timeouts }
     var observedPollIntervals: [UInt32] { lock.lock(); defer { lock.unlock() }; return pollIntervals }
     var observedAllocationRequests: [Int] { lock.lock(); defer { lock.unlock() }; return allocationRequests }
+    var observedFullUpdates: Int { lock.lock(); defer { lock.unlock() }; return fullUpdateRequests }
     var bufferCounts: (allocated: Int, released: Int, live: Int, duplicate: Int) {
         lock.lock(); defer { lock.unlock() }
         return (buffersAllocated, buffersReleased, buffers.count, duplicateBufferReleases)
@@ -124,7 +134,10 @@ private final class FakeNative {
             lock.lock(); defer { lock.unlock() }
             pollIntervals.append(interval)
             return polls.isEmpty ? true : polls.removeFirst()
-        }, incrementalUpdate: { _ in }, allocateFramebuffer: { [self] size in
+        }, incrementalUpdate: { _ in }, fullUpdate: { [self] client in
+            lock.lock(); fullUpdateRequests += 1; lock.unlock()
+            return beforeFullUpdate?(client) ?? true
+        }, allocateFramebuffer: { [self] size in
             lock.lock(); allocationRequests.append(size); lock.unlock()
             // The owned fixture never allocates a server-sized large buffer,
             // even if a regression incorrectly reaches the allocation seam.
@@ -143,6 +156,212 @@ private final class FakeNative {
 }
 
 final class VNCReconnectTests: XCTestCase {
+    func testRefreshIsOptInAndNeverRequestsAnAlreadyCompleteFrame() async throws {
+        for enabled in [false, true] {
+            let native = FakeNative(); native.completeDuringInitialize = enabled
+            let poll = ManualScheduler(), deadline = ManualScheduler(), refresh = ManualScheduler()
+            var config = VNCConfiguration(); config.refreshIncompleteFrame = enabled
+            let bridge = VNCBridge(config: config, operations: native.operations, schedule: poll.schedule,
+                                   scheduleFrameDeadline: deadline.schedule, scheduleFrameRefresh: refresh.schedule)
+            try await bridge.connect()
+            if enabled { try await bridge.waitForFramebuffer() }
+            else {
+                let registered = expectation(description: "default capture deadline")
+                deadline.onSchedule = { registered.fulfill() }
+                let waiting = Task { try await bridge.waitForFramebuffer() }
+                await fulfillment(of: [registered], timeout: 3)
+                deadline.runNext()
+                do { try await waiting.value; XCTFail("incomplete default frame accepted") }
+                catch VNCError.sendFailed {} catch { XCTFail("unexpected error") }
+            }
+            XCTAssertEqual(refresh.delays, [])
+            XCTAssertEqual(native.observedFullUpdates, 0)
+            bridge.disconnect(); XCTAssertEqual(bridge.framebufferWidth, 0)
+        }
+    }
+
+    func testRefreshCoalescesReadersAndPartialResponseCannotCompleteCapture() async throws {
+        let native = FakeNative(polls: [true]); native.completeDuringInitialize = false
+        let poll = ManualScheduler(), deadline = ManualScheduler(), refresh = ManualScheduler()
+        let registered = expectation(description: "two original deadlines"); registered.expectedFulfillmentCount = 2
+        let queued = expectation(description: "one coalesced refresh")
+        deadline.onSchedule = { registered.fulfill() }; refresh.onSchedule = { queued.fulfill() }
+        var config = VNCConfiguration(); config.refreshIncompleteFrame = true
+        let bridge = VNCBridge(config: config, operations: native.operations, schedule: poll.schedule,
+                               scheduleFrameDeadline: deadline.schedule, scheduleFrameRefresh: refresh.schedule)
+        try await bridge.connect()
+        let cancelled = Task { try await bridge.waitForFramebuffer() }
+        let remaining = Task { try await bridge.waitForFramebuffer() }
+        await fulfillment(of: [registered, queued], timeout: 3)
+        XCTAssertEqual(refresh.delays, [0]); XCTAssertEqual(deadline.delays, [5, 5])
+        cancelled.cancel()
+        do { try await cancelled.value; XCTFail("cancelled capture accepted") }
+        catch is CancellationError {} catch { XCTFail("unexpected error") }
+        native.beforeFullUpdate = { client in
+            vncGotFrameBufferUpdate(client, 0, 0, 1, 1)
+            vncFinishedFrameBufferUpdate(client)
+            return true
+        }
+        refresh.runNext()
+        XCTAssertEqual(native.observedFullUpdates, 1)
+        XCTAssertEqual(bridge.framebufferDiagnostics.pixelsRemaining, 3)
+        XCTAssertNil(bridge.withFramebuffer { buffer, _, _ in buffer.count })
+        XCTAssertEqual(deadline.delays, [5, 5])
+        native.beforePoll = { completePixelUpdate($0) }
+        poll.runNext(); try await remaining.value
+        try await bridge.waitForFramebuffer()
+        XCTAssertEqual(native.observedFullUpdates, 1); XCTAssertEqual(refresh.delays, [])
+        bridge.disconnect(); XCTAssertEqual(bridge.framebufferWidth, 0)
+    }
+
+    func testQueuedRefreshDropsCancelledExpiredAndAlreadyCompletedCaptures() async throws {
+        for ending in ["cancelled", "expired", "completed"] {
+            let native = FakeNative(polls: [true]); native.completeDuringInitialize = false
+            let poll = ManualScheduler(), deadline = ManualScheduler(), refresh = ManualScheduler()
+            let clock = MonotonicClock(), queued = expectation(description: "queued refresh \(ending)")
+            refresh.onSchedule = { queued.fulfill() }
+            var config = VNCConfiguration(); config.refreshIncompleteFrame = true
+            let bridge = VNCBridge(config: config, operations: native.operations, schedule: poll.schedule,
+                                   scheduleFrameDeadline: deadline.schedule, scheduleFrameRefresh: refresh.schedule,
+                                   monotonicNow: clock.now)
+            try await bridge.connect()
+            let waiting = Task { try await bridge.waitForFramebuffer() }
+            await fulfillment(of: [queued], timeout: 3)
+            if ending == "cancelled" {
+                waiting.cancel()
+                do { try await waiting.value; XCTFail("cancelled capture accepted") }
+                catch is CancellationError {} catch { XCTFail("unexpected error") }
+            } else if ending == "expired" {
+                // Even a delayed deadline callback cannot admit expired native work.
+                clock.advance(5_000_000_000)
+            } else {
+                native.beforePoll = { completePixelUpdate($0) }
+                poll.runNext(); try await waiting.value
+            }
+            refresh.runNext(); XCTAssertEqual(native.observedFullUpdates, 0)
+            if ending == "expired" {
+                deadline.runNext()
+                do { try await waiting.value; XCTFail("expired capture accepted") }
+                catch VNCError.sendFailed {} catch { XCTFail("unexpected error") }
+            }
+            bridge.disconnect(); XCTAssertEqual(bridge.framebufferWidth, 0)
+        }
+    }
+
+    func testResizeDropsStaleRefreshAndTransfersWaitWithinOriginalDeadline() async throws {
+        let native = FakeNative(polls: [true]); native.completeDuringInitialize = false
+        let poll = ManualScheduler(), deadline = ManualScheduler(), refresh = ManualScheduler()
+        let firstQueued = expectation(description: "first allocation queued")
+        refresh.onSchedule = { firstQueued.fulfill() }
+        var config = VNCConfiguration(); config.refreshIncompleteFrame = true
+        let bridge = VNCBridge(config: config, operations: native.operations, schedule: poll.schedule,
+                               scheduleFrameDeadline: deadline.schedule, scheduleFrameRefresh: refresh.schedule)
+        try await bridge.connect()
+        let waiting = Task { try await bridge.waitForFramebuffer() }
+        await fulfillment(of: [firstQueued], timeout: 3)
+        let resized = expectation(description: "same dimensions new allocation queued")
+        refresh.onSchedule = { resized.fulfill() }
+        native.beforePoll = { client in
+            XCTAssertNotEqual(vncMallocFrameBuffer(client), 0)
+            vncFinishedFrameBufferUpdate(client) // no pixels
+        }
+        poll.runNext(); await fulfillment(of: [resized], timeout: 3)
+        XCTAssertEqual(refresh.delays, [0, 0]); XCTAssertEqual(deadline.delays, [5])
+        refresh.runNext(); XCTAssertEqual(native.observedFullUpdates, 0)
+        native.beforeFullUpdate = { completePixelUpdate($0); return true }
+        refresh.runNext(); try await waiting.value
+        XCTAssertEqual(native.observedFullUpdates, 1)
+        XCTAssertEqual(bridge.framebufferDiagnostics.allocations, 2)
+        bridge.disconnect(); XCTAssertEqual(bridge.framebufferWidth, 0)
+    }
+
+    func testReconnectDropsPriorGenerationRefreshWithoutTouchingNewClient() async throws {
+        let native = FakeNative(outcomes: [true, true]); native.completeDuringInitialize = false
+        let poll = ManualScheduler(), deadline = ManualScheduler(), refresh = ManualScheduler()
+        let firstQueued = expectation(description: "old generation queued")
+        refresh.onSchedule = { firstQueued.fulfill() }
+        var config = VNCConfiguration(); config.refreshIncompleteFrame = true
+        let bridge = VNCBridge(config: config, operations: native.operations, schedule: poll.schedule,
+                               scheduleFrameDeadline: deadline.schedule, scheduleFrameRefresh: refresh.schedule)
+        try await bridge.connect()
+        let old = Task { try await bridge.waitForFramebuffer() }
+        await fulfillment(of: [firstQueued], timeout: 3)
+        bridge.disconnect(); XCTAssertEqual(bridge.framebufferWidth, 0)
+        do { try await old.value; XCTFail("disconnected capture accepted") }
+        catch VNCError.notConnected {} catch { XCTFail("unexpected error") }
+        try await bridge.connect()
+        let nextQueued = expectation(description: "new generation queued")
+        refresh.onSchedule = { nextQueued.fulfill() }
+        let current = Task { try await bridge.waitForFramebuffer() }
+        await fulfillment(of: [nextQueued], timeout: 3)
+        refresh.runNext(); XCTAssertEqual(native.observedFullUpdates, 0)
+        native.beforeFullUpdate = { completePixelUpdate($0); return true }
+        refresh.runNext(); try await current.value
+        XCTAssertEqual(native.observedFullUpdates, 1)
+        bridge.disconnect(); XCTAssertEqual(bridge.framebufferWidth, 0)
+        XCTAssertEqual(native.counts.duplicate, 0)
+    }
+
+    func testFailedRefreshDoesNotRetryOrManufacturePixels() async throws {
+        let native = FakeNative(); native.completeDuringInitialize = false
+        native.beforeFullUpdate = { _ in false }
+        let poll = ManualScheduler(), deadline = ManualScheduler(), refresh = ManualScheduler()
+        let queued = expectation(description: "one failing refresh")
+        refresh.onSchedule = { queued.fulfill() }
+        var config = VNCConfiguration(); config.refreshIncompleteFrame = true
+        let bridge = VNCBridge(config: config, operations: native.operations, schedule: poll.schedule,
+                               scheduleFrameDeadline: deadline.schedule, scheduleFrameRefresh: refresh.schedule)
+        try await bridge.connect()
+        let first = Task { try await bridge.waitForFramebuffer() }
+        await fulfillment(of: [queued], timeout: 3)
+        refresh.runNext(); deadline.runNext()
+        do { try await first.value; XCTFail("failed send admitted frame") }
+        catch VNCError.sendFailed {} catch { XCTFail("unexpected error") }
+        let registered = expectation(description: "later capture keeps own deadline")
+        deadline.onSchedule = { registered.fulfill() }
+        let next = Task { try await bridge.waitForFramebuffer() }
+        await fulfillment(of: [registered], timeout: 3)
+        XCTAssertEqual(refresh.delays, []); XCTAssertEqual(native.observedFullUpdates, 1)
+        XCTAssertFalse(bridge.framebufferDiagnostics.complete)
+        deadline.runNext()
+        do { try await next.value; XCTFail("failed send manufactured pixels") }
+        catch VNCError.sendFailed {} catch { XCTFail("unexpected error") }
+        bridge.disconnect(); XCTAssertEqual(bridge.framebufferWidth, 0)
+    }
+
+    func testRefreshNeverRunsAlongsideOccupiedDecoderAndDropsAfterDeadline() async throws {
+        let native = FakeNative(polls: [true]); native.completeDuringInitialize = false
+        let poll = ManualScheduler(), deadline = ManualScheduler(), refresh = ManualScheduler()
+        let queued = expectation(description: "queued behind decoder")
+        refresh.onSchedule = { queued.fulfill() }
+        var config = VNCConfiguration(); config.refreshIncompleteFrame = true
+        let bridge = VNCBridge(config: config, operations: native.operations, schedule: poll.schedule,
+                               scheduleFrameDeadline: deadline.schedule, scheduleFrameRefresh: refresh.schedule)
+        try await bridge.connect()
+        let waiting = Task { try await bridge.waitForFramebuffer() }
+        await fulfillment(of: [queued], timeout: 3)
+        let entered = expectation(description: "decoder occupied"), finished = expectation(description: "deadline independent")
+        let release = DispatchSemaphore(value: 0)
+        native.beforePoll = { _ in
+            entered.fulfill()
+            XCTAssertEqual(release.wait(timeout: .now() + 5), .success)
+        }
+        let polling = Task.detached { poll.runNext() }
+        await fulfillment(of: [entered], timeout: 3)
+        let ending = Task {
+            defer { finished.fulfill() }
+            do { try await waiting.value; XCTFail("incomplete blocked decoder accepted") }
+            catch VNCError.sendFailed {} catch { XCTFail("unexpected error") }
+        }
+        deadline.runNext()
+        await fulfillment(of: [finished], timeout: 2)
+        XCTAssertEqual(native.observedFullUpdates, 0)
+        release.signal(); await polling.value; await ending.value
+        refresh.runNext(); XCTAssertEqual(native.observedFullUpdates, 0)
+        XCTAssertEqual(deadline.delays, [])
+        bridge.disconnect(); XCTAssertEqual(bridge.framebufferWidth, 0)
+    }
+
     private func timeoutDiagnostics(_ reason: String,
                                     file: StaticString = #filePath, line: UInt = #line) throws -> [String: Any] {
         let prefix = "No complete framebuffer update within 5 seconds; diagnostics="
