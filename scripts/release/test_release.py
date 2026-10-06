@@ -10,9 +10,11 @@ from pathlib import Path
 import tarfile
 import tempfile
 import shutil
+import stat
 import sys
 import zipfile
 import unittest
+import warnings
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -402,6 +404,143 @@ class AppleCertificateTests(unittest.TestCase):
     def test_other_leaf_certificate_is_refused(self):
         with patch.object(apple, "run", self.fake_codesign), self.assertRaisesRegex(ValueError, "leaf certificate"):
             apple.metadata(Path("/reviewed/FruitctlHost.app"), "QP994XQKNH", "0" * 40)
+
+
+class AppleToolArchiveTests(unittest.TestCase):
+    payload = b"signed native executable fixture\x00\xff\n"
+
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.base = Path(self.directory.name).resolve()
+        signed_dir = self.base / "signed"; signed_dir.mkdir()
+        self.binary = signed_dir / "claude-kvm-daemon"
+        self.binary.write_bytes(self.payload); self.binary.chmod(0o755)
+        self.signed = {"schemaVersion": 1, "status": "passed", "kind": "fruitctl-apple-tool-sign",
+                       "appName": self.binary.name, "artifactSha256": hashlib.sha256(self.payload).hexdigest(),
+                       "artifactBytes": len(self.payload), "signature": {"teamIdentifier": "FIXTURE"}}
+        self.sign_receipt = self.base / "sign.json"
+        self.sign_receipt.write_text(json.dumps(self.signed))
+
+    def zip(self, target, entries):
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)  # Deliberate duplicate-member fixture.
+            with zipfile.ZipFile(target, "w") as archive:
+                for name, payload, mode, system in entries:
+                    entry = zipfile.ZipInfo(name); entry.create_system = system; entry.external_attr = mode << 16
+                    archive.writestr(entry, payload)
+
+    def member(self, name=None, payload=None, mode=stat.S_IFREG | 0o755, system=3):
+        return (name or self.binary.name, self.payload if payload is None else payload, mode, system)
+
+    def invoke(self, producer, suffix="fixture", app=None):
+        target = self.base / (suffix + ".zip"); receipt = self.base / (suffix + ".json")
+        calls = []
+        def fake_ditto(command):
+            calls.append(command)
+            self.assertEqual(command[:3], ["ditto", "-c", "-k"])
+            producer(command, Path(command[-1]))
+            return ""
+        argv = ["apple_distribution.py", "archive", "--app", str(app or self.binary),
+                "--sign-receipt", str(self.sign_receipt), "--zip", str(target), "--receipt", str(receipt)]
+        with patch.object(sys, "argv", argv), patch.object(apple.platform, "system", return_value="Darwin"), \
+                patch.object(apple, "metadata", return_value=self.signed["signature"]) as metadata, \
+                patch.object(apple, "run", fake_ditto), patch("builtins.print"):
+            apple.main()
+        metadata.assert_called_once_with(app or self.binary, "FIXTURE", None)
+        return target, receipt, calls
+
+    def modeled_ditto(self, command, target):
+        # Model the two independent observed defaults: --keepParent nests a
+        # bare file, while omitting --norsrc allows an AppleDouble member.
+        name = "signed/" + self.binary.name if "--keepParent" in command else self.binary.name
+        entries = [self.member(name)]
+        if "--norsrc" not in command:
+            entries.append(self.member("__MACOSX/._" + self.binary.name, b"AppleDouble metadata"))
+        self.zip(target, entries)
+
+    def test_tool_archive_uses_bare_file_without_resource_metadata_and_binds_real_zip(self):
+        original = self.binary.read_bytes()
+        target, receipt, calls = self.invoke(self.modeled_ditto)
+        self.assertEqual(calls, [["ditto", "-c", "-k", "--norsrc", self.binary, target]])
+        with zipfile.ZipFile(target) as archive:
+            self.assertEqual(archive.namelist(), [self.binary.name])
+            self.assertEqual(archive.read(self.binary.name), original)
+        result = json.loads(receipt.read_text())
+        self.assertEqual(result["archiveSha256"], hashlib.sha256(target.read_bytes()).hexdigest())
+        self.assertEqual(result["archiveBytes"], target.stat().st_size)
+        self.assertEqual(result["signReceiptSha256"], hashlib.sha256(self.sign_receipt.read_bytes()).hexdigest())
+        self.assertEqual(self.binary.read_bytes(), original)
+        self.assertEqual(stat.S_IMODE(self.binary.stat().st_mode), 0o755)
+
+    def test_app_bundle_retains_keep_parent_command(self):
+        app = self.base / "FruitctlHost.app"
+        (app / "Contents").mkdir(parents=True); (app / "Contents/Info.plist").write_bytes(b"app fixture")
+        self.signed.update(kind="fruitctl-apple-sign", appName=app.name, files=apple.inventory(app))
+        self.sign_receipt.write_text(json.dumps(self.signed))
+        def produce(command, target):
+            self.zip(target, [self.member(app.name + "/Contents/Info.plist", b"app fixture", stat.S_IFREG | 0o644)])
+        target, receipt, calls = self.invoke(produce, app=app)
+        self.assertEqual(calls, [["ditto", "-c", "-k", "--keepParent", app, target]])
+        self.assertEqual(json.loads(receipt.read_text())["archiveSha256"], hashlib.sha256(target.read_bytes()).hexdigest())
+
+    def test_archive_receipt_binds_validated_sign_receipt_despite_producer_replacement(self):
+        original = self.sign_receipt.read_bytes()
+        replacement = dict(self.signed, artifactSha256=hashlib.sha256(b"different signed executable").hexdigest())
+        replacement_data = json.dumps(replacement).encode()
+        def replace_during_ditto(command, target):
+            self.modeled_ditto(command, target)
+            self.sign_receipt.write_bytes(replacement_data)
+        target, receipt, calls = self.invoke(replace_during_ditto)
+        result = json.loads(receipt.read_text())
+        self.assertEqual(self.sign_receipt.read_bytes(), replacement_data)
+        self.assertNotEqual(hashlib.sha256(original).hexdigest(), hashlib.sha256(replacement_data).hexdigest())
+        self.assertEqual(result["signReceiptSha256"], hashlib.sha256(original).hexdigest())
+        self.assertNotEqual(result["signReceiptSha256"], hashlib.sha256(replacement_data).hexdigest())
+        with zipfile.ZipFile(target) as archive:
+            self.assertEqual(hashlib.sha256(archive.read(self.binary.name)).hexdigest(), json.loads(original)["artifactSha256"])
+
+    def test_tool_archive_refuses_parent_appledouble_duplicate_and_extra_members(self):
+        cases = [[self.member("signed/" + self.binary.name)],
+                 [self.member(), self.member("__MACOSX/._" + self.binary.name, b"resource")],
+                 [self.member(), self.member()], [self.member(), self.member("unexpected", b"extra")],
+                 [self.member(), self.member("signed/", b"", stat.S_IFDIR | 0o755)],
+                 [self.member("../" + self.binary.name)], [self.member("/" + self.binary.name)]]
+        for index, entries in enumerate(cases):
+            with self.subTest(entries=[entry[0] for entry in entries]):
+                with self.assertRaisesRegex(ValueError, "only the bare signed filename"):
+                    self.invoke(lambda command, target: self.zip(target, entries), suffix="members" + str(index))
+                self.assertFalse((self.base / ("members" + str(index) + ".json")).exists())
+
+    def test_tool_archive_refuses_same_length_payload_substitution(self):
+        replacement = b"x" * len(self.payload)
+        with self.assertRaisesRegex(ValueError, "payload bytes"):
+            self.invoke(lambda command, target: self.zip(target, [self.member(payload=replacement)]))
+        self.assertFalse((self.base / "fixture.json").exists())
+
+    def test_tool_archive_refuses_payload_length_substitution(self):
+        with self.assertRaisesRegex(ValueError, "payload size"):
+            self.invoke(lambda command, target: self.zip(target, [self.member(payload=self.payload + b"extra")]))
+        self.assertFalse((self.base / "fixture.json").exists())
+
+    def test_tool_archive_refuses_nonregular_or_changed_executable_modes(self):
+        for index, (mode, system) in enumerate([(stat.S_IFLNK | 0o755, 3), (stat.S_IFDIR | 0o755, 3), (0o755, 3),
+                (stat.S_IFREG | 0o644, 3), (stat.S_IFREG | 0o775, 3), (stat.S_IFREG | 0o4755, 3), (stat.S_IFREG | 0o755, 0)]):
+            with self.subTest(mode=oct(mode), system=system):
+                with self.assertRaisesRegex(ValueError, "regular executable mode0755"):
+                    self.invoke(lambda command, target: self.zip(target, [self.member(mode=mode, system=system)]), suffix="mode" + str(index))
+                self.assertFalse((self.base / ("mode" + str(index) + ".json")).exists())
+
+    def test_tool_archive_refuses_unreadable_zip_or_corrupt_payload(self):
+        def corrupt(command, target):
+            self.zip(target, [self.member()])
+            data = bytearray(target.read_bytes())
+            data[30 + len(self.binary.name.encode())] ^= 1  # Stored payload now fails its ZIP CRC.
+            target.write_bytes(data)
+        for name, producer in [("notzip", lambda command, target: target.write_bytes(b"not a ZIP")), ("badcrc", corrupt)]:
+            with self.subTest(name=name), self.assertRaisesRegex(ValueError, "not a readable ZIP"):
+                self.invoke(producer, suffix=name)
+            self.assertFalse((self.base / (name + ".json")).exists())
 
 
 class RuntimeArchiveTests(unittest.TestCase):

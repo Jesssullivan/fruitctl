@@ -2,14 +2,17 @@
 """Explicit Apple signing phases. Never discover credentials, launch an app, or publish."""
 import argparse
 import hashlib
+import io
 import json
 from pathlib import Path
 import platform
 import re
+import stat
 import subprocess
 import sys
 import tempfile
 import time
+import zipfile
 
 
 def require(condition, message):
@@ -38,6 +41,26 @@ def inventory(app):
     return files
 
 
+def tool_archive(path, signed):
+    # Bind the receipt to the same ZIP bytes whose sole payload was checked.
+    data = path.read_bytes()
+    try:
+        with zipfile.ZipFile(io.BytesIO(data)) as archive:
+            entries = archive.infolist()
+            require(len(entries) == 1 and entries[0].filename == signed["appName"],
+                    "native tool archive must contain only the bare signed filename")
+            entry = entries[0]
+            mode = entry.external_attr >> 16
+            require(entry.create_system == 3 and not entry.is_dir() and stat.S_ISREG(mode)
+                    and stat.S_IMODE(mode) == 0o755, "native tool archive must preserve a regular executable mode0755")
+            require(entry.file_size == signed["artifactBytes"], "native tool archive payload size differs from signed receipt")
+            require(hashlib.sha256(archive.read(entry)).hexdigest() == signed["artifactSha256"],
+                    "native tool archive payload bytes differ from signed receipt")
+    except (zipfile.BadZipFile, RuntimeError, NotImplementedError) as error:
+        raise ValueError("native tool archive is not a readable ZIP") from error
+    return {"archiveSha256": hashlib.sha256(data).hexdigest(), "archiveBytes": len(data)}
+
+
 def app_path(value):
     path = Path(value)
     require(path.is_absolute() and path.resolve(strict=True) == path and path.name.endswith(".app")
@@ -46,7 +69,11 @@ def app_path(value):
 
 
 def read_receipt(path, kind):
-    value = json.loads(Path(path).read_text())
+    return parse_receipt(Path(path).read_bytes(), kind)
+
+
+def parse_receipt(data, kind):
+    value = json.loads(data)
     kinds = kind if isinstance(kind, tuple) else (kind,)
     require(value.get("kind") in kinds and value.get("schemaVersion") == 1 and value.get("status") == "passed",
             "a passing receipt from the previous phase is required")
@@ -168,7 +195,8 @@ def main():
                                      "signature": metadata(app, args.team, args.certificate_sha1), "files": inventory(app),
                                      "buildReceiptSha256": digest(Path(args.build_receipt)), "unsignedFiles": original})
     elif args.phase == "archive":
-        signed = read_receipt(args.sign_receipt, ("fruitctl-apple-sign", "fruitctl-apple-tool-sign"))
+        sign_receipt_data = Path(args.sign_receipt).read_bytes()
+        signed = parse_receipt(sign_receipt_data, ("fruitctl-apple-sign", "fruitctl-apple-tool-sign"))
         app = app_path(args.app) if signed["kind"] == "fruitctl-apple-sign" else Path(args.app)
         require(app.name == signed["appName"], "signed artifact name changed")
         if signed["kind"] == "fruitctl-apple-sign":
@@ -178,10 +206,16 @@ def main():
         metadata(app, signed["signature"]["teamIdentifier"], signed["signature"].get("certificateSha1"))
         target = Path(args.zip)
         require(target.is_absolute() and not target.exists() and target.suffix == ".zip", "submission archive must be a new absolute ZIP path")
-        run(["ditto", "-c", "-k", "--keepParent", app, target])
+        if signed["kind"] == "fruitctl-apple-sign":
+            run(["ditto", "-c", "-k", "--keepParent", app, target])
+            archived = {"archiveSha256": digest(target), "archiveBytes": target.stat().st_size}
+        else:
+            # A file needs no parent directory or AppleDouble resource entry.
+            run(["ditto", "-c", "-k", "--norsrc", app, target])
+            archived = tool_archive(target, signed)
         write_receipt(args.receipt, {"kind": "fruitctl-apple-submission-archive", "appName": app.name,
-                                     "signReceiptSha256": digest(Path(args.sign_receipt)),
-                                     "archiveSha256": digest(target), "archiveBytes": target.stat().st_size})
+                                     "signReceiptSha256": hashlib.sha256(sign_receipt_data).hexdigest(),
+                                     **archived})
     elif args.phase == "notarize":
         previous = read_receipt(args.archive_receipt, "fruitctl-apple-submission-archive")
         target = Path(args.zip)
