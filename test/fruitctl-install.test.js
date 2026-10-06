@@ -63,6 +63,78 @@ test('JSONC edits preserve unrelated comments, settings and trailing commas', ()
   assert.throws(() => parseJsonc('{"mcpServers":{},"mcpServers":{}}'), /Duplicate/);
 });
 
+test('JSONC equal entries preserve exact bytes, comments and reordered object keys', () => {
+  const original = `{
+ // retain top comment
+ "mcpServers": {
+  "fruitctl": {
+   /* retain owned comment */ "type": "stdio",
+   "unknown": {"nested": [{"second": null, "first": false}], "label": "keep"},
+   "env": {"SECOND": "two", "FIRST": "one"},
+   "args": ["mcp", "--target", "desktop",],
+   "command": "/fruitctl",
+  },
+  "other": {"command":"operator"},
+ },
+ "editor": {"unknown": [1,2,]},
+}\n`;
+  const expected = { command: '/fruitctl', args: ['mcp', '--target', 'desktop'],
+    env: { FIRST: 'one', SECOND: 'two' }, unknown: { label: 'keep', nested: [{ first: false, second: null }] }, type: 'stdio' };
+  assert.equal(Object.getPrototypeOf(jsonEntry(original, ['mcpServers'])), null);
+  assert.equal(patchJsonEntry(original, ['mcpServers'], expected), original);
+});
+
+test('JSONC real changes apply while array order and array/object types stay distinct', () => {
+  const original = '{\n // retain outside\n "mcpServers":{"fruitctl":{"command":"/old","args":["mcp","desktop"],"state":{}}},\n "unknown":{"keep":true}\n}\n';
+  for (const value of [
+    { command: '/new', args: ['mcp', 'desktop'], state: {} },
+    { command: '/old', args: ['desktop', 'mcp'], state: {} },
+    { command: '/old', args: ['mcp', 'desktop'], state: [] },
+    { command: '/old', args: ['mcp', 'desktop'], state: { added: null } },
+  ]) {
+    const modified = patchJsonEntry(original, ['mcpServers'], value);
+    assert.notEqual(modified, original);
+    assert.deepEqual(JSON.parse(JSON.stringify(jsonEntry(modified, ['mcpServers']))), value);
+    assert.match(modified, /\/\/ retain outside/);
+    assert.match(modified, /"unknown":\{"keep":true\}/);
+    assert.equal(patchJsonEntry(modified, ['mcpServers'], value), modified);
+  }
+  const array = '{"mcpServers":{"fruitctl":[]}}\n';
+  assert.deepEqual(JSON.parse(JSON.stringify(jsonEntry(patchJsonEntry(array, ['mcpServers'], {}), ['mcpServers']))), {});
+});
+
+test('Claude repeat installs preserve config bytes and existing runtime links in both scopes', async t => {
+  for (const scope of ['user', 'project']) await t.test(scope, async t => {
+    const f = { ...await fixture(t), scope }, v1 = await releaseFixture(f);
+    const adapter = resolveAdapter(f);
+    const original = '{\n "mcpServers":{"other":{"command":"operator"}},\n "unknown":{"values":[1,2]}\n}\n';
+    await fs.writeFile(adapter.configPath, original);
+    const first = await install({ ...f, offline: v1.offline });
+    const snapshot = async () => ({ config: await fs.readFile(first.configPath, 'utf8'),
+      launcher: await fs.readlink(first.launcherPath), skill: await fs.readlink(first.skillPath),
+      nodeInode: (await fs.stat(path.join(first.prefix, 'bin/node'))).ino });
+    const before = await snapshot();
+    assert.equal((await install({ ...f, offline: v1.offline })).status, 'installed');
+    assert.deepEqual(await snapshot(), before);
+    const entry = jsonEntry(before.config, ['mcpServers']);
+    const reordered = Object.entries(entry).reverse().map(([key, value]) => `${JSON.stringify(key)}: ${JSON.stringify(value)}`).join(',\n      ');
+    const formatted = `{\n "mcpServers": {\n  "other": {"command":"operator"},\n  "fruitctl": {\n      ${reordered}\n  }\n },\n "unknown":{"values":[1,2]}\n}\n`;
+    await fs.writeFile(first.configPath, formatted);
+    const reformatted = await snapshot();
+    await install({ ...f, offline: v1.offline });
+    assert.deepEqual(await snapshot(), reformatted);
+    assert.equal((await doctor(f)).status, 'configured');
+    const v2 = await releaseFixture(f, 'v0.1.0-alpha.2');
+    const upgraded = await install({ ...f, version: v2.manifest.version, offline: v2.offline });
+    const changed = await fs.readFile(first.configPath, 'utf8');
+    assert.notEqual(changed, formatted);
+    assert.equal(jsonEntry(changed, ['mcpServers']).command, path.join(upgraded.prefix, 'bin/fruitctl'));
+    assert.match(changed, /"other": \{"command":"operator"\}/);
+    assert.match(changed, /"unknown":\{"values":\[1,2\]\}/);
+    assert.equal((await doctor(f)).status, 'configured');
+  });
+});
+
 test('verified install, upgrade, doctor, rollback and uninstall preserve unrelated edits', async t => {
   const f = { ...await fixture(t), agent: 'vscode' }, v1 = await releaseFixture(f);
   const configPath = path.join(f.projectDir, '.mcp.json');
