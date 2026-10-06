@@ -52,10 +52,21 @@ on the task's first execute request and renews it every 500 milliseconds across
 requests and agent thinking gaps. It ends activity on explicit task release,
 completion, failure, disconnect, or the broker's 60-second ownership expiry.
 Input requires a current ready acknowledgement and independently
-qualified mapping. Loss of the helper, acknowledgement, or input permit stops
-the native executor. These implementation checks require runtime qualification;
-the broker's 60-second ownership lease alone does not prove that the human
-indicator is active.
+qualified mapping. The helper-backed source additionally binds each permit to
+the native controller's own challenge, monotonic deadline, helper session, and
+current display/framebuffer generation. The native writer checks that permit
+before admitting each VNC input event, independently of broker scheduling.
+Renewal controls bypass the action queue; expired required permits cannot be
+revived by a later acknowledgement or image. Controllers without this private
+capability refuse helper-backed input. Loss of the helper, acknowledgement, or
+permit retires the executor; uncertain input is never replayed.
+
+Owned synthetic tests cover a responsive native writer while its broker
+producer is suspended. They do not qualify a real target, input mapping, or
+physical indicator. Neutralizing held-key/button releases may follow expiry;
+an already blocked native write or a suspended native process remains outside
+the responsive-writer timing proof. The broker's 60-second ownership lease
+alone does not prove that the human indicator is active.
 
 ## Observation contract
 

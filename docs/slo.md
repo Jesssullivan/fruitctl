@@ -42,12 +42,14 @@ measurement of the visible pulse.
 The five-second clear target assumes a responsive AppKit renderer. A frozen UI
 thread cannot currently promise visual cleanup within that interval; qualify
 and report that failure mode separately. Helper readiness loss must still
-revoke input. The broker checks an absolute one-second input permit and stops
-its owned native executor when renewal fails, but a frozen broker event loop
-cannot schedule that stop. A hard one-second stop under broker suspension is
-not qualified by the current native implementation. Record UI-hang and
-broker-suspension results explicitly rather than turning either into an
-unconditional guarantee.
+revoke input. Helper-backed source now checks an absolute one-second permit
+at the native writer, using its own monotonic challenge and current session /
+display binding. Owned synthetic broker-suspension tests demonstrate expiry
+without a running broker event loop when the native writer remains responsive.
+They do not qualify a real desktop. Held-state neutralization may follow expiry;
+an already blocked native write or suspended native process is outside that
+proof. Record those limits and UI-hang results explicitly. Neither synthetic
+expiry nor successful source checks establish this production SLO.
 
 An eligible capture has valid arguments and an admitted session for a supported
 combination. Preconditions are checked before admission. A network or desktop
