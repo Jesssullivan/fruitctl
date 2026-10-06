@@ -14,13 +14,22 @@ it does not mean a desktop session or native binary has been qualified.
 
 ## Install a pinned release
 
-Use an exact published tag from the release inventory and an operator-configured
-target profile. The commands below illustrate the interface; the preview package
-version does not assert that downloadable qualified assets exist.
+The immutable [v0.1.0-alpha.1 runtime preview](https://github.com/xoxd-ai/fruitctl/releases/tag/v0.1.0-alpha.1)
+is pinned to source commit `7064d349890a9b18717b62a142452363629681ee`.
+Use an operator-configured target profile. The preview provides the runtime,
+skill and adapters; it requires an existing Darwin native controller and normal
+macOS consent.
+
+The Linux x64 public download and bootstrap passed anonymous HTTPS acceptance
+on Rocky Linux 10.2 using isolated home and project paths containing spaces.
+Codex user and Claude project installation, the bundled Node.js 24.21.0 launcher,
+all runtime file hashes, doctor and uninstall passed. Both uninstalls
+restored unrelated configuration exactly. This evidence covers packaging and
+configuration; each real frontend still needs image, input and lease acceptance.
 
 ```sh
-fruitctl install --agent codex --scope user --version <exact-tag> --target <profile> --dry-run
-fruitctl install --agent codex --scope user --version <exact-tag> --target <profile>
+fruitctl install --agent codex --scope user --version v0.1.0-alpha.1 --target <profile> --dry-run
+fruitctl install --agent codex --scope user --version v0.1.0-alpha.1 --target <profile>
 fruitctl doctor --agent codex --scope user
 fruitctl doctor --json
 fruitctl rollback --agent codex --scope user
@@ -42,18 +51,24 @@ identity, platform and archive checksum again. Missing assets or a missing
 manifest digest fail explicitly. No agent or GUI is launched and no root access
 or package-manager install scripts are needed.
 
-Once an exact source commit and qualified release tag are listed, this block can
-be pasted as one terminal operation. Replace both placeholders first:
+This block pins the published source and runtime preview and can be pasted as
+one terminal operation. Replace `default` with your configured profile:
 
 ```sh
 (
-  FRUITCTL_SOURCE_SHA='<full-source-commit>'
-  FRUITCTL_RELEASE_TAG='<exact-release-tag>'
+  FRUITCTL_SOURCE_SHA='7064d349890a9b18717b62a142452363629681ee'
+  FRUITCTL_RELEASE_TAG='v0.1.0-alpha.1'
   FRUITCTL_SCRIPT=$(mktemp)
   trap 'rm -f "$FRUITCTL_SCRIPT"' EXIT
-  curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' \
+  curl --disable --fail --silent --show-error --location --proto '=https' --proto-redir '=https' \
     "https://raw.githubusercontent.com/xoxd-ai/fruitctl/$FRUITCTL_SOURCE_SHA/scripts/install.sh" \
     -o "$FRUITCTL_SCRIPT" &&
+  FRUITCTL_ACTUAL_SHA=$(if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$FRUITCTL_SCRIPT"
+  else
+    shasum -a 256 "$FRUITCTL_SCRIPT"
+  fi) &&
+  [ "${FRUITCTL_ACTUAL_SHA%% *}" = '6e05a7a62f57491cfbda1f8d9212291f6237f04f4ac396bc04d183b88747cd58' ] &&
   sh "$FRUITCTL_SCRIPT" --agent codex --scope user \
     --version "$FRUITCTL_RELEASE_TAG" --target default
 )

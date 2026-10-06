@@ -6,11 +6,17 @@ appropriate adapter, and qualify the connection. Supply host names and secrets
 through local configuration and the controller's credential provider, not this
 prompt or a checked-in MCP file.
 
-The public docs origin is reserved at `https://fruitctl.clients.xoxd.ai/`.
-Use this repository copy until the origin has a served deployment receipt.
-If no compatible verified Fruitctl release is listed, the installer must stop
-with the missing prerequisite. Do not substitute an unreviewed source build or
-claim the planned one-paste path is already released.
+The [v0.1.0-alpha.1 runtime preview](https://github.com/xoxd-ai/fruitctl/releases/tag/v0.1.0-alpha.1)
+is immutable and source-pinned to
+`7064d349890a9b18717b62a142452363629681ee`. It installs the bundled Node.js 24.21.0
+runtime, skill and adapter. It requires an existing Darwin native controller,
+an operator-configured profile and normal macOS consent. Runtime packaging,
+Linux x64 adapter bootstrap and synthetic MCP image exchanges have scoped
+checks; this is not full desktop or frontend qualification.
+
+The canonical docs are live at
+[fruitctl.clients.xoxd.ai](https://fruitctl.clients.xoxd.ai/). If the listed preview lacks your runtime
+asset or desktop prerequisite, stop with that missing requirement.
 
 ## Before installation
 
@@ -21,6 +27,44 @@ claim the planned one-paste path is already released.
   supported installation surface.
 - Credentials: a controller-local provider, with no password in arguments,
   repository files, logs, or a Linux bridge environment.
+
+The current broker provider is an owner-only private credential file. Configure
+that path on the Darwin controller; the installer does not create a target
+password or copy it into the agent configuration.
+
+## One terminal paste
+
+This pins both the bootstrap source and immutable runtime preview. Choose your
+adapter from the [agent guide](agents.md), replace `default` with your configured
+profile, and preserve any Home Manager-owned configuration through its owner:
+
+```sh
+(
+  FRUITCTL_SOURCE_SHA='7064d349890a9b18717b62a142452363629681ee'
+  FRUITCTL_RELEASE_TAG='v0.1.0-alpha.1'
+  FRUITCTL_SCRIPT=$(mktemp)
+  trap 'rm -f "$FRUITCTL_SCRIPT"' EXIT
+  curl --disable --fail --silent --show-error --location --proto '=https' --proto-redir '=https' \
+    "https://raw.githubusercontent.com/xoxd-ai/fruitctl/$FRUITCTL_SOURCE_SHA/scripts/install.sh" \
+    -o "$FRUITCTL_SCRIPT" &&
+  FRUITCTL_ACTUAL_SHA=$(if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$FRUITCTL_SCRIPT"
+  else
+    shasum -a 256 "$FRUITCTL_SCRIPT"
+  fi) &&
+  [ "${FRUITCTL_ACTUAL_SHA%% *}" = '6e05a7a62f57491cfbda1f8d9212291f6237f04f4ac396bc04d183b88747cd58' ] &&
+  sh "$FRUITCTL_SCRIPT" --agent codex --scope user \
+    --version "$FRUITCTL_RELEASE_TAG" --target default
+)
+```
+
+The source fetch ignores user `curlrc` options and checks the pinned script's
+SHA-256 before execution. The bootstrap verifies release
+bytes and uses the bundled Node runtime. Actual anonymous bootstrap and exact
+configuration restoration have been checked on Rocky Linux 10.2. macOS
+consent, profile creation, the native controller and real frontend acceptance
+remain separate prerequisites. Rollback and uninstall preserve unrelated
+configuration.
 
 A target-side indicator is optional and separate from the VNC controller. Its
 installation does not replace Screen Sharing setup. Signing and notarization
@@ -48,9 +92,8 @@ lane for them.
 
 ## Qualification
 
-The release CLI uses these interfaces. Replace the placeholders with a listed
-exact release tag and an operator-configured profile; these are examples, not
-claims that an installable release has been published:
+The release CLI uses these interfaces. Replace the placeholders with the listed
+exact release tag and an operator-configured profile:
 
 ```text
 fruitctl install --agent codex --scope user --version <exact-tag> --target <profile> --dry-run

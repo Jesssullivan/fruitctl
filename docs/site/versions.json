@@ -1,6 +1,96 @@
 {
   "schemaVersion": 1,
   "product": "fruitctl",
-  "qualificationStatus": "pending",
-  "releases": []
+  "qualificationStatus": "runtime-preview",
+  "releases": [
+    {
+      "tag": "v0.1.0-alpha.1",
+      "releaseScope": "runtime-preview",
+      "qualification": "scoped",
+      "sourceRevision": "7064d349890a9b18717b62a142452363629681ee",
+      "immutable": true,
+      "prerelease": true,
+      "publishedAt": "2026-10-06T02:03:19Z",
+      "url": "https://github.com/xoxd-ai/fruitctl/releases/tag/v0.1.0-alpha.1",
+      "nodeVersion": "24.21.0",
+      "verifiedScopes": [
+        "archive-integrity-and-corresponding-source",
+        "rootless-linux-x64-seven-adapter-bootstrap",
+        "synthetic-mcp-image-exchange-linux-x64-and-darwin-arm64"
+      ],
+      "pendingScopes": [
+        "real-agent-frontend-rendering-and-desktop-journey",
+        "signed-native-controller-distribution",
+        "physical-overlay-exclusion-and-input-mapping",
+        "real-linux-to-darwin-ssh-journey",
+        "measured-service-objectives",
+        "linux-arm64-runtime-execution"
+      ],
+      "prerequisites": [
+        "existing-darwin-native-controller",
+        "operator-configured-target-profile-and-controller-local-credentials"
+      ],
+      "assets": [
+        {
+          "name": "fruitctl-release.json",
+          "url": "https://github.com/xoxd-ai/fruitctl/releases/download/v0.1.0-alpha.1/fruitctl-release.json",
+          "sha256": "dc808805c588f67d6a400be8da72155e06729821288d47a467c4ddc7ad539bd3",
+          "size": 1779,
+          "kind": "manifest"
+        },
+        {
+          "name": "fruitctl-v0.1.0-alpha.1-7064-corresponding-source.tar.gz",
+          "url": "https://github.com/xoxd-ai/fruitctl/releases/download/v0.1.0-alpha.1/fruitctl-v0.1.0-alpha.1-7064-corresponding-source.tar.gz",
+          "sha256": "fb24ae65acc68a5e1a376fd0fec3e31e3d1c452431a49205484c8713af2a12fd",
+          "size": 167414811,
+          "kind": "source"
+        },
+        {
+          "name": "fruitctl-v0.1.0-alpha.1-darwin-arm64.tar.gz",
+          "url": "https://github.com/xoxd-ai/fruitctl/releases/download/v0.1.0-alpha.1/fruitctl-v0.1.0-alpha.1-darwin-arm64.tar.gz",
+          "sha256": "0d051bafbec47f54e6bc926956d08b5607df9d0101867df7ecd246968e65b2de",
+          "size": 42217741,
+          "kind": "runtime",
+          "os": "darwin",
+          "arch": "arm64"
+        },
+        {
+          "name": "fruitctl-v0.1.0-alpha.1-linux-arm64.tar.gz",
+          "url": "https://github.com/xoxd-ai/fruitctl/releases/download/v0.1.0-alpha.1/fruitctl-v0.1.0-alpha.1-linux-arm64.tar.gz",
+          "sha256": "68738768f32dc3ba0201dad126ae8f0b2c556b348334c5d5c5226194fb5313da",
+          "size": 47096704,
+          "kind": "runtime",
+          "os": "linux",
+          "arch": "arm64"
+        },
+        {
+          "name": "fruitctl-v0.1.0-alpha.1-linux-x64.tar.gz",
+          "url": "https://github.com/xoxd-ai/fruitctl/releases/download/v0.1.0-alpha.1/fruitctl-v0.1.0-alpha.1-linux-x64.tar.gz",
+          "sha256": "d1fdfa0da434ed43459d9a31e111461956fd1d06684408708c00813db2410e39",
+          "size": 47368766,
+          "kind": "runtime",
+          "os": "linux",
+          "arch": "x64"
+        },
+        {
+          "name": "node-v24.21.0.tar.xz",
+          "url": "https://github.com/xoxd-ai/fruitctl/releases/download/v0.1.0-alpha.1/node-v24.21.0.tar.xz",
+          "sha256": "a6f54defb6fd7c84f41dba13d61e78e9b4e0961712cf61f29715c05f5ced94fc",
+          "size": 57357488,
+          "kind": "source"
+        },
+        {
+          "name": "SHA256SUMS",
+          "url": "https://github.com/xoxd-ai/fruitctl/releases/download/v0.1.0-alpha.1/SHA256SUMS",
+          "sha256": "f00afa6e6770e65f4c68907b1412e92e2fa2a1ee6ee1c9d4d5e9267b3a29198d",
+          "size": 624,
+          "kind": "checksums"
+        }
+      ],
+      "bootstrap": {
+        "url": "https://raw.githubusercontent.com/xoxd-ai/fruitctl/7064d349890a9b18717b62a142452363629681ee/scripts/install.sh",
+        "sha256": "6e05a7a62f57491cfbda1f8d9212291f6237f04f4ac396bc04d183b88747cd58"
+      }
+    }
+  ]
 }

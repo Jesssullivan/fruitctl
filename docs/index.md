@@ -16,10 +16,12 @@ Declarative consumers use the [Home Manager module](home-manager.md). Review
 artifacts.
 
 The canonical source is [xoxd-ai/fruitctl](https://github.com/xoxd-ai/fruitctl).
-The reserved public documentation origin is `https://fruitctl.clients.xoxd.ai/`.
-Cloudflare has allocated `xoxd-ai-fruitctl.pages.dev` and accepted that custom
-domain. DNS, served documentation, and release qualification are pending;
-allocation is not a deployment receipt.
+The public documentation is live at
+[fruitctl.clients.xoxd.ai](https://fruitctl.clients.xoxd.ai/). Anonymous canonical
+delivery, public DNS and hostname TLS have been checked. The first canonical
+delivery preserved machine-readable files exactly; its HTML contained an edge
+detection script. The build now requests `no-transform` response headers, and
+full HTML hash acceptance requires a deployment with those headers.
 
 ## Adoption contract
 
@@ -40,8 +42,10 @@ milestones and the distinction between Lab targets and public best-effort suppor
 
 ## Current status
 
-The inherited native client has been used in the Lab. The public Fruitctl
-installer, shared controller path, harness adapters, and purple target indicator
-require their own reproducible qualification. Source interfaces and build
-configuration show what is implemented; the compatibility matrix records what
-may be claimed. A generated MCP entry alone proves no desktop action worked.
+The immutable [v0.1.0-alpha.1 runtime preview](https://github.com/xoxd-ai/fruitctl/releases/tag/v0.1.0-alpha.1)
+is available with bundled Node.js 24.21.0. Archive integrity, rootless adapter
+installation on Linux x64 and synthetic MCP images on Linux x64/Darwin arm64
+have scoped evidence. The runtime needs an existing Darwin native controller.
+Real agent rendering, signed native distribution, physical overlay exclusion,
+the SSH journey and measured service objectives remain pending. A generated
+MCP entry alone proves no desktop action worked.

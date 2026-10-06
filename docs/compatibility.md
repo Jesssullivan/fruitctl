@@ -10,9 +10,11 @@ it to qualified status.
 | Role | Baseline | Status |
 | --- | --- | --- |
 | Native controller | Apple Silicon; macOS 15+ | Inherited build target; Fruitctl release qualification pending |
-| Public Node relay | Node.js 24 | Productization baseline; packaged release pending |
+| Public Node relay | Bundled Node.js 24.21.0 | Immutable runtime preview; synthetic MCP checks on Linux x64 and Darwin arm64 |
+| Linux x64 runtime | Rootless preview bundle | Actual seven-adapter bootstrap checks passed |
+| Linux arm64 runtime | Preview bundle available | Archive integrity checked; runtime execution pending |
 | Linux agent seat | SSH bridge to Darwin controller | Initial supported design; acceptance pending |
-| Rocky Linux agent seat | Same SSH bridge | Acceptance pending on a named tested Rocky release |
+| Rocky Linux agent seat | Same SSH bridge | Runtime bootstrap checked on Rocky Linux 10.2; SSH/desktop journey pending |
 | Native Linux VNC controller | No native binary promised | Outside initial release |
 | Intel macOS controller | No x86_64 artifact promised | Requires separate build and runtime qualification |
 | macOS target | Owner-configured Screen Sharing/VNC | Record target OS and capture/input results |
@@ -20,16 +22,20 @@ it to qualified status.
 | Purple target indicator | Qualified filtered macOS capture only | Separate prototype and exclusion-proof lane |
 
 `project.yml` targets macOS 15.0 and `arm64`. This is a build baseline, not a
-claim that every later OS version is tested. Curated public qualification
-records live in `versions.json`; an empty list means no public version has yet
-earned that claim.
+claim that every later OS version is tested. The immutable
+[v0.1.0-alpha.1 preview](https://github.com/xoxd-ai/fruitctl/releases/tag/v0.1.0-alpha.1)
+publishes Darwin arm64, Linux x64 and Linux arm64 runtime archives. It needs an
+existing Darwin native controller; it contains no newly qualified signed native
+distribution. `versions.json` records scoped preview checks separately from
+fully qualified product releases. The current fully qualified release count is
+zero.
 
 ## Agents
 
 | Agent | Adoption surface | Release status |
 | --- | --- | --- |
-| Codex | Skill plus stdio MCP adapter | Runtime experimental; public release acceptance pending |
-| Claude Code | Skill plus stdio MCP adapter | Runtime experimental; public release acceptance pending |
+| Codex | Skill plus stdio MCP adapter | Preview bootstrap checked; real frontend acceptance pending |
+| Claude Code | Skill plus stdio MCP adapter | Preview bootstrap checked; real frontend acceptance pending |
 | Pi | Shared skill plus native MCP in 0.99.0+ | Configuration documented; runtime experimental |
 | Junie CLI | Shared skill plus supported MCP settings | Configuration documented; runtime experimental |
 | IntelliJ Junie | Standalone IDE plugin MCP settings and instructions | Separate IDE/plugin version qualification pending |
@@ -47,6 +53,12 @@ The [adapter registry](../integrations/agents.json) owns configuration paths and
 upstream references. The [adoption contract](../integrations/adoption.json) owns
 frontend qualification state. This matrix summarizes those records; generated
 configuration does not promote runtime status.
+
+All seven installer adapters have been exercised with the released Linux x64
+bundle. Synthetic MCP checks cover protocol and PNG exchange using the bundled
+runtime on Linux x64 and Darwin arm64. Those checks do not start the real agent
+frontends, render their returned images, connect the Linux SSH journey or prove
+physical overlay exclusion. Each of those remains a separate acceptance lane.
 
 ## Qualification record
 
