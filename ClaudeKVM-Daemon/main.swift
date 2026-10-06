@@ -290,7 +290,11 @@ struct ClaudeKVMDaemon: AsyncParsableCommand {
         return e
     }()
 
+    private static let outputLock = NSLock()
+
     func respond(_ response: PCResponse) {
+        Self.outputLock.lock()
+        defer { Self.outputLock.unlock() }
         guard let data = try? Self.encoder.encode(response),
               let json = String(data: data, encoding: .utf8) else { return }
         print(json)
@@ -298,6 +302,8 @@ struct ClaudeKVMDaemon: AsyncParsableCommand {
     }
 
     func notify(_ method: String, params: [String: PCValue]? = nil) {
+        Self.outputLock.lock()
+        defer { Self.outputLock.unlock() }
         let notification = PCNotification(method: method, params: params)
         guard let data = try? Self.encoder.encode(notification),
               let json = String(data: data, encoding: .utf8) else { return }

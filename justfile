@@ -35,5 +35,9 @@ test-release:
 test-observation-gate daemon output_dir:
     FRUITCTL_RUN_NATIVE_SYNTHETIC=1 python3 -I test/fruitctl-observation-gate.py --daemon {{quote(daemon)}} --output-dir {{quote(output_dir)}}
 
+# Explicit Darwin-only autonomous permit proof against an owned synthetic producer.
+test-native-permit daemon node output_dir:
+    FRUITCTL_RUN_NATIVE_SYNTHETIC=1 python3 -I test/fruitctl-native-permit.py --daemon {{quote(daemon)}} --node {{quote(node)}} --output-dir {{quote(output_dir)}}
+
 verify-release manifest assets_dir:
     python3 scripts/verify-release.py {{quote(manifest)}} --assets-dir {{quote(assets_dir)}}

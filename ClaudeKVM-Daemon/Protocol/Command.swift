@@ -31,6 +31,13 @@ struct PCRequest: Decodable {
         let scaledHeight: Int?
         let connectionGeneration: Int?
         let allocation: Int?
+        let instanceID: String?
+        let sessionID: String?
+        let displayID: Int?
+        let displayGeneration: Int?
+        let sequence: Int?
+        let challenge: String?
+        let leaseRemainingMilliseconds: Int?
 
         // Configure — timing (ms) + display
         let reset: Bool?
@@ -59,6 +66,11 @@ struct PCRequest: Decodable {
             case x, y, toX, toY, dx, dy
             case button, key, keys, text, direction, amount, ms
             case nativeWidth, nativeHeight, scaledWidth, scaledHeight, connectionGeneration, allocation
+            case displayGeneration, sequence, challenge
+            case instanceID = "instance_id"
+            case sessionID = "session_id"
+            case displayID = "display_id"
+            case leaseRemainingMilliseconds = "lease_remaining_ms"
             case reset
             case maxDimension = "max_dimension"
             case clickHoldMs = "click_hold_ms"

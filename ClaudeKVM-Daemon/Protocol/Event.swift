@@ -39,6 +39,16 @@ struct PCResponse: Encodable {
         var nativeHeight: Int?
         var connectionGeneration: Int?
         var allocation: Int?
+        var instance_id: String?
+        var session_id: String?
+        var display_id: Int?
+        var displayGeneration: Int?
+        var sequence: Int?
+        var challenge: String?
+        var native_permit_protocol: String?
+        var input_permit_ms: Int?
+        var maximum_round_trip_ms: Int?
+        var native_permit_remaining_ms: Int?
     }
 
     struct ErrorPayload: Encodable {
@@ -73,6 +83,20 @@ struct PCResponse: Encodable {
 
     static func error(id: PCId?, code: Int = -32000, message: String) -> PCResponse {
         PCResponse(result: nil, error: ErrorPayload(code: code, message: message), id: id)
+    }
+
+    static func inputPermit(id: PCId?, receipt: NativeInputPermit.Receipt) -> PCResponse {
+        let binding = receipt.binding
+        return PCResponse(result: ResultPayload(detail: "OK", scaledWidth: binding.scaledWidth,
+            scaledHeight: binding.scaledHeight, nativeWidth: binding.context.width,
+            nativeHeight: binding.context.height, connectionGeneration: binding.context.connectionGeneration,
+            allocation: binding.context.allocation, instance_id: binding.instanceID,
+            session_id: binding.sessionID, display_id: binding.displayID,
+            displayGeneration: binding.displayGeneration, sequence: receipt.sequence,
+            challenge: receipt.challenge, native_permit_protocol: NativeInputPermit.protocolVersion,
+            input_permit_ms: NativeInputPermit.durationMilliseconds,
+            maximum_round_trip_ms: NativeInputPermit.maximumRoundTripMilliseconds,
+            native_permit_remaining_ms: receipt.remainingMilliseconds), error: nil, id: id)
     }
 }
 

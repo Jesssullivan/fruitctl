@@ -160,6 +160,58 @@ private final class FakeNative {
 }
 
 final class VNCReconnectTests: XCTestCase {
+    func testPermitExpiryRefusesInputWaitingBehindAnOccupiedNativeDecoder() async throws {
+        let native = FakeNative(polls: [true])
+        let scheduler = ManualScheduler()
+        let time = ManualTime()
+        let bridge = VNCBridge(operations: native.operations, schedule: scheduler.schedule)
+        try await bridge.connect()
+        let context = VNCInputContext(bridge.framebufferDiagnostics)
+        let permit = NativeInputPermit(now: time.now, watchdogEnabled: false)
+        let binding = NativeInputPermit.Binding(instanceID: "owned-helper", sessionID: "owned-session",
+            displayID: 1, displayGeneration: 1, context: context, scaledWidth: 2, scaledHeight: 2)
+        try permit.qualifyObservation(context: context, scaledWidth: 2, scaledHeight: 2)
+        let challenge = try permit.begin(binding: binding, sequence: 1)
+        _ = try permit.grant(binding: binding, sequence: 1, challenge: challenge.challenge,
+                             leaseRemainingMilliseconds: 3_000)
+        let occupied = expectation(description: "owned decoder holds the native queue")
+        let release = DispatchSemaphore(value: 0)
+        native.beforePoll = { _ in
+            occupied.fulfill()
+            XCTAssertEqual(release.wait(timeout: .now() + 5), .success)
+        }
+        let polling = Task.detached { scheduler.runNext() }
+        await fulfillment(of: [occupied], timeout: 2)
+        XCTAssertNoThrow(try permit.check(context: context))
+        let entered = expectation(description: "all producer requests entered")
+        entered.expectedFulfillmentCount = 3
+        let sends = ["pointer", "key", "clipboard"].map { kind in
+            Task { () -> String in
+                entered.fulfill()
+                do {
+                    switch kind {
+                    case "pointer": try await bridge.sendMouseEvent(x: 1, y: 1, context: context, inputPermit: permit)
+                    case "key": try await bridge.sendKeyEvent(key: 97, down: true, context: context, inputPermit: permit)
+                    default: try await bridge.sendClipboardText("owned fixture", context: context, inputPermit: permit)
+                    }
+                    return "unexpected success"
+                } catch VNCError.sendFailed(let reason) { return reason }
+                catch { return "wrong failure: \(error)" }
+            }
+        }
+        await fulfillment(of: [entered], timeout: 2)
+        // Let each entered async call suspend on the occupied native queue.
+        try await Task.sleep(nanoseconds: 20_000_000)
+        time.advance(1_000_000_000)
+        release.signal()
+        await polling.value
+        for sending in sends {
+            let reason = await sending.value
+            XCTAssertTrue(reason.contains("Native input permit"), reason)
+        }
+        bridge.disconnect(); XCTAssertEqual(bridge.framebufferWidth, 0)
+    }
+
     func testExternalObservationAdoptsIncompleteAllocationWithoutCapturingPixels() async throws {
         let native = FakeNative(polls: [true]); native.completeDuringInitialize = false
         let scheduler = ManualScheduler()

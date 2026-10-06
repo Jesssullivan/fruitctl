@@ -7,67 +7,102 @@ extension ClaudeKVMDaemon {
     func runCommandLoop(vnc: VNCBridge, input: InputController, scaling: DisplayScaling) async {
         let stdin = FileHandle.standardInput
         let lifetime = NativeCommandLifetime()
+        input.inputPermit.setFailureHandler { lifetime.cancelCurrent() }
 
-        let stdinStream = AsyncStream<Data> { continuation in
+        // Parse on the reader rather than after an action completes. Only the
+        // two private permit controls bypass the ordinary serial command lane.
+        let requests = AsyncStream<PCRequest> { continuation in
             DispatchQueue.global(qos: .userInteractive).async {
+                var buffer = Data()
+                var discardOversizedLine = false
+                let maximumRequestBytes = 8 * 1024 * 1024
                 while true {
                     let data = stdin.availableData
                     if data.isEmpty {
+                        input.inputPermit.invalidate()
                         lifetime.close()
                         continuation.finish()
                         return
                     }
-                    continuation.yield(data)
+                    if discardOversizedLine {
+                        guard let newline = data.firstIndex(of: UInt8(ascii: "\n")) else { continue }
+                        buffer.append(data[data.index(after: newline)...])
+                        discardOversizedLine = false
+                    } else { buffer.append(data) }
+                    while let newline = buffer.firstIndex(of: UInt8(ascii: "\n")) {
+                        let line = buffer[buffer.startIndex..<newline]
+                        buffer = Data(buffer[buffer.index(after: newline)...])
+                        guard !line.isEmpty else { continue }
+                        guard line.count <= maximumRequestBytes else {
+                            input.inputPermit.invalidateIfRequired()
+                            respond(.error(id: nil, code: -32600, message: "Native request exceeds 8 MiB"))
+                            continue
+                        }
+                        do {
+                            let request = try JSONDecoder().decode(PCRequest.self, from: line)
+                            if PCRequest.inputPermitMethods.contains(request.method) {
+                                Task { await handleInputPermit(request, vnc: vnc, permit: input.inputPermit) }
+                            } else { continuation.yield(request) }
+                        } catch {
+                            input.inputPermit.invalidateIfRequired()
+                            respond(.error(id: nil, code: -32700, message: "Parse error: \(error.localizedDescription)"))
+                        }
+                    }
+                    if buffer.count > maximumRequestBytes {
+                        input.inputPermit.invalidateIfRequired()
+                        buffer.removeAll(keepingCapacity: false)
+                        discardOversizedLine = true
+                        respond(.error(id: nil, code: -32600, message: "Native request exceeds 8 MiB"))
+                    }
                 }
             }
         }
 
-        var buffer = Data()
-        var discardOversizedLine = false
-        let maximumRequestBytes = 8 * 1024 * 1024
-
-        for await chunk in stdinStream {
-            if discardOversizedLine {
-                guard let newline = chunk.firstIndex(of: UInt8(ascii: "\n")) else { continue }
-                buffer.append(chunk[chunk.index(after: newline)...])
-                discardOversizedLine = false
-            } else {
-                buffer.append(chunk)
-            }
-
-            while let newlineIndex = buffer.firstIndex(of: UInt8(ascii: "\n")) {
-                let lineData = buffer[buffer.startIndex..<newlineIndex]
-                buffer = Data(buffer[buffer.index(after: newlineIndex)...])
-
-                guard !lineData.isEmpty else { continue }
-                guard lineData.count <= maximumRequestBytes else {
-                    respond(.error(id: nil, code: -32600, message: "Native request exceeds 8 MiB"))
-                    continue
-                }
-
-                do {
-                    let request = try JSONDecoder().decode(PCRequest.self, from: lineData)
-                    let task = Task { await handleRequest(request, vnc: vnc, input: input, scaling: scaling) }
-                    lifetime.register(task)
-                    await withTaskCancellationHandler {
-                        await task.value
-                    } onCancel: {
-                        task.cancel()
-                    }
-                    lifetime.finished()
-                } catch {
-                    respond(.error(id: nil, code: -32700, message: "Parse error: \(error.localizedDescription)"))
-                }
-            }
-            if buffer.count > maximumRequestBytes {
-                buffer.removeAll(keepingCapacity: false)
-                discardOversizedLine = true
-                respond(.error(id: nil, code: -32600, message: "Native request exceeds 8 MiB"))
-            }
+        for await request in requests {
+            let task = Task { await handleRequest(request, vnc: vnc, input: input, scaling: scaling) }
+            lifetime.register(task)
+            await withTaskCancellationHandler { await task.value } onCancel: { task.cancel() }
+            lifetime.finished()
         }
 
         log("stdin closed — shutting down")
         await input.releaseHeldInput()
+        input.inputPermit.stopWatchdog()
+    }
+
+    /// Controls only change the locked permit, never concurrent cursor/held
+    /// state or display scaling. Ordinary input remains strictly serialized.
+    private func handleInputPermit(_ req: PCRequest, vnc: VNCBridge, permit: NativeInputPermit) async {
+        do {
+            let p = req.params
+            // Bound integers before DisplayScaling converts them through Double.
+            guard let width = p?.nativeWidth, let height = p?.nativeHeight,
+                  let scaledWidth = p?.scaledWidth, let scaledHeight = p?.scaledHeight,
+                  [width, height, scaledWidth, scaledHeight].allSatisfy({ (1...65535).contains($0) }) else {
+                throw CommandValidationError.invalid("native input permit geometry")
+            }
+            let maximum = max(scaledWidth, scaledHeight)
+            let binding = try req.inputPermitBinding(scaling: DisplayScaling(
+                nativeWidth: width, nativeHeight: height, maxDimension: maximum))
+            guard let sequence = p?.sequence else {
+                throw CommandValidationError.invalid("native input permit sequence")
+            }
+            _ = try await vnc.validateExternalObservation(binding.context)
+            let receipt: NativeInputPermit.Receipt
+            if req.method == "begin_input_permit" {
+                receipt = try permit.begin(binding: binding, sequence: sequence)
+            } else {
+                guard let challenge = p?.challenge, let remaining = p?.leaseRemainingMilliseconds else {
+                    throw CommandValidationError.invalid("native input permit grant")
+                }
+                receipt = try permit.grant(binding: binding, sequence: sequence,
+                    challenge: challenge, leaseRemainingMilliseconds: remaining)
+            }
+            respond(.inputPermit(id: req.id, receipt: receipt))
+        } catch {
+            permit.invalidate()
+            respond(.error(id: req.id, message: error.localizedDescription))
+        }
     }
 
     // MARK: - Request Handler
@@ -86,6 +121,7 @@ extension ClaudeKVMDaemon {
             if req.method == "adopt_observation" { input.context = nil }
             try req.validate(scaling: scaling)
             if PCRequest.inputMethods.contains(req.method) {
+                try input.checkInputAdmission()
                 guard input.heldKeys.isEmpty, !input.heldButtons else {
                     throw VNCError.sendFailed("Previous input release is unconfirmed; reconcile the target before continuing")
                 }
@@ -159,11 +195,13 @@ extension ClaudeKVMDaemon {
             case "mouse_move":
                 let native = nativeXY(p, scaling: scaling)
                 try await input.mouseMove(x: native.x, y: native.y)
+                try input.checkInputAdmission()
                 respond(.success(id: id, detail: "OK"))
 
             case "hover":
                 let native = nativeXY(p, scaling: scaling)
                 try await input.mouseHover(x: native.x, y: native.y)
+                try input.checkInputAdmission()
                 respond(.success(id: id, detail: "OK"))
 
             case "nudge":
@@ -173,6 +211,7 @@ extension ClaudeKVMDaemon {
                 let nativeDX = Int((Double(dx) * Double(scaling.nativeWidth) / Double(scaling.scaledWidth)).rounded())
                 let nativeDY = Int((Double(dy) * Double(scaling.nativeHeight) / Double(scaling.scaledHeight)).rounded())
                 try await input.mouseNudge(dx: nativeDX, dy: nativeDY)
+                try input.checkInputAdmission()
                 let pos = scaling.toScaled(x: input.cursorPosition.x, y: input.cursorPosition.y)
                 respond(.success(id: id, detail: "OK", x: pos.x, y: pos.y))
 
@@ -180,11 +219,13 @@ extension ClaudeKVMDaemon {
                 let native = nativeXY(p, scaling: scaling)
                 let btn = parseButton(p?.button)
                 try await input.mouseClick(x: native.x, y: native.y, button: btn)
+                try input.checkInputAdmission()
                 respond(.success(id: id, detail: "OK"))
 
             case "mouse_double_click":
                 let native = nativeXY(p, scaling: scaling)
                 try await input.mouseDoubleClick(x: native.x, y: native.y)
+                try input.checkInputAdmission()
                 respond(.success(id: id, detail: "OK"))
 
             case "mouse_drag":
@@ -194,6 +235,7 @@ extension ClaudeKVMDaemon {
                 let from = nativeXY(p, scaling: scaling)
                 let to = scaling.toNative(x: toX, y: toY)
                 try await input.mouseDrag(fromX: from.x, fromY: from.y, toX: to.x, toY: to.y)
+                try input.checkInputAdmission()
                 respond(.success(id: id, detail: "OK"))
 
             case "scroll":
@@ -203,6 +245,7 @@ extension ClaudeKVMDaemon {
                     throw VNCError.sendFailed("Missing direction")
                 }
                 try await input.scroll(x: native.x, y: native.y, direction: dir, amount: p?.amount ?? 3)
+                try input.checkInputAdmission()
                 respond(.success(id: id, detail: "OK"))
 
             // ── Keyboard ──────────────────────────────────────
@@ -212,6 +255,7 @@ extension ClaudeKVMDaemon {
                     throw VNCError.sendFailed("Missing or unknown key")
                 }
                 try await input.keyTap(sym)
+                try input.checkInputAdmission()
                 respond(.success(id: id, detail: "OK"))
 
             case "key_combo":
@@ -226,6 +270,7 @@ extension ClaudeKVMDaemon {
                 } else {
                     throw VNCError.sendFailed("Missing key or keys")
                 }
+                try input.checkInputAdmission()
                 respond(.success(id: id, detail: "OK"))
 
             case "key_type":
@@ -233,6 +278,7 @@ extension ClaudeKVMDaemon {
                     throw VNCError.sendFailed("Missing text")
                 }
                 try await input.typeText(text)
+                try input.checkInputAdmission()
                 respond(.success(id: id, detail: "OK"))
 
             case "paste":
@@ -240,6 +286,7 @@ extension ClaudeKVMDaemon {
                     throw VNCError.sendFailed("Missing text")
                 }
                 try await input.pasteText(text)
+                try input.checkInputAdmission()
                 respond(.success(id: id, detail: "OK"))
 
             // ── Detection ──────────────────────────────────────
@@ -262,6 +309,7 @@ extension ClaudeKVMDaemon {
                                   scaledHeight: scaling.scaledHeight, frameContext: expected))
 
             case "configure":
+                input.inputPermit.invalidateIfRequired()
                 handleConfigure(id: id, params: p, input: input, scaling: scaling)
 
             case "get_timing":
@@ -286,6 +334,7 @@ extension ClaudeKVMDaemon {
                                   frameContext: current))
 
             case "shutdown":
+                input.inputPermit.stopWatchdog()
                 guard await input.releaseHeldInput() else {
                     throw VNCError.sendFailed("Shutdown could not confirm held-state release")
                 }
@@ -297,6 +346,7 @@ extension ClaudeKVMDaemon {
                 respond(.error(id: id, code: -32601, message: "Method not found: \(req.method)"))
             }
         } catch {
+            input.inputPermit.invalidateIfRequired()
             await input.releaseHeldInput()
             respond(.error(id: id, message: error.localizedDescription))
         }
@@ -496,6 +546,11 @@ private final class NativeCommandLifetime: @unchecked Sendable {
         closed = true
         let current = task
         lock.unlock()
+        current?.cancel()
+    }
+
+    func cancelCurrent() {
+        lock.lock(); let current = task; lock.unlock()
         current?.cancel()
     }
 }
