@@ -10,6 +10,7 @@ from pathlib import Path
 import tarfile
 import tempfile
 import shutil
+import sys
 import zipfile
 import unittest
 from unittest.mock import patch
@@ -635,6 +636,513 @@ class PrivateHostSourceTests(unittest.TestCase):
         self.write("sign.json", self.sign_value); self.write("staple.json", self.staple_value)
         with self.assertRaisesRegex(ValueError, "lacks verified Developer ID"):
             self.approved()
+
+
+class NativeSourceProvenanceTests(unittest.TestCase):
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.base = Path(self.directory.name).resolve()
+        self.public = self.base / "public"; self.public.mkdir()
+        self.tested = self.base / "tested"; self.tested.mkdir()
+        self.native_files = {
+            "ClaudeKVM-Daemon/main.swift": b"// tested daemon fixture\n",
+            "FruitctlHost/HostLease.swift": b"// tested Host code fixture\n",
+            "FruitctlHost/README.md": b"tested Host resource documentation\n",
+            "FruitctlHost/ATTENDED-QUALIFICATION.md": b"unchanged qualification resource\n",
+            "FruitctlHost/Info.plist": b"unchanged Host plist fixture\n",
+            "Tests/NativeBehaviorTests.swift": b"// tested native test fixture\n",
+            "test/CredentialInputHarness.swift": b"// tested input harness fixture\n",
+            "project.yml": b"targets: fixture\n",
+        }
+        for root in (self.public, self.tested):
+            for name, data in self.native_files.items():
+                path = root / name; path.parent.mkdir(parents=True, exist_ok=True); path.write_bytes(data)
+        self.current_readme = b"corrected public Host resource documentation\n"
+        (self.public / "FruitctlHost/README.md").write_bytes(self.current_readme)
+        files = {name: self.sha(data) for name, data in self.native_files.items()}
+        self.built = {"sourceFiles": files, "sourceTreeSha256": self.tree_sha(files),
+                      "artifacts": {"FruitctlHost.app": {"files": {
+                          "Contents/Resources/README.md": self.descriptor(self.native_files["FruitctlHost/README.md"])}}}}
+
+    @staticmethod
+    def sha(data):
+        return hashlib.sha256(data).hexdigest()
+
+    @classmethod
+    def descriptor(cls, data):
+        return {"sha256": cls.sha(data), "bytes": len(data)}
+
+    @classmethod
+    def tree_sha(cls, files):
+        return cls.sha(json.dumps(files, sort_keys=True).encode())
+
+    def provenance(self, names=("claude-kvm-daemon",), tested=True):
+        return source.native_source_provenance(self.public, self.built, names, self.tested if tested else None)
+
+    def test_default_strict_matching_inputs_preserve_the_tested_map(self):
+        (self.public / "FruitctlHost/README.md").write_bytes(self.native_files["FruitctlHost/README.md"])
+        value, docs = self.provenance(tested=False)
+        self.assertEqual(value["mode"], "strict")
+        self.assertEqual(value["testedSourceFiles"], value["publicNativeSourceFiles"])
+        self.assertEqual(value["testedSourceTreeSha256"], value["publicNativeSourceTreeSha256"])
+        self.assertEqual(docs, {})
+        self.assertEqual(value["resourceDocs"], [])
+
+    def test_default_strict_refuses_the_corrected_readme(self):
+        with self.assertRaisesRegex(ValueError, "source changed after build: FruitctlHost/README.md"):
+            self.provenance(tested=False)
+
+    def test_explicit_controller_records_both_complete_maps_and_exact_tested_docs(self):
+        original = copy.deepcopy(self.built)
+        value, docs = self.provenance()
+        public_files = dict(self.built["sourceFiles"])
+        public_files["FruitctlHost/README.md"] = self.sha(self.current_readme)
+        self.assertEqual(value["testedSourceFiles"], self.built["sourceFiles"])
+        self.assertEqual(value["publicNativeSourceFiles"], public_files)
+        self.assertEqual(value["testedSourceTreeSha256"], self.built["sourceTreeSha256"])
+        self.assertEqual(value["publicNativeSourceTreeSha256"], self.tree_sha(public_files))
+        self.assertEqual(value["selectedBinaries"], ["claude-kvm-daemon"])
+        entry, = value["resourceDocs"]
+        self.assertEqual(entry, {
+            "publicSourcePath": "fruitctl/FruitctlHost/README.md", "testedSourcePath": "FruitctlHost/README.md",
+            "testedEvidencePath": "build-evidence/tested-native-resource-docs/FruitctlHost/README.md",
+            "testedSha256": self.sha(self.native_files["FruitctlHost/README.md"]),
+            "testedBytes": len(self.native_files["FruitctlHost/README.md"]),
+            "publicSha256": self.sha(self.current_readme), "publicBytes": len(self.current_readme),
+            "ownerArtifact": "FruitctlHost.app", "ownerResourcePath": "Contents/Resources/README.md",
+            "ownerArtifactIncluded": False, "publicDocumentationChanged": True})
+        self.assertEqual(docs, {entry["testedEvidencePath"]: self.native_files["FruitctlHost/README.md"]})
+        self.assertNotIn(str(self.base), json.dumps(value))
+        self.assertEqual(self.built, original)
+
+    def test_host_mixed_unknown_and_empty_selections_are_always_refused(self):
+        for names in (("FruitctlHost",), ("claude-kvm-daemon", "FruitctlHost"), ("unknown-tool",), ()):
+            with self.subTest(names=names), self.assertRaisesRegex(ValueError, "only for the selected controller; Host is refused"):
+                self.provenance(names=names)
+
+    def test_code_project_tests_and_every_other_resource_change_are_refused(self):
+        for name, data in self.native_files.items():
+            if name == "FruitctlHost/README.md":
+                continue
+            with self.subTest(name=name):
+                path = self.public / name
+                path.write_bytes(data + b"unreviewed change\n")
+                try:
+                    with self.assertRaisesRegex(ValueError, "source changed after build"):
+                        self.provenance()
+                finally:
+                    path.write_bytes(data)
+
+    def test_tested_readme_and_code_substitution_are_refused(self):
+        for name in ("FruitctlHost/README.md", "ClaudeKVM-Daemon/main.swift"):
+            with self.subTest(name=name):
+                path = self.tested / name; path.write_bytes(b"substituted tested source\n")
+                try:
+                    with self.assertRaisesRegex(ValueError, "tested native source root differs"):
+                        self.provenance()
+                finally:
+                    path.write_bytes(self.native_files[name])
+
+    def test_missing_and_extra_inputs_in_either_complete_map_are_refused(self):
+        for root in (self.public, self.tested):
+            for extra in (False, True):
+                with self.subTest(root=root.name, extra=extra):
+                    name = "ClaudeKVM-Daemon/extra.swift" if extra else "Tests/NativeBehaviorTests.swift"
+                    path = root / name
+                    if extra:
+                        path.write_bytes(b"extra untested native source\n")
+                    else:
+                        path.unlink()
+                    try:
+                        with self.assertRaisesRegex(ValueError, "inventory"):
+                            self.provenance()
+                    finally:
+                        if extra:
+                            path.unlink()
+                        else:
+                            path.write_bytes(self.native_files[name])
+
+    def test_original_host_resource_descriptor_must_match_tested_readme_hash_and_length(self):
+        descriptor = self.built["artifacts"]["FruitctlHost.app"]["files"]["Contents/Resources/README.md"]
+        for key, value in (("sha256", "0" * 64), ("bytes", descriptor["bytes"] + 1)):
+            with self.subTest(key=key):
+                original = descriptor[key]; descriptor[key] = value
+                try:
+                    with self.assertRaisesRegex(ValueError, "original build bundle resource"):
+                        self.provenance()
+                finally:
+                    descriptor[key] = original
+
+    def test_missing_original_host_resource_descriptor_is_refused(self):
+        del self.built["artifacts"]["FruitctlHost.app"]["files"]["Contents/Resources/README.md"]
+        with self.assertRaisesRegex(ValueError, "original build bundle resource"):
+            self.provenance()
+
+    def test_tree_hash_and_receipt_map_tampering_are_refused(self):
+        original = copy.deepcopy(self.built)
+        self.built["sourceTreeSha256"] = "0" * 64
+        with self.assertRaisesRegex(ValueError, "source tree hash differs"):
+            self.provenance()
+        self.built = copy.deepcopy(original)
+        self.built["sourceFiles"]["project.yml"] = "0" * 64
+        self.built["sourceTreeSha256"] = self.tree_sha(self.built["sourceFiles"])
+        with self.assertRaisesRegex(ValueError, "tested native source root differs"):
+            self.provenance()
+        self.built = copy.deepcopy(original)
+        self.built["sourceFiles"]["project.yml"] = "invalid-hash"
+        with self.assertRaisesRegex(ValueError, "source inventory required"):
+            self.provenance()
+
+    def test_symlink_root_parent_native_directory_and_file_are_refused(self):
+        alias = self.base / "tested-alias"; alias.symlink_to(self.tested, target_is_directory=True)
+        with self.assertRaisesRegex(ValueError, "canonical native source root"):
+            source.native_source_provenance(self.public, self.built, ["claude-kvm-daemon"], alias)
+        parent_alias = self.base / "parent-alias"; parent_alias.symlink_to(self.base, target_is_directory=True)
+        with self.assertRaisesRegex(ValueError, "canonical native source root"):
+            source.native_source_provenance(self.public, self.built, ["claude-kvm-daemon"], parent_alias / "tested")
+        for root in (self.public, self.tested):
+            directory = root / "ClaudeKVM-Daemon"; backup = root / "saved-daemon"
+            directory.rename(backup); directory.symlink_to(backup, target_is_directory=True)
+            try:
+                with self.subTest(root=root.name), self.assertRaisesRegex(ValueError, "symlinks are refused"):
+                    self.provenance()
+            finally:
+                directory.unlink(); backup.rename(directory)
+            path = root / "project.yml"; path.unlink(); path.symlink_to((self.tested if root == self.public else self.public) / "project.yml")
+            try:
+                with self.subTest(root=root.name), self.assertRaisesRegex(ValueError, "regular native project"):
+                    self.provenance()
+            finally:
+                path.unlink(); path.write_bytes(self.native_files["project.yml"])
+
+    def test_tested_readme_mutation_after_inventory_is_refused(self):
+        inventory = source.native_source_inventory
+        def mutate_after_inventory(root):
+            files = inventory(root)
+            if root == self.tested:
+                (root / "FruitctlHost/README.md").write_bytes(b"changed between inventory and evidence read\n")
+            return files
+        with patch.object(source, "native_source_inventory", mutate_after_inventory):
+            with self.assertRaisesRegex(ValueError, "tested Host README changed after inventory"):
+                self.provenance()
+
+    def package_fixture(self):
+        build = self.base / "build"; build.mkdir()
+        products = build / "derived/Build/Products/Release"; products.mkdir(parents=True)
+        daemon = products / "claude-kvm-daemon"; daemon.write_bytes(b"unsigned tested daemon fixture\n")
+        self.built["artifacts"][daemon.name] = self.descriptor(daemon.read_bytes())
+        dependency_files = {}
+        for name in ("openssl-source", "libvnc-source"):
+            directory = build / name; directory.mkdir(); (directory / "LICENSE").write_bytes((name + " fixture license\n").encode())
+            dependency_files[name] = source.tree_hashes(directory)
+        downloads = build / "downloads"; downloads.mkdir()
+        for name in ("openssl.tar.gz", "libvnc.tar.gz", "fixture-commit.patch"):
+            (downloads / name).write_bytes(("fixture upstream input " + name).encode())
+        lock = {"openssl": {"sha256": source.builder.digest(downloads / "openssl.tar.gz")},
+                "libvncclient": {"sha256": source.builder.digest(downloads / "libvnc.tar.gz"),
+                                 "patches": [{"commit": "fixture-commit", "sha256": source.builder.digest(downloads / "fixture-commit.patch")}]}}
+        swift = self.base / "swift-tree"; swift.mkdir(); (swift / "Package.swift").write_bytes(b"// pinned Swift source fixture\n")
+        swift_archive = self.base / "swift.tar.gz"; swift_archive.write_bytes(b"verified Swift archive fixture\n")
+        node_archive = self.base / "node.tar.xz"; node_archive.write_bytes(b"verified Node source archive fixture\n")
+        public_files = {"LICENSE": b"MIT fixture license\n", "THIRD_PARTY_NOTICES.md": b"fixture notices\n",
+                        "package.json": b'{"name":"fixture"}\n', "package-lock.json": b'{"packages":{}}\n',
+                        "scripts/build-native.sh": b"# fixture builder\n", "scripts/build-host.sh": b"# fixture Host builder\n",
+                        "scripts/install.sh": b"# fixture installer\n", "scripts/uninstall.sh": b"# fixture uninstaller\n",
+                        "scripts/verify-native-input.py": b"# fixture input verifier\n", "scripts/release/fixture.py": b"# fixture release script\n",
+                        "release/native-dependencies.lock.json": json.dumps(lock).encode(),
+                        "LICENSES/dependency-provenance.json": json.dumps({"components": [{"id": "swift-argument-parser",
+                            "upstream_revision": "fixture-swift-revision", "source_archive": {"source_url": "https://example.invalid/swift",
+                            "sha256": source.builder.digest(swift_archive)}}]}).encode(),
+                        "LICENSES/node-runtime-provenance.json": json.dumps({"source_archive": {
+                            "source_url": "https://example.invalid/node", "sha256": source.builder.digest(node_archive)}}).encode()}
+        for name, data in public_files.items():
+            path = self.public / name; path.parent.mkdir(parents=True, exist_ok=True); path.write_bytes(data)
+        native_manifest = build / "native-input-manifest.json"; native_manifest.write_text('{"fixture":"native inputs"}\n')
+        self.built.update({"schemaVersion": 1, "kind": "fruitctl-native-build", "status": "passed",
+                          "sourceRevision": "a" * 40, "sourceLockSha256": source.builder.digest(self.public / "release/native-dependencies.lock.json"),
+                          "dependencyBuildDir": str(build), "dependencySourceFiles": dependency_files,
+                          "swiftPackageRevision": "fixture-swift-revision", "swiftPackageSourceFiles": source.tree_hashes(swift),
+                          "nativeInputManifest": str(native_manifest), "inputManifestSha256": source.builder.digest(native_manifest),
+                          "tools": {"fixture": "source-only"}, "commands": []})
+        built_path = build / "build-receipt.json"; built_path.write_text(json.dumps(self.built, sort_keys=True))
+        inventory = self.base / "public-source.json"
+        inventory.write_text(json.dumps({"schemaVersion": 1, "kind": "fruitctl-public-source-inventory", "sourceRevision": "b" * 40,
+                                         "workingTreeClean": True, "files": source.tree_hashes(self.public)}))
+        output, receipt = self.base / "source.tar.gz", self.base / "source-receipt.json"
+        args = ["package_source.py", "--build-dir", str(build), "--output", str(output), "--receipt", str(receipt),
+                "--source-inventory", str(inventory), "--binary", str(daemon), "--tested-native-source-root", str(self.tested)]
+        def download(entry, target):
+            selected = swift_archive if entry["url"].endswith("/swift") else node_archive
+            self.assertEqual(source.builder.digest(selected), entry["sha256"])
+            shutil.copyfile(selected, target)
+        return build, built_path, inventory, output, receipt, args, swift, download
+
+    def run_package(self, fixture):
+        build, built_path, inventory, output, receipt, args, swift, download = fixture
+        with patch.object(source, "ROOT", self.public), patch.object(source.builder, "LOCK", self.public / "release/native-dependencies.lock.json"), \
+             patch.object(source.builder, "download", download), patch.object(source.builder, "extract", return_value=swift), \
+             patch.object(sys, "argv", args), patch.object(sys, "stdout", io.StringIO()):
+            source.main()
+
+    def test_actual_archive_contains_both_docs_and_dual_provenance_without_rewriting_build(self):
+        fixture = self.package_fixture()
+        build, built_path, inventory, output, receipt, args, swift, download = fixture
+        original_build_bytes = built_path.read_bytes()
+        self.run_package(fixture)
+        with tarfile.open(output, "r:gz") as archive:
+            files = {member.name: archive.extractfile(member).read() for member in archive.getmembers()}
+        self.assertEqual(files["fruitctl/FruitctlHost/README.md"], self.current_readme)
+        evidence_name = "build-evidence/tested-native-resource-docs/FruitctlHost/README.md"
+        self.assertEqual(files[evidence_name], self.native_files["FruitctlHost/README.md"])
+        manifest = json.loads(files["corresponding-source.json"])
+        external = json.loads(receipt.read_text())
+        self.assertEqual(manifest["nativeSourceProvenance"], external["nativeSourceProvenance"])
+        provenance = external["nativeSourceProvenance"]
+        self.assertEqual(provenance["testedSourceFiles"], self.built["sourceFiles"])
+        self.assertEqual(provenance["publicNativeSourceFiles"], source.native_source_inventory(self.public))
+        self.assertEqual(manifest["files"][evidence_name], self.sha(files[evidence_name]))
+        self.assertEqual(manifest["files"]["fruitctl/FruitctlHost/README.md"], self.sha(self.current_readme))
+        self.assertEqual(manifest["sourceTreeSha256"], self.built["sourceTreeSha256"])
+        self.assertEqual(external["sourceTreeSha256"], self.built["sourceTreeSha256"])
+        self.assertEqual(external["buildReceiptSha256"], self.sha(original_build_bytes))
+        packaged_build = json.loads(files["build-evidence/build-receipt.json"])
+        self.assertEqual(packaged_build["sourceFiles"], self.built["sourceFiles"])
+        self.assertEqual(packaged_build["sourceTreeSha256"], self.built["sourceTreeSha256"])
+        self.assertEqual(built_path.read_bytes(), original_build_bytes)
+        self.assertFalse(any("FruitctlHost.app" in name for name in files))
+        self.assertNotIn(str(self.base), json.dumps(manifest))
+        self.assertEqual(external["qualification"], "not-publicly-qualified")
+
+    def test_actual_packager_refuses_binary_substitution_before_doc_exception(self):
+        fixture = self.package_fixture()
+        Path(fixture[5][fixture[5].index("--binary") + 1]).write_bytes(b"substituted daemon\n")
+        with self.assertRaisesRegex(ValueError, "binary differs from tested output"):
+            self.run_package(fixture)
+        self.assertFalse(fixture[3].exists())
+        self.assertFalse(fixture[4].exists())
+
+    def test_actual_archive_pins_validated_build_receipt_despite_concurrent_replacement(self):
+        fixture = self.package_fixture()
+        build, built_path, inventory, output, receipt, args, swift, download = fixture
+        original_bytes = built_path.read_bytes()
+        replacement = copy.deepcopy(self.built)
+        replacement["sourceRevision"] = "c" * 40
+        replacement["sourceFiles"]["ClaudeKVM-Daemon/main.swift"] = "0" * 64
+        replacement["sourceTreeSha256"] = self.tree_sha(replacement["sourceFiles"])
+        replacement["artifacts"]["claude-kvm-daemon"] = self.descriptor(b"unvalidated substitute daemon\n")
+        original_private_receipts = source.private_app_receipts
+        def replace_before_sign_chain(*values):
+            built_path.write_text(json.dumps(replacement, sort_keys=True))
+            self.assertEqual(values[-1], self.sha(original_bytes))
+            return original_private_receipts(*values)
+        with patch.object(source, "private_app_receipts", replace_before_sign_chain):
+            self.run_package(fixture)
+        with tarfile.open(output, "r:gz") as archive:
+            packaged_build = json.load(archive.extractfile("build-evidence/build-receipt.json"))
+            manifest = json.load(archive.extractfile("corresponding-source.json"))
+        external = json.loads(receipt.read_text())
+        self.assertNotEqual(source.builder.digest(built_path), self.sha(original_bytes))
+        self.assertEqual(external["buildReceiptSha256"], self.sha(original_bytes))
+        self.assertEqual(packaged_build, source.portable_receipt(json.loads(original_bytes),
+            {str(self.public): "${SOURCE_ROOT}", str(build): "${DEPENDENCY_BUILD_ROOT}"}))
+        self.assertEqual(manifest["build_snapshot_base_revision"], self.built["sourceRevision"])
+        self.assertEqual(external["binary_sha256"]["claude-kvm-daemon"], self.built["artifacts"]["claude-kvm-daemon"])
+        self.assertEqual(packaged_build["sourceFiles"], external["nativeSourceProvenance"]["testedSourceFiles"])
+
+    def test_actual_packager_refuses_native_snapshot_omission_and_wrong_doc_hash(self):
+        fixture = self.package_fixture()
+        inventory_path = fixture[2]; original = json.loads(inventory_path.read_text())
+        for omit in (False, True):
+            with self.subTest(omit=omit):
+                value = copy.deepcopy(original)
+                if omit:
+                    del value["files"]["Tests/NativeBehaviorTests.swift"]
+                else:
+                    value["files"]["FruitctlHost/README.md"] = self.built["sourceFiles"]["FruitctlHost/README.md"]
+                inventory_path.write_text(json.dumps(value))
+                with self.assertRaisesRegex(ValueError, "reviewed inventory omits or differs from public native"):
+                    self.run_package(fixture)
+                self.assertFalse(fixture[3].exists())
+
+    def test_actual_packager_refuses_source_mutation_between_hash_and_copy(self):
+        fixture = self.package_fixture()
+        copyfile = source.shutil.copyfile
+        def mutate_before_copy(origin, target):
+            if origin == self.public / "FruitctlHost/README.md":
+                origin.write_bytes(b"mutated public docs after review\n")
+            return copyfile(origin, target)
+        with patch.object(source.shutil, "copyfile", mutate_before_copy):
+            with self.assertRaisesRegex(ValueError, "public source changed during copying: FruitctlHost/README.md"):
+                self.run_package(fixture)
+        self.assertFalse(fixture[3].exists())
+        self.assertFalse(fixture[4].exists())
+
+    def test_actual_archive_ignores_ambient_generated_caches(self):
+        fixture = self.package_fixture()
+        caches = ("scripts/release/__pycache__/build_native.cpython-313.pyc",
+                  "LICENSES/__pycache__/refresh-npm-notices.cpython-313.pyc")
+        for name in caches:
+            path = self.public / name; path.parent.mkdir(parents=True, exist_ok=True); path.write_bytes(b"ambient generated bytecode\n")
+        approved = json.loads(fixture[2].read_text())["files"]
+        self.assertTrue(all(name not in approved for name in caches))
+        self.run_package(fixture)
+        with tarfile.open(fixture[3], "r:gz") as archive:
+            names = archive.getnames()
+        self.assertFalse(any("__pycache__" in Path(name).parts for name in names))
+        self.assertTrue(all((self.public / name).is_file() for name in caches))
+
+    def test_actual_packager_refuses_dependency_mutation_during_copy(self):
+        fixture = self.package_fixture()
+        copyfile = source.shutil.copyfile
+        target_source = fixture[0] / "openssl-source/LICENSE"
+        def mutate_before_copy(origin, target):
+            if origin == target_source:
+                origin.write_bytes(b"untested dependency source bytes\n")
+            return copyfile(origin, target)
+        with patch.object(source.shutil, "copyfile", mutate_before_copy):
+            with self.assertRaisesRegex(ValueError, "copied dependency source differs from the tested build inventory"):
+                self.run_package(fixture)
+        self.assertFalse(fixture[3].exists())
+        self.assertFalse(fixture[4].exists())
+
+    def test_actual_packager_refuses_dependency_removal_after_initial_inventory(self):
+        fixture = self.package_fixture()
+        hashes = source.tree_hashes
+        target_source = fixture[0] / "openssl-source"
+        def remove_after_inventory(root):
+            files = hashes(root)
+            if root == target_source:
+                (root / "LICENSE").unlink()
+            return files
+        with patch.object(source, "tree_hashes", remove_after_inventory):
+            with self.assertRaisesRegex(ValueError, "copied dependency source differs from the tested build inventory"):
+                self.run_package(fixture)
+        self.assertFalse(fixture[3].exists())
+        self.assertFalse(fixture[4].exists())
+
+    def test_actual_packager_refuses_swift_source_mutation_during_copy(self):
+        fixture = self.package_fixture()
+        copyfile = source.shutil.copyfile
+        def mutate_before_copy(origin, target):
+            if origin == fixture[6] / "Package.swift":
+                origin.write_bytes(b"// untested Swift source bytes\n")
+            return copyfile(origin, target)
+        with patch.object(source.shutil, "copyfile", mutate_before_copy):
+            with self.assertRaisesRegex(ValueError, "copied dependency source differs from the tested build inventory"):
+                self.run_package(fixture)
+        self.assertFalse(fixture[3].exists())
+        self.assertFalse(fixture[4].exists())
+
+    def test_actual_archive_records_only_the_validated_binary_descriptor(self):
+        fixture = self.package_fixture()
+        daemon = Path(fixture[5][fixture[5].index("--binary") + 1])
+        original = self.descriptor(daemon.read_bytes())
+        digest = source.builder.digest
+        reads = []
+        def replace_after_validated_hash(path):
+            result = digest(path)
+            if path == daemon:
+                reads.append(result)
+                path.write_bytes(b"X" * original["bytes"])
+            return result
+        with patch.object(source.builder, "digest", replace_after_validated_hash):
+            self.run_package(fixture)
+        external = json.loads(fixture[4].read_text())
+        with tarfile.open(fixture[3], "r:gz") as archive:
+            manifest = json.load(archive.extractfile("corresponding-source.json"))
+        self.assertEqual(reads, [original["sha256"]])
+        self.assertNotEqual(digest(daemon), original["sha256"])
+        self.assertEqual(external["binary_sha256"], {"claude-kvm-daemon": original})
+        self.assertEqual(manifest["binary_sha256"], external["binary_sha256"])
+
+    def test_actual_packager_still_requires_authored_release_scripts_and_licenses(self):
+        fixture = self.package_fixture()
+        inventory_path = fixture[2]; original = json.loads(inventory_path.read_text())
+        for name in ("scripts/release/fixture.py", "LICENSES/node-runtime-provenance.json"):
+            with self.subTest(name=name):
+                value = copy.deepcopy(original); del value["files"][name]
+                inventory_path.write_text(json.dumps(value))
+                with self.assertRaisesRegex(ValueError, "reviewed source inventory omits licenses, native/install scripts or locks"):
+                    self.run_package(fixture)
+                self.assertFalse(fixture[3].exists())
+                self.assertFalse(fixture[4].exists())
+
+    def test_actual_packager_refuses_explicit_generated_cache_inventory_entry(self):
+        fixture = self.package_fixture()
+        name = "scripts/release/__pycache__/build_native.cpython-313.pyc"
+        path = self.public / name; path.parent.mkdir(parents=True, exist_ok=True); path.write_bytes(b"generated bytecode\n")
+        value = json.loads(fixture[2].read_text()); value["files"][name] = source.builder.digest(path)
+        fixture[2].write_text(json.dumps(value))
+        with self.assertRaisesRegex(ValueError, "exclude generated caches"):
+            self.run_package(fixture)
+        self.assertFalse(fixture[3].exists())
+        self.assertFalse(fixture[4].exists())
+
+    def test_actual_packager_refuses_changed_native_input_manifest(self):
+        fixture = self.package_fixture()
+        Path(self.built["nativeInputManifest"]).write_bytes(b'{"fixture":"unvalidated inputs"}\n')
+        with self.assertRaisesRegex(ValueError, "native input manifest differs from the tested build"):
+            self.run_package(fixture)
+        self.assertFalse(fixture[3].exists())
+        self.assertFalse(fixture[4].exists())
+
+    def test_actual_archive_pins_native_manifest_despite_source_replacement(self):
+        fixture = self.package_fixture()
+        path = Path(self.built["nativeInputManifest"])
+        original = path.read_bytes()
+        private_receipts = source.private_app_receipts
+        def replace_after_validation(*values):
+            path.write_bytes(b'{"fixture":"unvalidated replacement"}\n')
+            return private_receipts(*values)
+        with patch.object(source, "private_app_receipts", replace_after_validation):
+            self.run_package(fixture)
+        with tarfile.open(fixture[3], "r:gz") as archive:
+            packaged = json.load(archive.extractfile("build-evidence/native-input-manifest.json"))
+            manifest = json.load(archive.extractfile("corresponding-source.json"))
+        external = json.loads(fixture[4].read_text())
+        self.assertEqual(packaged, json.loads(original))
+        self.assertEqual(manifest["nativeInputManifestSha256"], self.sha(original))
+        self.assertEqual(external["nativeInputManifestSha256"], self.sha(original))
+        self.assertNotEqual(source.builder.digest(path), self.sha(original))
+
+    def test_actual_archive_pins_root_metadata_despite_post_copy_replacement(self):
+        fixture = self.package_fixture()
+        names = ("release/native-dependencies.lock.json", "LICENSES/dependency-provenance.json", "LICENSES/node-runtime-provenance.json")
+        original = {name: (self.public / name).read_bytes() for name in names}
+        copyfile = source.shutil.copyfile
+        def replace_after_copy(origin, target):
+            result = copyfile(origin, target)
+            if origin.is_relative_to(self.public) and origin.relative_to(self.public).as_posix() in names:
+                origin.write_bytes(b'{"unvalidated":"replacement metadata"}\n')
+            return result
+        with patch.object(source.shutil, "copyfile", replace_after_copy):
+            self.run_package(fixture)
+        with tarfile.open(fixture[3], "r:gz") as archive:
+            manifest = json.load(archive.extractfile("corresponding-source.json"))
+            for name in names:
+                self.assertEqual(archive.extractfile("fruitctl/" + name).read(), original[name])
+        self.assertEqual(manifest["patches"], json.loads(original[names[0]])["libvncclient"]["patches"])
+        self.assertEqual(manifest["components"], [*json.loads(original[names[1]])["components"], json.loads(original[names[2]])])
+        external = json.loads(fixture[4].read_text())
+        self.assertEqual(manifest["publicSourceInventorySha256"], source.builder.digest(fixture[2]))
+        self.assertEqual(external["publicSourceInventorySha256"], manifest["publicSourceInventorySha256"])
+
+    def test_actual_packager_refuses_all_validated_archive_and_patch_copy_substitutions(self):
+        for name in ("openssl.tar.gz", "libvnc.tar.gz", "fixture-commit.patch", "swift-argument-parser.tar.gz", "node-source.tar.xz"):
+            with self.subTest(name=name):
+                self.setUp()
+                fixture = self.package_fixture()
+                copyfile = source.shutil.copyfile
+                def replace_before_copy(origin, target):
+                    if target.parent.name == "upstream-inputs" and target.name == name:
+                        origin.write_bytes(b"unvalidated source archive or patch replacement\n")
+                    return copyfile(origin, target)
+                with patch.object(source.shutil, "copyfile", replace_before_copy):
+                    with self.assertRaisesRegex(ValueError, "copied source input differs from its validated hash"):
+                        self.run_package(fixture)
+                self.assertFalse(fixture[3].exists())
+                self.assertFalse(fixture[4].exists())
 
 
 if __name__ == "__main__":
