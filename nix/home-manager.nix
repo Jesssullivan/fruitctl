@@ -111,6 +111,11 @@ let
 in {
   options.programs.fruitctl = {
     enable = lib.mkEnableOption "Fruitctl runtime, shared session service and agent skills";
+    installOnly = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = "Install the CLI and canonical agent skills without target configuration, MCP entries, socket directories or services.";
+    };
     package = lib.mkOption {
       type = lib.types.package;
       default = fruitctlFlake.packages.${pkgs.stdenv.hostPlatform.system}.fruitctl;
@@ -119,7 +124,7 @@ in {
     nativePackage = lib.mkOption {
       type = lib.types.nullOr lib.types.package;
       default = null;
-      description = "A separately qualified signed native release for the Darwin broker. There is no implicit legacy fallback.";
+      description = "An explicitly selected signed native release on Darwin. installOnly stages it without starting a broker. There is no implicit legacy fallback.";
     };
     targets = lib.mkOption {
       type = lib.types.attrsOf (lib.types.submodule profileModule);
@@ -148,7 +153,11 @@ in {
         else "${config.xdg.stateHome}/fruitctl/relay.sock";
       description = "Private shared broker/relay socket on this seat. bridgeSocketPath selects a separate remote socket.";
     };
-    enableService = lib.mkOption { type = lib.types.bool; default = true; description = "Run one shared broker on Darwin, or one SSH relay on Linux."; };
+    enableService = lib.mkOption {
+      type = lib.types.bool;
+      default = !cfg.installOnly;
+      description = "Run one shared broker on Darwin, or one SSH relay on Linux. Must be false in installOnly mode.";
+    };
     agents = lib.mkOption {
       type = lib.types.listOf (lib.types.enum (builtins.attrNames manifest.agents));
       default = [ "claude" "codex" "pi" "junie" ];
@@ -160,63 +169,78 @@ in {
       description = "Declarative MCP entries for the owning harness module to merge. Entries contain no credential values.";
     };
     configPath = lib.mkOption {
-      type = lib.types.str;
+      type = lib.types.nullOr lib.types.str;
       readOnly = true;
-      description = "Managed broker configuration path on Darwin; Linux does not get a credential-bearing target document.";
+      description = "Controller configuration path; null when disabled or installOnly. Linux does not get a credential-bearing target document.";
     };
   };
 
-  config = lib.mkIf cfg.enable {
-    assertions = [
-      { assertion = targetNames != [ ]; message = "programs.fruitctl.targets must declare at least one profile."; }
-      { assertion = builtins.all (name: builtins.match "[A-Za-z0-9][A-Za-z0-9._-]{0,127}" name != null) targetNames; message = "Fruitctl target names must be profile identifiers, not host expressions."; }
-      { assertion = absolute cfg.socketPath && builtins.stringLength cfg.socketPath < 104; message = "Fruitctl socketPath must be absolute and shorter than the Darwin Unix-socket path limit (104 bytes)."; }
-      { assertion = lib.hasPrefix "${config.home.homeDirectory}/" (builtins.dirOf cfg.socketPath); message = "Fruitctl's managed socket directory must be a dedicated subdirectory of this user's home."; }
-      { assertion = cfg.bridgeSocketPath == null || absolute cfg.bridgeSocketPath; message = "Fruitctl bridgeSocketPath must be an absolute remote path when supplied."; }
-      { assertion = cfg.bridgeCommand == "fruitctl" || absolute cfg.bridgeCommand; message = "Fruitctl bridgeCommand must be fruitctl or an absolute executable path."; }
-      { assertion = isDarwin || (cfg.bridgeHost != null && cfg.bridgeHost != "" && !(lib.hasPrefix "-" cfg.bridgeHost) && !(lib.hasInfix "\n" cfg.bridgeHost)); message = "Linux Fruitctl requires an existing Darwin bridgeHost SSH alias."; }
-      { assertion = isDarwin || (cfg.nativePackage == null && builtins.all (name: cfg.targets.${name}.targetId == null && cfg.targets.${name}.credentialFile == null && cfg.targets.${name}.daemonPath == null && cfg.targets.${name}.hostHelper == null && cfg.targets.${name}.vnc.username == "" && cfg.targets.${name}.vnc.host == "127.0.0.1" && cfg.targets.${name}.vnc.port == 15900) targetNames); message = "Linux declares Fruitctl target names only; configure physical identities, VNC, credentials and native clients on the Darwin bridge."; }
-      { assertion = !isDarwin || builtins.all (name: absolute cfg.targets.${name}.credentialFile && absolute (if cfg.targets.${name}.daemonPath != null then cfg.targets.${name}.daemonPath else nativePath)) targetNames; message = "Each Darwin Fruitctl target requires an absolute credentialFile and a qualified daemonPath or nativePackage."; }
-      { assertion = builtins.all (name: let helper = cfg.targets.${name}.hostHelper; in helper == null || (helper.sshHost != "" && builtins.length helper.command == 2 && absolute (builtins.head helper.command) && builtins.elemAt helper.command 1 == "--stdio" && helper.displayId != null && helper.displayId > 0)) targetNames; message = "Fruitctl hostHelper requires an SSH alias, [ absolute-executable --stdio ] command and positive displayId."; }
-      { assertion = builtins.all (name: let helper = cfg.targets.${name}.hostHelper; mapping = if helper == null then null else helper.mapping; in mapping == null || (mapping.qualificationReceipt != "" && mapping.displayId == helper.displayId && mapping.displayBounds.width > 0 && mapping.displayBounds.height > 0)) targetNames; message = "Fruitctl hostHelper mapping requires its qualification receipt, matching displayId and positive display bounds."; }
-    ];
-    programs.fruitctl.mcpServers = serverEntries;
-    programs.fruitctl.configPath = if isDarwin
-      then "${config.home.homeDirectory}/Library/Application Support/fruitctl/config.json"
-      else "${config.xdg.configHome}/fruitctl/config.json";
-    home.packages = [ cfg.package ] ++ lib.optional (isDarwin && cfg.nativePackage != null) cfg.nativePackage;
-    home.file = builtins.listToAttrs (map (root: lib.nameValuePair root {
-      source = "${cfg.package}/share/fruitctl/skills/fruitctl";
-      recursive = true;
-    }) skillRoots) // lib.optionalAttrs isDarwin {
-      "Library/Application Support/fruitctl/config.json".text = builtins.toJSON brokerConfig + "\n";
-    };
-    xdg.configFile = fragments;
-    home.activation.fruitctlSocketDirectory = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
-      $DRY_RUN_CMD mkdir -p ${lib.escapeShellArg (builtins.dirOf cfg.socketPath)}
-      $DRY_RUN_CMD chmod 0700 ${lib.escapeShellArg (builtins.dirOf cfg.socketPath)}
-    '';
-    launchd.agents.fruitctl-broker = lib.mkIf (isDarwin && cfg.enableService) {
-      enable = true;
-      config = {
-        Label = "ai.xoxd.fruitctl.broker";
-        ProgramArguments = [ executable "broker" "--socket" cfg.socketPath "--config" cfg.configPath ];
-        ProcessType = "Interactive";
-        RunAtLoad = true;
-        # Cleanup quarantine is process-local in the preview. A fresh broker
-        # must not automatically clear it after an unconfirmed input release.
-        KeepAlive = false;
+  config = lib.mkMerge [
+    {
+      programs.fruitctl.mcpServers = if cfg.enable && !cfg.installOnly then serverEntries else { };
+      programs.fruitctl.configPath = if !cfg.enable || cfg.installOnly then null
+        else if isDarwin
+        then "${config.home.homeDirectory}/Library/Application Support/fruitctl/config.json"
+        else "${config.xdg.configHome}/fruitctl/config.json";
+    }
+    (lib.mkIf cfg.enable {
+      assertions = [
+        { assertion = !cfg.installOnly || !cfg.enableService; message = "Fruitctl installOnly cannot enable a broker or relay service."; }
+        { assertion = !cfg.installOnly || targetNames == [ ]; message = "Fruitctl installOnly requires no targets; use controller mode for target profiles."; }
+        { assertion = !cfg.installOnly || (cfg.bridgeHost == null && cfg.bridgeSocketPath == null && cfg.bridgeCommand == "fruitctl"); message = "Fruitctl installOnly cannot configure an SSH bridge."; }
+        { assertion = isDarwin || cfg.nativePackage == null; message = "Fruitctl nativePackage is Darwin-only; Linux uses the portable CLI and SSH relay."; }
+        { assertion = cfg.nativePackage == null || lib.meta.availableOn pkgs.stdenv.hostPlatform cfg.nativePackage; message = "Fruitctl nativePackage must support this controller's Darwin architecture."; }
+      ];
+      home.packages = [ cfg.package ] ++ lib.optional (isDarwin && cfg.nativePackage != null) cfg.nativePackage;
+      home.file = builtins.listToAttrs (map (root: lib.nameValuePair root {
+        source = "${cfg.package}/share/fruitctl/skills/fruitctl";
+        recursive = true;
+      }) skillRoots);
+    })
+    (lib.mkIf (cfg.enable && !cfg.installOnly) {
+      assertions = [
+        { assertion = targetNames != [ ]; message = "programs.fruitctl.targets must declare at least one profile."; }
+        { assertion = builtins.all (name: builtins.match "[A-Za-z0-9][A-Za-z0-9._-]{0,127}" name != null) targetNames; message = "Fruitctl target names must be profile identifiers, not host expressions."; }
+        { assertion = absolute cfg.socketPath && builtins.stringLength cfg.socketPath < 104; message = "Fruitctl socketPath must be absolute and shorter than the Darwin Unix-socket path limit (104 bytes)."; }
+        { assertion = lib.hasPrefix "${config.home.homeDirectory}/" (builtins.dirOf cfg.socketPath); message = "Fruitctl's managed socket directory must be a dedicated subdirectory of this user's home."; }
+        { assertion = cfg.bridgeSocketPath == null || absolute cfg.bridgeSocketPath; message = "Fruitctl bridgeSocketPath must be an absolute remote path when supplied."; }
+        { assertion = cfg.bridgeCommand == "fruitctl" || absolute cfg.bridgeCommand; message = "Fruitctl bridgeCommand must be fruitctl or an absolute executable path."; }
+        { assertion = isDarwin || (cfg.bridgeHost != null && cfg.bridgeHost != "" && !(lib.hasPrefix "-" cfg.bridgeHost) && !(lib.hasInfix "\n" cfg.bridgeHost)); message = "Linux Fruitctl requires an existing Darwin bridgeHost SSH alias."; }
+        { assertion = isDarwin || (cfg.nativePackage == null && builtins.all (name: cfg.targets.${name}.targetId == null && cfg.targets.${name}.credentialFile == null && cfg.targets.${name}.daemonPath == null && cfg.targets.${name}.hostHelper == null && cfg.targets.${name}.vnc.username == "" && cfg.targets.${name}.vnc.host == "127.0.0.1" && cfg.targets.${name}.vnc.port == 15900) targetNames); message = "Linux declares Fruitctl target names only; configure physical identities, VNC, credentials and native clients on the Darwin bridge."; }
+        { assertion = !isDarwin || builtins.all (name: absolute cfg.targets.${name}.credentialFile && absolute (if cfg.targets.${name}.daemonPath != null then cfg.targets.${name}.daemonPath else nativePath)) targetNames; message = "Each Darwin Fruitctl target requires an absolute credentialFile and a qualified daemonPath or nativePackage."; }
+        { assertion = builtins.all (name: let helper = cfg.targets.${name}.hostHelper; in helper == null || (helper.sshHost != "" && builtins.length helper.command == 2 && absolute (builtins.head helper.command) && builtins.elemAt helper.command 1 == "--stdio" && helper.displayId != null && helper.displayId > 0)) targetNames; message = "Fruitctl hostHelper requires an SSH alias, [ absolute-executable --stdio ] command and positive displayId."; }
+        { assertion = builtins.all (name: let helper = cfg.targets.${name}.hostHelper; mapping = if helper == null then null else helper.mapping; in mapping == null || (mapping.qualificationReceipt != "" && mapping.displayId == helper.displayId && mapping.displayBounds.width > 0 && mapping.displayBounds.height > 0)) targetNames; message = "Fruitctl hostHelper mapping requires its qualification receipt, matching displayId and positive display bounds."; }
+      ];
+      home.file = lib.optionalAttrs isDarwin {
+        "Library/Application Support/fruitctl/config.json".text = builtins.toJSON brokerConfig + "\n";
       };
-    };
-    systemd.user.services.fruitctl-relay = lib.mkIf (!isDarwin && cfg.enableService) {
-      Unit.Description = "Fruitctl SSH bridge to the Darwin desktop broker";
-      Service = {
-        ExecStart = lib.escapeShellArgs relayArgs;
-        Restart = "no";
-        TimeoutStopSec = "5s";
-        UMask = "0077";
+      xdg.configFile = fragments;
+      home.activation.fruitctlSocketDirectory = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
+        $DRY_RUN_CMD mkdir -p ${lib.escapeShellArg (builtins.dirOf cfg.socketPath)}
+        $DRY_RUN_CMD chmod 0700 ${lib.escapeShellArg (builtins.dirOf cfg.socketPath)}
+      '';
+      launchd.agents.fruitctl-broker = lib.mkIf (isDarwin && cfg.enableService) {
+        enable = true;
+        config = {
+          Label = "ai.xoxd.fruitctl.broker";
+          ProgramArguments = [ executable "broker" "--socket" cfg.socketPath "--config" cfg.configPath ];
+          ProcessType = "Interactive";
+          RunAtLoad = true;
+          # Cleanup quarantine is process-local in the preview. A fresh broker
+          # must not automatically clear it after an unconfirmed input release.
+          KeepAlive = false;
+        };
       };
-      Install.WantedBy = [ "default.target" ];
-    };
-  };
+      systemd.user.services.fruitctl-relay = lib.mkIf (!isDarwin && cfg.enableService) {
+        Unit.Description = "Fruitctl SSH bridge to the Darwin desktop broker";
+        Service = {
+          ExecStart = lib.escapeShellArgs relayArgs;
+          Restart = "no";
+          TimeoutStopSec = "5s";
+          UMask = "0077";
+        };
+        Install.WantedBy = [ "default.target" ];
+      };
+    })
+  ];
 }
