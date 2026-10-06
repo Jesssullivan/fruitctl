@@ -23,6 +23,114 @@ def require(condition, message):
         raise ValueError(message)
 
 
+def app_inventory(app):
+    require(app.is_absolute() and app.resolve(strict=True) == app and app.name.endswith(".app")
+            and (app / "Contents/Info.plist").is_file(), "canonical existing app bundle required")
+    files = {}
+    for path in sorted(app.rglob("*")):
+        require(not path.is_symlink(), "private app bundle contains a symlink")
+        if path.is_file():
+            files[path.relative_to(app).as_posix()] = {"sha256": builder.digest(path), "bytes": path.stat().st_size}
+    return files
+
+
+def distribution_receipts(paths, kind):
+    receipts = {}
+    for value in paths:
+        path = Path(value)
+        require(path.is_absolute() and path.resolve(strict=True) == path and path.is_file(),
+                "canonical distribution receipt required")
+        receipt = json.loads(path.read_text())
+        require(isinstance(receipt, dict) and receipt.get("kind") == kind and receipt.get("schemaVersion") == 1
+                and receipt.get("status") == "passed", "passing distribution receipt required: " + kind)
+        name = receipt.get("appName")
+        require(isinstance(name, str) and Path(name).name == name and name.endswith(".app"),
+                "distribution receipt must identify an app bundle")
+        require(name not in receipts, "duplicate distribution receipt for " + name)
+        receipts[name] = {"value": receipt, "sha256": builder.digest(path)}
+    return receipts
+
+
+def private_app_receipts(sign_paths, archive_paths, notary_paths, staple_paths, submission_paths, built, build_receipt):
+    signed = distribution_receipts(sign_paths, "fruitctl-apple-sign")
+    archived = distribution_receipts(archive_paths, "fruitctl-apple-submission-archive")
+    accepted = distribution_receipts(notary_paths, "fruitctl-apple-notarization")
+    stapled = distribution_receipts(staple_paths, "fruitctl-apple-staple")
+    names = set(signed)
+    require(names == set(archived) == set(accepted) == set(stapled),
+            "private app requires its sign, archive, Accepted notarization and staple receipts")
+    submissions = {}
+    for value in submission_paths:
+        path = Path(value)
+        require(path.is_absolute() and path.resolve(strict=True) == path and path.is_file() and path.suffix == ".zip",
+                "canonical submission ZIP required")
+        sha = builder.digest(path)
+        require(sha not in submissions, "duplicate submission ZIP")
+        submissions[sha] = path.stat().st_size
+    require(len(submissions) == len(names), "one exact submission ZIP is required per private app")
+    build_sha = builder.digest(build_receipt)
+    result = {}
+    for name in names:
+        sign, archive, notary, staple = (entries[name]["value"] for entries in (signed, archived, accepted, stapled))
+        artifact = built.get("artifacts", {}).get(name)
+        require(isinstance(artifact, dict) and isinstance(artifact.get("files"), dict), "app is absent from tested build artifacts")
+        require(sign.get("buildReceiptSha256") == build_sha == staple.get("buildReceiptSha256"),
+                "private app receipt differs from the tested build")
+        require(sign.get("unsignedFiles") == artifact["files"], "private app signing receipt differs from exact unsigned build bundle")
+        require(isinstance(sign.get("files"), dict) and bool(sign["files"])
+                and isinstance(staple.get("files"), dict) and bool(staple["files"])
+                and isinstance(sign.get("signature"), dict) and isinstance(staple.get("signature"), dict),
+                "private app signature or final inventory is malformed or changed")
+        require(set(artifact["files"]).issubset(sign["files"]), "private app signed inventory omits original bundle files")
+        # codesign's description includes the app's absolute path. A separate
+        # publication copy must retain signing identity and sealed bytes, while
+        # that path may legitimately change before stapling.
+        require(all(sign["signature"].get(key) == staple["signature"].get(key)
+                    for key in ("identifier", "teamIdentifier", "certificateSha1")), "private app signing identity changed")
+        require(all(staple["files"].get(path) == descriptor for path, descriptor in sign["files"].items()),
+                "stapled app changed original signed bundle bytes")
+        for signature in (sign["signature"], staple["signature"]):
+            require(isinstance(signature.get("teamIdentifier"), str) and re.fullmatch(r"[A-Z0-9]{10}", signature["teamIdentifier"])
+                    and isinstance(signature.get("certificateSha1"), str) and re.fullmatch(r"[A-Fa-f0-9]{40}", signature["certificateSha1"])
+                    and isinstance(signature.get("identifier"), str) and bool(signature["identifier"])
+                    and isinstance(signature.get("description"), str)
+                    and re.search(r"^CodeDirectory .*flags=.*\(runtime\)", signature["description"], re.M)
+                    and re.search(r"^Timestamp=.+$", signature["description"], re.M)
+                    and "Authority=Developer ID Application:" in signature["description"],
+                    "private app receipt lacks verified Developer ID, runtime, timestamp or leaf certificate metadata")
+        require(archive.get("signReceiptSha256") == signed[name]["sha256"]
+                and staple.get("signReceiptSha256") == signed[name]["sha256"], "private app signing receipt chain differs")
+        require(notary.get("archiveReceiptSha256") == archived[name]["sha256"]
+                and notary.get("submittedArchiveSha256") == archive.get("archiveSha256")
+                and submissions.get(archive.get("archiveSha256")) == archive.get("archiveBytes"),
+                "private app submission archive chain differs")
+        apple = notary.get("apple", {})
+        require(isinstance(apple, dict) and apple.get("status") == "Accepted"
+                and isinstance(apple.get("id"), str) and re.fullmatch(r"[a-fA-F0-9]{8}(?:-[a-fA-F0-9]{4}){3}-[a-fA-F0-9]{12}", apple["id"]),
+                "private app requires an actual Accepted submission identifier")
+        require(staple.get("notarizationReceiptSha256") == accepted[name]["sha256"]
+                and staple.get("submissionId") == apple["id"], "private app Accepted/staple receipt chain differs")
+        result[name] = staple
+    return result
+
+
+def binary_descriptor(path, products, built, signed_tools, private_apps):
+    require(path.is_absolute() and path.resolve(strict=True) == path and path.is_file(), "canonical native binary required")
+    if path.name in signed_tools:
+        signed = signed_tools[path.name]
+        return {"sha256": signed["artifactSha256"], "bytes": signed["artifactBytes"]}
+    app = next((parent for parent in path.parents if parent.name in private_apps), None)
+    if app is not None:
+        approved = private_apps[app.name]
+        require(app_inventory(app) == approved["files"], "private app bundle differs from its final staple receipt")
+        return approved["files"].get(path.relative_to(app).as_posix())
+    require(path.is_relative_to(products), "binary must be an actual build output or its receipt-bound signed private copy")
+    relative = path.relative_to(products)
+    artifact = built.get("artifacts", {}).get(relative.parts[0])
+    require(isinstance(artifact, dict), "binary is absent from build artifacts")
+    return artifact if len(relative.parts) == 1 else artifact.get("files", {}).get(Path(*relative.parts[1:]).as_posix())
+
+
 def tree_hashes(root):
     return {path.relative_to(root).as_posix(): builder.digest(path) for path in sorted(root.rglob("*"))
             if path.is_file() and not path.is_symlink()}
@@ -78,6 +186,10 @@ def main():
     parser.add_argument("--source-inventory", required=True, help="Reviewed public file/hash inventory; never blindly package a working directory")
     parser.add_argument("--binary", action="append", required=True, help="Final native binary path; repeat for host/controller")
     parser.add_argument("--staple-receipt", action="append", default=[], help="Actual stapled-app receipt bound to this native build, if signing changed output bytes")
+    parser.add_argument("--app-sign-receipt", action="append", default=[], help="Actual app-sign receipt binding the exact original build bundle")
+    parser.add_argument("--app-archive-receipt", action="append", default=[], help="Actual app submission-archive receipt bound to its sign receipt")
+    parser.add_argument("--app-notarization-receipt", action="append", default=[], help="Actual Accepted app receipt bound to its exact submission archive")
+    parser.add_argument("--app-submission-archive", action="append", default=[], help="Exact app ZIP submitted to Apple, bound to the archive receipt")
     parser.add_argument("--tool-sign-receipt", action="append", default=[], help="Actual signed private controller-copy receipt bound to this tested build")
     args = parser.parse_args()
     build = Path(args.build_dir)
@@ -116,28 +228,12 @@ def main():
         require(receipt.get("artifacts", {}).get(signed["appName"]) == signed["unsignedArtifact"],
                 "tool signing receipt does not identify the exact unsigned build artifact")
         signed_tools[signed["appName"]] = signed
-    stapled = {}
-    for value in args.staple_receipt:
-        signed = json.loads(Path(value).read_text())
-        require(signed.get("kind") == "fruitctl-apple-staple" and signed.get("status") == "passed"
-                and signed.get("buildReceiptSha256") == builder.digest(build / "build-receipt.json")
-                and bool(signed.get("submissionId")), "stapled receipt differs from the tested build")
-        stapled[signed["appName"]] = signed
+    private_apps = private_app_receipts(args.app_sign_receipt, args.app_archive_receipt, args.app_notarization_receipt,
+        args.staple_receipt, args.app_submission_archive, receipt, build / "build-receipt.json")
     products = build / "derived/Build/Products/Release"
     for value in args.binary:
         path = Path(value)
-        require(path.is_absolute() and path.resolve(strict=True) == path and path.is_file(), "canonical native binary required")
-        if path.name in signed_tools:
-            signed = signed_tools[path.name]
-            expected = {"sha256": signed["artifactSha256"], "bytes": signed["artifactBytes"]}
-        else:
-            require(path.is_relative_to(products), "binary must be an actual build output or its receipt-bound signed private copy")
-            relative = path.relative_to(products)
-            artifact = receipt.get("artifacts", {}).get(relative.parts[0])
-            require(isinstance(artifact, dict), "binary is absent from build artifacts")
-            expected = artifact if len(relative.parts) == 1 else artifact.get("files", {}).get(Path(*relative.parts[1:]).as_posix())
-            if relative.parts[0] in stapled:
-                expected = stapled[relative.parts[0]]["files"].get(Path(*relative.parts[1:]).as_posix())
+        expected = binary_descriptor(path, products, receipt, signed_tools, private_apps)
         require(expected == {"sha256": builder.digest(path), "bytes": path.stat().st_size}, "binary differs from tested output")
         require(path.name not in binary_hashes, "duplicate binary names")
         binary_hashes[path.name] = {"sha256": builder.digest(path), "bytes": path.stat().st_size}
