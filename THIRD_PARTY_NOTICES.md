@@ -62,7 +62,6 @@ packages.
 
 | Package | Version | Use | SPDX license | Exact upstream notice |
 |---|---|---|---|---|
-| `@anthropic-ai/sdk` | 0.52.0 | development | MIT | [notice](LICENSES/npm/_anthropic-ai_sdk@0.52.0/LICENSE) |
 | `@hono/node-server` | 1.19.17 | runtime | MIT | [notice](LICENSES/npm/_hono_node-server@1.19.17/LICENSE) |
 | `@modelcontextprotocol/sdk` | 1.26.0 | runtime | MIT | [notice](LICENSES/npm/_modelcontextprotocol_sdk@1.26.0/LICENSE) |
 | `@types/node` | 25.2.3 | development | MIT | [notice](LICENSES/npm/_types_node@25.2.3/LICENSE) |
@@ -82,7 +81,6 @@ packages.
 | `cross-spawn` | 7.0.6 | runtime | MIT | [notice](LICENSES/npm/cross-spawn@7.0.6/LICENSE) |
 | `debug` | 4.4.3 | runtime | MIT | [notice](LICENSES/npm/debug@4.4.3/LICENSE) |
 | `depd` | 2.0.0 | runtime | MIT | [notice](LICENSES/npm/depd@2.0.0/LICENSE) |
-| `dotenv` | 17.3.1 | development | BSD-2-Clause | [notice](LICENSES/npm/dotenv@17.3.1/LICENSE) |
 | `dunder-proto` | 1.0.1 | runtime | MIT | [notice](LICENSES/npm/dunder-proto@1.0.1/LICENSE) |
 | `ee-first` | 1.1.1 | runtime | MIT | [notice](LICENSES/npm/ee-first@1.1.1/LICENSE) |
 | `encodeurl` | 2.0.0 | runtime | MIT | [notice](LICENSES/npm/encodeurl@2.0.0/LICENSE) |

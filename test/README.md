@@ -18,6 +18,11 @@ credential input. `../Tests/VNCReconnectTests.swift` covers the Swift VNC
 lifecycle and framebuffer readiness. [project.yml](../project.yml) declares
 the native build inputs.
 
-The retained `integration.js` and `agents/` files are historical manual live
-experiments. They can operate a desktop and consume provider credentials.
-They are not invoked by the offline command.
+The provider-driven manual experiments were retired. Use
+`git log -- test/integration.js` and `git log -- .env.example` for their history.
+`just test` runs the current `*.test.js` suite with owned synthetic broker/native
+fixtures; it does not start a provider turn or control a real desktop. The native
+reconnect, behavior, and Host suites are declared in [project.yml](../project.yml).
+`just test-observation-gate <daemon> <output_dir>` is the explicit Darwin-only
+synthetic input-admission check. Offline and synthetic results do not establish
+real frontend or desktop qualification.

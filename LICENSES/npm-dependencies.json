@@ -1,28 +1,11 @@
 {
   "schema_version": 1,
   "source": "package-lock.json",
-  "dependency_entries_sha256": "0449cf48ce36e3231553b65f64a126ad3e4d9fbc61df9272b19bdb65f3c9da05",
-  "package_count": 97,
+  "dependency_entries_sha256": "f8cef78fefbf024e836d7993e5d61d807c8fb92d4e0135558648a2605dd30f63",
+  "package_count": 95,
   "generation": "python3 LICENSES/refresh-npm-notices.py",
   "verification": "Downloaded package archives match locked npm integrity; notice bytes retained exactly.",
   "packages": [
-    {
-      "name": "@anthropic-ai/sdk",
-      "version": "0.52.0",
-      "lock_path": "node_modules/@anthropic-ai/sdk",
-      "scope": "development",
-      "license_expression": "MIT",
-      "source_archive_url": "https://registry.npmjs.org/@anthropic-ai/sdk/-/sdk-0.52.0.tgz",
-      "source_archive_integrity": "sha512-d4c+fg+xy9e46c8+YnrrgIQR45CZlAi7PwdzIfDXDM6ACxEZli1/fxhURsq30ZpMZy6LvSkr41jGq5aF5TD7rQ==",
-      "source_archive_sha256": "7aa42a15f16c120addd3c4cb9df3f168a5fc7af59bfb6e940310dcfd288bac04",
-      "notices": [
-        {
-          "upstream_path": "package/LICENSE",
-          "path": "LICENSES/npm/_anthropic-ai_sdk@0.52.0/LICENSE",
-          "sha256": "8bf96984ff8bcfae7e48cae76a529e8a25317ba9e02abf7fd3cc64fdf95657a6"
-        }
-      ]
-    },
     {
       "name": "@hono/node-server",
       "version": "1.19.17",
@@ -343,23 +326,6 @@
           "upstream_path": "package/LICENSE",
           "path": "LICENSES/npm/depd@2.0.0/LICENSE",
           "sha256": "bd134b41da59e452fb5a1d366b660886f741c87c2bf9428e93764c419fbc40f5"
-        }
-      ]
-    },
-    {
-      "name": "dotenv",
-      "version": "17.3.1",
-      "lock_path": "node_modules/dotenv",
-      "scope": "development",
-      "license_expression": "BSD-2-Clause",
-      "source_archive_url": "https://registry.npmjs.org/dotenv/-/dotenv-17.3.1.tgz",
-      "source_archive_integrity": "sha512-IO8C/dzEb6O3F9/twg6ZLXz164a2fhTnEWb95H23Dm4OuN+92NmEAlTrupP9VW6Jm3sO26tQlqyvyi4CsnY9GA==",
-      "source_archive_sha256": "9e526625417afeca42491e4d42e631651e63184b194172a1ff566168ed4b503b",
-      "notices": [
-        {
-          "upstream_path": "package/LICENSE",
-          "path": "LICENSES/npm/dotenv@17.3.1/LICENSE",
-          "sha256": "74b629b24865e1e83c5277ee84590b7937644d6fd959d0c7bdce758676cd2ced"
         }
       ]
     },
