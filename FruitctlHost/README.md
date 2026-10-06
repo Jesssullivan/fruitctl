@@ -187,17 +187,21 @@ displays, covering an inactive launch whose resignation notification preceded
 observer registration. No private screen-lock notifications or TCC bypasses are
 used; lock-screen behavior remains an attended qualification case.
 
-The Neo broker must challenge every 500 ms during activity, reject acknowledgements
-whose challenge round trip exceeds 500 ms, and allow no new input more than
-1,000 ms after that challenge was sent. It must validate all acknowledgement
-bindings and current VNC/display mapping. No remote timestamp can extend that
-local deadline. Release/expiry stops new writes; uncertain input is never replayed.
-Bounded input chunks are at most 250 ms and actions at most 2 seconds.
+The helper-backed broker challenges every 500 ms during activity and rejects
+acknowledgements whose challenge round trip exceeds 500 ms. The native writer
+starts its own monotonic challenge deadline before helper renewal, validates
+session and VNC/display bindings, and admits no new input event more than
+1,000 ms after that native challenge. No remote timestamp extends this deadline;
+expiry is terminal for the owned episode. Held-state neutralization may follow
+expiry, and an already blocked native send remains outside the responsive-writer
+proof. Uncertain input is never replayed. The 250 ms input-chunk and 2-second
+action values are design targets; current source allows longer actions under the
+operation deadline and does not enforce those two maxima for every action.
 
 With an operating main run loop, the target's 3-second expiry plus inspection
 and hide budgets is designed to clear a lost lease within 3.75 seconds. A process
 crash relies on macOS removing its windows and still needs attended validation.
-A hung AppKit main thread cannot supply a fresh acknowledgment, so Neo must stop
+A hung AppKit main thread cannot supply a fresh acknowledgment, so the controller must stop
 new input; this source makes no 5-second visual-clear claim for a hung UI thread.
 
 ## Attended acceptance gates
