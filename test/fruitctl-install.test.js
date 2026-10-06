@@ -19,12 +19,12 @@ async function fixture(t) {
   return { root, home, projectDir, agent: 'claude', scope: 'project', version: 'v0.1.0-alpha.1', target: 'lab-desktop', platform: 'linux', arch: 'x64', env: {} };
 }
 
-async function releaseFixture(f, version = f.version, { symlink = false } = {}) {
+async function releaseFixture(f, version = f.version, { symlink = false, nativeExecutables = {} } = {}) {
   const root = path.join(f.root, version); const bundle = path.join(root, 'bundle');
-  const files = ['bin/fruitctl', 'bin/node', 'bin/fruitctl.mjs', 'lib/install/index.mjs', 'lib/broker/runtime-marker.mjs', 'integrations/agents.json', 'skills/fruitctl/SKILL.md'];
+  const files = ['bin/fruitctl', 'bin/node', 'bin/fruitctl.mjs', 'lib/install/index.mjs', 'lib/broker/runtime-marker.mjs', 'integrations/agents.json', 'skills/fruitctl/SKILL.md', ...Object.keys(nativeExecutables)];
   for (const file of files) {
     const dest = path.join(bundle, file); await fs.mkdir(path.dirname(dest), { recursive: true });
-    await fs.writeFile(dest, `${file} fixture for ${version}\n`, { mode: file === 'bin/fruitctl' || file === 'bin/node' ? 0o755 : 0o600 });
+    await fs.writeFile(dest, `${file} fixture for ${version}\n`, { mode: nativeExecutables[file] ?? (file === 'bin/fruitctl' || file === 'bin/node' ? 0o755 : 0o600) });
   }
   if (symlink) await fs.symlink('/etc/passwd', path.join(bundle, 'external'));
   const archivePath = path.join(root, 'runtime.tar.gz');
@@ -191,6 +191,90 @@ test('doctor reports runtime tampering instead of qualifying a modified installa
   await fs.appendFile(path.join(result.prefix, 'bin/fruitctl.mjs'), '// altered');
   assert.equal((await doctor(f)).status, 'drift');
   await assert.rejects(install({ ...f, offline: release.offline }), /Cached runtime file changed/);
+});
+
+test('embedded native executables preserve their modes and nonexecutable archives stop before config changes', async t => {
+  const executables = ['bin/claude-kvm-daemon', 'libexec/FruitctlHost.app/Contents/MacOS/FruitctlHost'];
+  for (const relative of executables) await t.test(relative, async t => {
+    const f = { ...await fixture(t), platform: 'darwin', arch: 'arm64' };
+    const config = path.join(f.projectDir, '.mcp.json'), original = '{"fixture":"retained"}\n';
+    await fs.writeFile(config, original);
+    for (const mode of [0o644, 0o641]) {
+      // Root can execute a file with any execute bit; 0641 is inaccessible to its ordinary owner.
+      if (mode === 0o641 && process.getuid?.() === 0) continue;
+      const version = mode === 0o644 ? f.version : 'v0.1.0-alpha.3';
+      const bad = await releaseFixture(f, version, { nativeExecutables: { [relative]: mode } });
+      await assert.rejects(install({ ...f, version, offline: bad.offline }), /Runtime bundle has nonexecutable/, `${relative} mode ${mode.toString(8)} must be executable by the installing user`);
+      assert.equal(await fs.readFile(config, 'utf8'), original);
+    }
+    const good = await releaseFixture(f, 'v0.1.0-alpha.2', { nativeExecutables: { [relative]: 0o755 } });
+    const installed = await install({ ...f, version: good.manifest.version, offline: good.offline });
+    const receipt = JSON.parse(await fs.readFile(installed.receiptPath, 'utf8'));
+    assert.equal(receipt.runtime.modes[relative], 0o755);
+    assert.equal((await fs.lstat(path.join(installed.prefix, relative))).mode & 0o777, 0o755);
+    assert.equal(await fs.readFile(path.join(installed.prefix, relative), 'utf8'), `${relative} fixture for ${good.manifest.version}\n`);
+    assert.equal((await doctor(f)).status, 'configured');
+  });
+});
+
+test('permission drift is reported by doctor and prevents cache reuse without changing configuration', async t => {
+  const f = await fixture(t), release = await releaseFixture(f);
+  const installed = await install({ ...f, offline: release.offline });
+  const receipt = JSON.parse(await fs.readFile(installed.receiptPath, 'utf8'));
+  assert.deepEqual(Object.keys(receipt.runtime.modes).sort(), Object.keys(receipt.runtime.files).sort());
+  assert.equal(receipt.runtime.modes['bin/node'], 0o755);
+  const config = path.join(f.projectDir, '.mcp.json'), original = await fs.readFile(config, 'utf8');
+  await fs.chmod(path.join(installed.prefix, 'bin/node'), 0o644);
+  const inspected = await doctor(f);
+  assert.equal(inspected.status, 'drift');
+  assert.equal(inspected.checks.find(check => check.name === 'bin/node').ok, false);
+  await assert.rejects(install({ ...f, offline: release.offline }), /Cached runtime file changed: bin\/node/);
+  assert.equal(await fs.readFile(config, 'utf8'), original);
+  await fs.chmod(path.join(installed.prefix, 'bin/node'), 0o755);
+  assert.equal((await doctor(f)).status, 'configured');
+});
+
+test('cache reuse rejects a file replaced by a symlink even when its content is identical', async t => {
+  const f = await fixture(t), release = await releaseFixture(f);
+  const installed = await install({ ...f, offline: release.offline });
+  const native = path.join(installed.prefix, 'bin/node'), copied = path.join(f.root, 'identical-node');
+  await fs.rename(native, copied); await fs.symlink(copied, native);
+  assert.equal((await doctor(f)).checks.find(check => check.name === 'bin/node').ok, false);
+  await assert.rejects(install({ ...f, offline: release.offline }), /Cached runtime file changed: bin\/node/);
+});
+
+test('mode inventories must match every file while legacy hash-only receipts remain usable', async t => {
+  const f = await fixture(t), release = await releaseFixture(f);
+  const installed = await install({ ...f, offline: release.offline });
+  const receipt = JSON.parse(await fs.readFile(installed.receiptPath, 'utf8'));
+  const invalid = [null, [], { ...receipt.runtime.modes, extra: 0o600 },
+    { ...receipt.runtime.modes, 'bin/node': 0o1000 }, { ...receipt.runtime.modes, 'bin/node': -1 },
+    { ...receipt.runtime.modes, 'bin/node': 1.5 }, { ...receipt.runtime.modes, 'bin/node': '0755' }];
+  const missing = { ...receipt.runtime.modes }; delete missing['bin/node']; invalid.push(missing);
+  for (const modes of invalid) {
+    await fs.writeFile(installed.receiptPath, JSON.stringify({ ...receipt, runtime: { ...receipt.runtime, modes } }));
+    await assert.rejects(doctor(f), /Invalid runtime mode inventory/);
+  }
+  delete receipt.runtime.modes;
+  await fs.writeFile(installed.receiptPath, JSON.stringify(receipt));
+  assert.equal((await doctor(f)).status, 'configured');
+  const v2 = await releaseFixture(f, 'v0.1.0-alpha.2');
+  await install({ ...f, version: v2.manifest.version, offline: v2.offline });
+  assert.equal((await rollback(f)).to, f.version);
+  assert.equal((await doctor(f)).status, 'configured');
+  assert.equal((await uninstall(f)).status, 'removed');
+});
+
+test('rollback refuses a prior runtime with altered permissions before changing the current configuration', async t => {
+  const f = await fixture(t), v1 = await releaseFixture(f);
+  const first = await install({ ...f, offline: v1.offline });
+  const v2 = await releaseFixture(f, 'v0.1.0-alpha.2');
+  await install({ ...f, version: v2.manifest.version, offline: v2.offline });
+  const config = path.join(f.projectDir, '.mcp.json'), original = await fs.readFile(config, 'utf8');
+  await fs.chmod(path.join(first.prefix, 'bin/fruitctl'), 0o644);
+  await assert.rejects(rollback(f), /Previous runtime file is missing or changed: bin\/fruitctl/);
+  assert.equal(await fs.readFile(config, 'utf8'), original);
+  assert.equal((await doctor(f)).version, v2.manifest.version);
 });
 
 test('aggregate doctor audits receipts and rejects missing/unknown agent identities without recursion', async t => {
