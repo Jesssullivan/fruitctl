@@ -77,7 +77,9 @@ def metadata(app, team, certificate_sha1=None):
     if certificate_sha1:
         with tempfile.TemporaryDirectory(prefix="fruitctl-public-certificate-") as directory:
             prefix = Path(directory) / "certificate"
-            run(["codesign", "--display", "--extract-certificates", prefix, app])
+            # codesign's certificate prefix is an optional long-option value.
+            # Passing it as the next argv item treats the prefix as signed code.
+            run(["codesign", "--display", "--extract-certificates=" + str(prefix), app])
             actual = hashlib.sha1(Path(str(prefix) + "0").read_bytes()).hexdigest().upper()
         require(actual == certificate_sha1.upper(), "signature leaf certificate differs from explicit expected certificate")
         result["certificateSha1"] = actual
