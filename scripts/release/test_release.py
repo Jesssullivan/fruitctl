@@ -25,6 +25,134 @@ runtime_spec = importlib.util.spec_from_file_location("runtime_inputs", ROOT / "
 runtime = importlib.util.module_from_spec(runtime_spec); runtime_spec.loader.exec_module(runtime)
 notice_spec = importlib.util.spec_from_file_location("notice_producer", ROOT / "LICENSES/refresh-npm-notices.py")
 notice_producer = importlib.util.module_from_spec(notice_spec); notice_spec.loader.exec_module(notice_producer)
+stage_spec = importlib.util.spec_from_file_location("runtime_stage", ROOT / "scripts/release/prepare_runtime.py")
+runtime_stage = importlib.util.module_from_spec(stage_spec); stage_spec.loader.exec_module(runtime_stage)
+
+
+class RuntimeSourceSelectionTests(unittest.TestCase):
+    def setUp(self):
+        self.maxDiff = None
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.base = Path(self.directory.name).resolve()
+        self.root = self.base / "checkout"; self.root.mkdir()
+        self.stage = self.base / "stage"; self.stage.mkdir()
+        self.files = {
+            "package.json": b'{"name":"fixture"}\n', "package-lock.json": b'{"packages":{}}\n',
+            "index.js": b"// entry fixture\n", "LICENSE": b"MIT license fixture\n",
+            "THIRD_PARTY_NOTICES.md": b"tracked notice fixture\n",
+            "bin/fruitctl.mjs": b"#!/usr/bin/env node\n// executable fixture\n",
+            "lib/nested/module.py": b"# tracked authored fixture\n",
+            "tools/helper.mjs": b"// helper fixture\n",
+            "integrations/fixture/settings.json": b"{}\n",
+            "skills/fixture/SKILL.md": b"skill fixture\n",
+            "LICENSES/npm/fixture@1.0.0/LICENSE": b"retained dependency license\n",
+            "LICENSES/ordinary.data": b"\x00ordinary tracked bytes\xff",
+        }
+        for name, data in self.files.items():
+            path = self.root / name; path.parent.mkdir(parents=True, exist_ok=True); path.write_bytes(data)
+        (self.root / "bin/fruitctl.mjs").chmod(0o755)
+        (self.root / ".gitignore").write_text("__pycache__/\n*.pyc\n*.ignored\n")
+        (self.root / "README.md").write_text("tracked outside curated runtime roots\n")
+        self.git("init", "--quiet")
+        self.git("add", "--all")
+        self.git("commit", "--quiet", "--message", "Committed public source fixtures")
+
+    def git(self, *args):
+        # These settings affect only this owned temporary fixture command;
+        # no production Git hooks, signing config or repository are changed.
+        return subprocess.check_output(["git", "-c", "core.hooksPath=/dev/null", "-c", "commit.gpgsign=false",
+                                        "-c", "user.name=Runtime Source Fixture", "-c", "user.email=fixture@example.invalid",
+                                        *args], cwd=self.root, stderr=subprocess.STDOUT)
+
+    def test_stage_contains_only_committed_curated_files_with_hashes_and_modes(self):
+        extras = {"LICENSES/__pycache__/refresh-npm-notices.cpython-313.pyc": b"ignored bytecode fixture",
+                  "LICENSES/local.ignored": b"ignored ordinary artifact",
+                  "lib/untracked.pyc": b"untracked bytecode", "tools/local-junk.mjs": b"untracked code"}
+        for name, data in extras.items():
+            path = self.root / name; path.parent.mkdir(parents=True, exist_ok=True); path.write_bytes(data)
+        result = runtime_stage.stage_authored_source(self.root, self.stage)
+        self.assertEqual(result, {name: hashlib.sha256(data).hexdigest() for name, data in self.files.items()})
+        self.assertEqual({path.relative_to(self.stage).as_posix() for path in self.stage.rglob("*") if path.is_file()},
+                         set(self.files))
+        for name, data in self.files.items():
+            self.assertEqual((self.stage / name).read_bytes(), data)
+            self.assertEqual((self.stage / name).stat().st_mode & 0o777, 0o755 if name.startswith("bin/") else 0o644)
+
+    def test_tracked_file_symlink_is_refused_before_copy(self):
+        source = self.root / "LICENSE"; source.unlink(); source.symlink_to(self.root / "THIRD_PARTY_NOTICES.md")
+        with self.assertRaisesRegex(ValueError, "source symlinks are refused"):
+            runtime_stage.stage_authored_source(self.root, self.stage)
+        self.assertEqual(list(self.stage.iterdir()), [])
+
+    def test_tracked_parent_symlink_is_refused_before_copy(self):
+        parent = self.root / "lib/nested"; shutil.rmtree(parent)
+        external = self.base / "outside"; external.mkdir(); (external / "module.py").write_text("outside fixture\n")
+        parent.symlink_to(external, target_is_directory=True)
+        with self.assertRaisesRegex(ValueError, "source symlinks are refused"):
+            runtime_stage.stage_authored_source(self.root, self.stage)
+        self.assertEqual(list(self.stage.iterdir()), [])
+
+    def test_modified_tracked_source_is_not_attributed_to_head(self):
+        (self.root / "lib/nested/module.py").write_text("changed after source commit\n")
+        with self.assertRaisesRegex(ValueError, "authored source must match Git HEAD"):
+            runtime_stage.stage_authored_source(self.root, self.stage)
+        self.assertEqual(list(self.stage.iterdir()), [])
+
+    def test_index_only_curated_addition_is_not_attributed_to_head(self):
+        (self.root / "lib/index-only.mjs").write_text("// staged after source commit\n")
+        self.git("add", "--", "lib/index-only.mjs")
+        with self.assertRaisesRegex(ValueError, "authored source must match Git HEAD"):
+            runtime_stage.stage_authored_source(self.root, self.stage)
+        self.assertEqual(list(self.stage.iterdir()), [])
+
+    def test_noncurated_worktree_edits_do_not_change_authored_source(self):
+        (self.root / "README.md").write_text("not a runtime authored input\n")
+        result = runtime_stage.stage_authored_source(self.root, self.stage)
+        self.assertEqual(result, {name: hashlib.sha256(data).hexdigest() for name, data in self.files.items()})
+
+    def test_head_change_during_copy_is_refused(self):
+        copyfile = runtime_stage.shutil.copyfile
+        changed = False
+        def advance_head(source_path, target_path):
+            nonlocal changed
+            result = copyfile(source_path, target_path)
+            if not changed:
+                changed = True
+                (self.root / "README.md").write_text("new source revision during stage\n")
+                self.git("add", "--", "README.md")
+                self.git("commit", "--quiet", "--message", "Advance owned source fixture during copying")
+            return result
+        with patch.object(runtime_stage.shutil, "copyfile", advance_head):
+            with self.assertRaisesRegex(ValueError, "source revision changed during staging"):
+                runtime_stage.stage_authored_source(self.root, self.stage)
+
+    def test_worktree_mutation_during_hash_is_not_attributed_to_head(self):
+        file_sha = runtime_stage.inputs.file_sha
+        changed = False
+        def mutate_before_hash(path):
+            nonlocal changed
+            if path == self.root / "LICENSE" and not changed:
+                changed = True
+                path.write_text("changed after cleanliness check without a new commit\n")
+            return file_sha(path)
+        with patch.object(runtime_stage.inputs, "file_sha", mutate_before_hash):
+            with self.assertRaisesRegex(ValueError, "authored source must match Git HEAD"):
+                runtime_stage.stage_authored_source(self.root, self.stage)
+        self.assertEqual(list(self.stage.iterdir()), [])
+
+    def test_source_mutation_during_copy_is_refused_by_committed_hash(self):
+        copyfile = runtime_stage.shutil.copyfile
+        changed = False
+        def mutate_before_copy(source_path, target_path):
+            nonlocal changed
+            if source_path == self.root / "LICENSE" and not changed:
+                changed = True
+                source_path.write_text("changed after source hash before copy\n")
+            return copyfile(source_path, target_path)
+        with patch.object(runtime_stage.shutil, "copyfile", mutate_before_copy):
+            with self.assertRaisesRegex(ValueError, "authored source changed during copying"):
+                runtime_stage.stage_authored_source(self.root, self.stage)
 
 
 class NpmInventoryTests(unittest.TestCase):

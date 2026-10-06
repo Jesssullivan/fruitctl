@@ -51,6 +51,10 @@ const fail = (request, message) => {
   emit({ id: request.id, error: { code: -32000, message } });
 };
 const expire = () => {
+  // Node truncates fractional timer delays; admission still uses the actual
+  // monotonic deadline, as the native watchdog does.
+  const remaining = current.until - now();
+  if (remaining > 0) { timer = setTimeout(expire, Math.max(1, remaining)); return; }
   terminal = true; record('native-expired');
   if (active) { clearInterval(active.tick); emit({ id: active.id, error: { code: -32000, message: 'Native input permit expired' } }); active = undefined; }
 };
@@ -367,12 +371,33 @@ test('a native grant acknowledgement cannot revive an expired local helper owner
 test('a shorter helper lease bounds native authorization and cancels active input', async t => {
   const owned = await fixture(t, 'normal', 'short-lease');
   const executor = await owned.host();
-  await assert.rejects(executor.execute([{ action: 'key_type', text: 'synthetic-only' }]), /permit expired|Daemon not ready/);
-  const grant = (await owned.events()).find(event => event.method === 'grant_input_permit');
+  const permitExpired = error => {
+    // Either independent expiry guard can finish first. A native refusal is
+    // wrapped by the helper; require its structured permit error, not merely
+    // the generic wrapper message.
+    if (error.message === 'Native operation failed') {
+      assert.equal(error.responses?.length, 1);
+      assert.deepEqual(error.responses[0].error, {
+        code: -32000, message: 'Native input permit expired',
+      });
+    } else assert.match(error.message, /permit expired|Daemon not ready/);
+    return true;
+  };
+  await assert.rejects(executor.execute([{ action: 'key_type', text: 'synthetic-only' }]), permitExpired);
+  await executor.close();
+  await owned.native.closed;
+  assert.ok(executor.failed);
+  assert.equal(owned.native.terminal, true);
+  assert.equal(owned.native.pending.size, 0);
+  assert.ok(owned.native.child.exitCode !== null || owned.native.child.signalCode !== null);
+  assert.ok(owned.helper().exitCode !== null || owned.helper().signalCode !== null);
+  const events = await owned.events();
+  const grant = events.find(event => event.method === 'grant_input_permit');
   assert.equal(grant.params.lease_remaining_ms, 100);
-  const inputs = (await owned.events()).filter(event => event.event === 'native-input-event').length;
-  await assert.rejects(executor.execute([{ action: 'key_tap', key: 'tab' }]), /permit expired|Daemon not ready/);
-  assert.equal((await owned.events()).filter(event => event.event === 'native-input-event').length, inputs);
+  assert.ok(events.some(event => event.event === 'native-input-start'));
+  assert.ok(!events.some(event => event.event === 'native-input-end' || event.event === 'forbidden-raw-capture'));
+  await assert.rejects(executor.execute([{ action: 'key_tap', key: 'tab' }]), permitExpired);
+  assert.deepEqual(await owned.events(), events, 'terminal ownership must dispatch no successor request');
 });
 
 test('expired native permit rejects a fresh challenge and old grant without successor input', async t => {
