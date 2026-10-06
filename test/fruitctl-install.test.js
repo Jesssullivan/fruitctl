@@ -7,7 +7,7 @@ import { promisify } from 'node:util';
 import { execFile } from 'node:child_process';
 import { install, doctor, uninstall, rollback } from '../lib/install/index.mjs';
 import { renderIntegration, resolveAdapter } from '../lib/install/adapters.mjs';
-import { parseJsonc, patchJsonEntry, jsonEntry } from '../lib/install/config.mjs';
+import { parseJsonc, patchJsonEntry, jsonEntry, patchTomlEntry, tomlEntry, ownedFieldsMatch } from '../lib/install/config.mjs';
 import { sha256, resolveRelease } from '../lib/install/release.mjs';
 
 const run = promisify(execFile);
@@ -172,6 +172,72 @@ test('uninstall after an upgrade restores the exact original TOML and removes ow
   await uninstall(f);
   assert.equal(await fs.readFile(configPath, 'utf8'), original);
   await assert.rejects(fs.lstat(path.join(f.home, '.local/bin/fruitctl')), { code: 'ENOENT' });
+});
+
+test('TOML repeats, changes and removals preserve LF/CRLF table separators and foreign sections', () => {
+  for (const newline of ['\n', '\r\n']) {
+    const prefix = '# retain operator comment\nmodel = "test"\n\n[mcp_servers.other]\ncommand = "operator"\n\n\n'.replaceAll('\n', newline);
+    const owned = '[mcp_servers.fruitctl]\ncommand = "/old"\nargs = ["mcp"]\n'.replaceAll('\n', newline);
+    const suffix = '\n \t\n[unrelated]\n# retain foreign comment\nunknown = true\n'.replaceAll('\n', newline);
+    const original = prefix + owned + suffix;
+    assert.equal(tomlEntry(original), owned);
+    assert.equal(patchTomlEntry(original, owned), original);
+    assert.equal(patchTomlEntry(original, owned.trim()), original);
+    const updated = owned.replace('/old', '/new');
+    const changed = patchTomlEntry(original, updated);
+    assert.equal(changed, prefix + updated + suffix);
+    assert.equal(patchTomlEntry(changed, updated), changed);
+    assert.equal(patchTomlEntry(original, undefined), prefix + suffix);
+    assert.equal(patchTomlEntry(prefix + suffix, undefined), prefix + suffix);
+    assert.equal(ownedFieldsMatch(owned, updated, 'codex'), false);
+    assert.equal(ownedFieldsMatch(owned, owned + 'unknown = true' + newline, 'codex'), false);
+    const nested = '[mcp_servers.fruitctl.env]\nKEY = "value"\n'.replaceAll('\n', newline);
+    const multiple = prefix + owned + suffix + newline + nested + newline + '[last]\nvalue = 1\n'.replaceAll('\n', newline);
+    assert.equal(patchTomlEntry(multiple, tomlEntry(multiple)), multiple);
+    assert.equal(patchTomlEntry(multiple, undefined), multiple.replace(owned, '').replace(nested, ''));
+    assert.equal(patchTomlEntry(multiple, updated), multiple.replace(owned, updated).replace(nested, ''));
+  }
+  assert.throws(() => patchTomlEntry('mcp_servers.fruitctl = {command="operator"}\n', 'replacement'), /manual merge/);
+});
+
+test('Codex user and project lifecycles retain exact TOML bytes on repeat and apply real upgrades', async t => {
+  for (const scope of ['user', 'project']) await t.test(scope, async t => {
+    const f = { ...await fixture(t), agent: 'codex', scope, version: 'v0.1.0-alpha.2' };
+    const v1 = await releaseFixture(f, 'v0.1.0-alpha.2'), adapter = resolveAdapter(f);
+    const original = '# retain operator comment\nmodel = "test"\n\n[mcp_servers.other]\ncommand = "operator"\n\n';
+    await fs.mkdir(path.dirname(adapter.configPath), { recursive: true });
+    await fs.writeFile(adapter.configPath, original);
+    const first = await install({ ...f, offline: v1.offline });
+    const snapshot = async (prefix = first.prefix) => ({ config: await fs.readFile(first.configPath, 'utf8'),
+      launcher: await fs.readlink(first.launcherPath), skill: await fs.readlink(first.skillPath),
+      nodeInode: (await fs.stat(path.join(prefix, 'bin/node'))).ino });
+    const before = await snapshot();
+    await install({ ...f, offline: v1.offline });
+    assert.deepEqual(await snapshot(), before);
+    assert.equal((await doctor(f)).status, 'configured');
+    const tampered = before.config.replace(tomlEntry(before.config), tomlEntry(before.config) + 'unknown = true\n');
+    await fs.writeFile(first.configPath, tampered);
+    assert.equal((await doctor(f)).status, 'drift');
+    await assert.rejects(uninstall(f), /MCP entry changed/);
+    assert.equal(await fs.readFile(first.configPath, 'utf8'), tampered);
+    await fs.writeFile(first.configPath, before.config);
+    const v2 = await releaseFixture(f, 'v0.1.0-alpha.3');
+    const upgraded = await install({ ...f, version: v2.manifest.version, offline: v2.offline });
+    const updated = renderIntegration({ agent: 'codex', executable: path.join(upgraded.prefix, 'bin/fruitctl'), target: f.target });
+    const changed = await fs.readFile(first.configPath, 'utf8');
+    assert.equal(changed, before.config.replace(tomlEntry(before.config), updated));
+    assert.equal((await rollback(f)).to, f.version);
+    assert.equal(await fs.readFile(first.configPath, 'utf8'), before.config);
+    assert.equal((await doctor(f)).status, 'configured');
+    await install({ ...f, version: v2.manifest.version, offline: v2.offline });
+    const afterReinstall = await snapshot(upgraded.prefix);
+    await install({ ...f, version: v2.manifest.version, offline: v2.offline });
+    assert.deepEqual(await snapshot(upgraded.prefix), afterReinstall);
+    assert.equal((await doctor(f)).status, 'configured');
+    await uninstall(f);
+    assert.equal(await fs.readFile(first.configPath, 'utf8'), original);
+    assert.equal((await uninstall(f)).status, 'not-installed');
+  });
 });
 
 test('Junie mutable enabled state survives upgrades and rollback; no instruction override is created', async t => {
