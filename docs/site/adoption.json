@@ -16,9 +16,11 @@
   "indicatorPolicy": "qualified-capture-exclusion-only",
   "support": "public-best-effort",
   "currentPreview": {
-    "tag": "v0.1.0-alpha.1",
-    "sourceRevision": "7064d349890a9b18717b62a142452363629681ee",
+    "tag": "v0.1.0-alpha.2",
+    "sourceRevision": "6c8a5751b1ab92ee4093aa0091e88ef212021dab",
     "releaseScope": "runtime-preview",
     "qualification": "scoped"
-  }
+  },
+  "nativeControllerDistribution": "bundled-in-darwin-arm64-runtime",
+  "hostDistribution": "unqualified-source-prototype-no-public-binary"
 }

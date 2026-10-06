@@ -14,22 +14,31 @@ it does not mean a desktop session or native binary has been qualified.
 
 ## Install a pinned release
 
-The immutable [v0.1.0-alpha.1 runtime preview](https://github.com/xoxd-ai/fruitctl/releases/tag/v0.1.0-alpha.1)
-is pinned to source commit `7064d349890a9b18717b62a142452363629681ee`.
-Use an operator-configured target profile. The preview provides the runtime,
-skill and adapters; it requires an existing Darwin native controller and normal
-macOS consent.
+The immutable [v0.1.0-alpha.2 controller runtime preview](https://github.com/xoxd-ai/fruitctl/releases/tag/v0.1.0-alpha.2)
+is pinned to source commit `6c8a5751b1ab92ee4093aa0091e88ef212021dab`.
+It provides the runtime, skill and adapters. The Darwin arm64 runtime includes
+the Developer ID-signed, notarized controller at `bin/claude-kvm-daemon`.
+Linux uses the separately configured SSH bridge to Darwin. The broker, target
+profile, credential provider, target Screen Sharing and any macOS consent remain
+operator-owned. The Host application and purple indicator remain source
+prototypes with private lab binaries and are not distributed in this preview.
 
-The Linux x64 public download and bootstrap passed anonymous HTTPS acceptance
-on Rocky Linux 10.2 using isolated home and project paths containing spaces.
-Codex user and Claude project installation, the bundled Node.js 24.21.0 launcher,
-all runtime file hashes, doctor and uninstall passed. Both uninstalls
-restored unrelated configuration exactly. This evidence covers packaging and
-configuration; each real frontend still needs image, input and lease acceptance.
+The alpha.2 Linux x64 public download and bootstrap passed anonymous HTTPS
+acceptance on Rocky Linux 10.2 using isolated home and project paths containing
+spaces. All seven user adapters and Claude project installation, the bundled
+Node.js 24.21.0 launcher, all runtime hashes and permissions, aggregate doctor
+and every uninstall passed. Uninstalls restored unrelated configuration exactly.
+This evidence covers public packaging and configuration; each real frontend
+still needs image, input and lease acceptance.
+
+The immutable [v0.1.0-alpha.1 runtime preview](https://github.com/xoxd-ai/fruitctl/releases/tag/v0.1.0-alpha.1)
+remains pinned to `7064d349890a9b18717b62a142452363629681ee` and requires an
+existing Darwin native controller. Its earlier anonymous Codex user and Claude
+project bootstrap checks remain historical evidence for that release.
 
 ```sh
-fruitctl install --agent codex --scope user --version v0.1.0-alpha.1 --target <profile> --dry-run
-fruitctl install --agent codex --scope user --version v0.1.0-alpha.1 --target <profile>
+fruitctl install --agent codex --scope user --version v0.1.0-alpha.2 --target <profile> --dry-run
+fruitctl install --agent codex --scope user --version v0.1.0-alpha.2 --target <profile>
 fruitctl doctor --agent codex --scope user
 fruitctl doctor --json
 fruitctl rollback --agent codex --scope user
@@ -56,8 +65,8 @@ one terminal operation. Replace `default` with your configured profile:
 
 ```sh
 (
-  FRUITCTL_SOURCE_SHA='7064d349890a9b18717b62a142452363629681ee'
-  FRUITCTL_RELEASE_TAG='v0.1.0-alpha.1'
+  FRUITCTL_SOURCE_SHA='6c8a5751b1ab92ee4093aa0091e88ef212021dab'
+  FRUITCTL_RELEASE_TAG='v0.1.0-alpha.2'
   FRUITCTL_SCRIPT=$(mktemp)
   trap 'rm -f "$FRUITCTL_SCRIPT"' EXIT
   curl --disable --fail --silent --show-error --location --proto '=https' --proto-redir '=https' \
@@ -77,6 +86,12 @@ one terminal operation. Replace `default` with your configured profile:
 The GitHub HTTPS origin authenticates the script and checksum inventory. SHA-256
 detects differing release bytes; it is not a substitute for Apple signing,
 notarization, runtime acceptance or the release publisher's account security.
+
+No separate native-install flag is needed for the bundled Darwin controller.
+An explicit profile `daemonPath` takes priority, followed by
+`CLAUDE_KVM_DAEMON_PATH`; otherwise Darwin resolves the absolute controller path
+inside its installed release. Installation does not start a broker, native
+process or service, create a target profile or credential, or grant macOS consent.
 
 ## Configuration destinations
 
@@ -163,13 +178,17 @@ owner-only permissions. Release bundles live under
 `~/.local/share/fruitctl/releases/<tag>/<platform>-<arch>`. The convenience launcher
 is `~/.local/bin/fruitctl`; MCP configurations use the absolute versioned path.
 Rollback restores the previous recorded entry and skill after checking the prior
-bundle's integrity. A shared `.mcp.json` entry or skill cannot pin conflicting
+bundle's regular files, hashes and recorded permissions. Darwin's bundled
+controller follows that restored release; explicit operator controller paths
+remain operator-owned. A shared `.mcp.json` entry or skill cannot pin conflicting
 versions; such upgrades require the common configuration surface. The convenience
 launcher can advance independently while every MCP entry retains its absolute
 release path. Uninstall retains
-unrelated edits and shared installations; verified release caches remain so
-recovery is possible. Doctor checks receipts, owned config, links and every
-recorded runtime file hash. Uninstall and rollback restore their previous file
+unrelated edits and shared installations; verified release caches, including
+the bundled Darwin controller, remain so recovery is possible. Doctor checks
+receipts, owned config, links and every recorded runtime file hash and permission.
+Legacy hash-only receipts remain readable. Doctor does not validate Apple signing
+or notarization. Uninstall and rollback restore their previous file
 state if a later filesystem operation fails. Doctor never launches an agent,
 contacts a target or verifies desktop pixels.
 

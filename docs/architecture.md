@@ -70,6 +70,26 @@ report both facts and stop until a complete observation is available.
 
 ## FuzzyBot spell
 
+Fruitctl Host remains an unqualified source prototype. Public runtime previews
+include no Host binary, installer, background service or generated helper
+mapping. Its signed development copies remain private until the exact capture
+mode passes exclusion, input mapping, lifecycle and permission qualification.
+Signing or notarization cannot enable this feature or supply macOS consent.
+
+Permission provisioning is a separate, attended step. Apple's
+[PPPC schema](https://raw.githubusercontent.com/apple/device-management/release/mdm/profiles/com.apple.TCC.configuration-profile-policy.yaml)
+does not allow a profile to silently grant Screen Capture. A user-approved MDM
+policy may let a standard user configure that service with
+`AllowStandardUserToSetSystemService`; this authorizes the user's choice rather
+than granting recording access. Accessibility and event-posting policies are
+separate permissions, not substitutes for Screen Capture approval.
+
+Apple's [Persistent Content Capture entitlement](https://developer.apple.com/documentation/bundleresources/entitlements/com.apple.developer.persistent-content-capture)
+is available from macOS 14.4 for VNC applications. It requires Apple permission
+and the approved capability in the app's Xcode profile. This is a reviewed
+capability route, not an ordinary TCC bypass or a headless grant. Fruitctl's
+public preview supplies neither that approval nor Screen Capture provisioning.
+
 The target-side indicator draws an edge-feathered deep purple pulse with the
 centered message: “Machine under FuzzyBot spell, courtesy xoxd.ai)”. It accepts
 no pointer or keyboard input and respects a reduced-motion setting. Human stop

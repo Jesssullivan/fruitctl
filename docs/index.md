@@ -42,10 +42,13 @@ milestones and the distinction between Lab targets and public best-effort suppor
 
 ## Current status
 
-The immutable [v0.1.0-alpha.1 runtime preview](https://github.com/xoxd-ai/fruitctl/releases/tag/v0.1.0-alpha.1)
-is available with bundled Node.js 24.21.0. Archive integrity, rootless adapter
-installation on Linux x64 and synthetic MCP images on Linux x64/Darwin arm64
-have scoped evidence. The runtime needs an existing Darwin native controller.
-Real agent rendering, signed native distribution, physical overlay exclusion,
-the SSH journey and measured service objectives remain pending. A generated
-MCP entry alone proves no desktop action worked.
+The immutable [v0.1.0-alpha.2 runtime preview](https://github.com/xoxd-ai/fruitctl/releases/tag/v0.1.0-alpha.2)
+is available with bundled Node.js 24.21.0 and a signed, Apple-notarized VNC
+controller in its macOS 15+ ARM64 runtime. Archive integrity, offline native
+checks, actual public adapter bootstrap and synthetic VNC/MCP image exchange
+have scoped evidence. Linux
+connects through the SSH bridge to a configured Darwin controller. Host is an
+unqualified source prototype with no public executable or automatic setup.
+Real agent rendering and desktop journeys, physical overlay exclusion, the SSH
+journey and measured service objectives remain pending. A generated MCP entry
+alone proves no desktop action worked.

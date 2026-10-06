@@ -17,12 +17,15 @@ verified release, configures a named target, and checks a fresh observation
 before input. If the release does not support your controller and agent, it
 reports the missing prerequisite instead of claiming installation succeeded.
 
-The immutable [v0.1.0-alpha.1 runtime preview](https://github.com/xoxd-ai/fruitctl/releases/tag/v0.1.0-alpha.1)
+The immutable [v0.1.0-alpha.2 runtime preview](https://github.com/xoxd-ai/fruitctl/releases/tag/v0.1.0-alpha.2)
 ships bundled Node.js 24.21.0, the installer, shared skill and MCP/broker code.
-Runtime packaging, rootless adapter installation and synthetic MCP image tests
-have passed their scoped checks. An existing Darwin native controller is still
-required; real frontend journeys, signed native distribution, physical overlay
-exclusion, SSH adoption and measured service objectives remain pending.
+Its Apple Silicon macOS 15+ runtime also contains the unchanged Developer
+ID-signed, Apple-notarized VNC controller. Archive integrity, offline native
+checks, actual public adapter bootstrap and synthetic VNC/MCP image exchange
+have scoped evidence. Linux uses
+the SSH bridge to a configured Darwin controller. Real frontend and desktop
+journeys, physical overlay exclusion, SSH adoption and measured service
+objectives remain pending.
 
 The canonical public documentation is live at
 [fruitctl.clients.xoxd.ai](https://fruitctl.clients.xoxd.ai/), with verified
@@ -39,8 +42,9 @@ operator and cannot be redirected through tool arguments. A human can stop
 control, and uncertain input is never replayed automatically.
 
 The optional **FuzzyBot spell** indicator is a target-side purple heartbeat
-overlay. It will ship only for capture modes that prove the indicator stays
-out of the agent's observations. It is currently a separate qualification lane.
+overlay. Its Host source remains an unqualified prototype, and no Host binary,
+installer or service is included in public previews. It will ship only for
+capture modes that prove the indicator stays out of the agent's observations.
 
 ## Develop and adopt
 
