@@ -31,5 +31,9 @@ test-release:
     python3 scripts/release/test_native_input.py
     python3 scripts/release/test_release.py
 
+# Explicit Darwin-only synthetic input-admission proof; never a real desktop.
+test-observation-gate daemon output_dir:
+    FRUITCTL_RUN_NATIVE_SYNTHETIC=1 python3 -I test/fruitctl-observation-gate.py --daemon {{quote(daemon)}} --output-dir {{quote(output_dir)}}
+
 verify-release manifest assets_dir:
     python3 scripts/verify-release.py {{quote(manifest)}} --assets-dir {{quote(assets_dir)}}

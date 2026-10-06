@@ -257,7 +257,6 @@ struct ClaudeKVMDaemon: AsyncParsableCommand {
         ])
 
         let input = InputController(vnc: vnc)
-        input.context = VNCInputContext(vnc.framebufferDiagnostics)
 
         let commandTask = Task { await runCommandLoop(vnc: vnc, input: input, scaling: scaling) }
         // Cancel the owning loop, which unwinds the current input action and

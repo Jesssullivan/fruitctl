@@ -19,9 +19,31 @@ jobs:
         with:
           node-version: '24'
           cache: npm
+      - name: Prepare owned fixture runtime
+        id: runtime
+        shell: bash
+        run: |
+          umask 077
+          # A short private path keeps fixture Unix sockets within Linux limits.
+          runtime="$(mktemp -d /tmp/fruitctl-ci.XXXXXX)"
+          echo "TMPDIR=$runtime" >> "$GITHUB_ENV"
+          echo "path=$runtime" >> "$GITHUB_OUTPUT"
+          echo "identity=$(stat -c '%d:%i:%u' "$runtime")" >> "$GITHUB_OUTPUT"
       - run: npm ci --ignore-scripts
       - run: npm test
       - run: python3 scripts/release/test_native_input.py
       - run: python3 scripts/release/test_release.py
       - run: npm run docs:check
       - run: git diff --check
+      - name: Remove owned fixture runtime
+        if: always() && steps.runtime.outputs.path != ''
+        shell: bash
+        env:
+          FRUITCTL_CI_RUNTIME: ${{ steps.runtime.outputs.path }}
+          FRUITCTL_CI_RUNTIME_IDENTITY: ${{ steps.runtime.outputs.identity }}
+        run: |
+          test "$TMPDIR" = "$FRUITCTL_CI_RUNTIME"
+          [[ "$TMPDIR" == /tmp/fruitctl-ci.?????? ]]
+          test -d "$TMPDIR" && test ! -L "$TMPDIR"
+          test "$(stat -c '%d:%i:%u' "$TMPDIR")" = "$FRUITCTL_CI_RUNTIME_IDENTITY"
+          rm -rf -- "$TMPDIR"
