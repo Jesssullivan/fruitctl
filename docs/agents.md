@@ -170,9 +170,13 @@ agent frontend. [Junie skills](https://junie.jetbrains.com/docs/agent-skills.htm
 read `.mcp.json` and `~/.copilot/mcp-config.json` directly. In an extension-host
 session, discovery of the Copilot user file is off by default; enable the
 `copilot` source in `chat.mcp.discovery.enabled` or configure the server through
-the VS Code MCP settings. A custom `COPILOT_HOME` changes that user location;
-the current installer uses the default, so use declarative configuration for
-that case. Record the selected harness when qualifying the connection. Existing
+the VS Code MCP settings. A custom `COPILOT_HOME` replaces the default user
+location. The current source installer honors it for user scope and records the
+actual destination for doctor and uninstall. Uninstall the recorded installation
+before selecting a different MCP or skill destination; recovery uses its recorded
+paths even if the environment changes. The immutable alpha.2 installer predates
+this support, so use declarative configuration for a custom Copilot home with
+that release. Record the selected harness when qualifying the connection. Existing
 `.vscode/mcp.json` uses `servers`, a different root. Merge through the documented
 legacy surface if that file already owns the Fruitctl entry. Remote SSH can move
 MCP execution to the remote host; configure the runtime and relay there. Codex

@@ -178,6 +178,95 @@ test('existing OpenCode JSONC and user config overrides resolve without opening 
   assert.equal(resolveAdapter({ ...f, agent: 'kimi', scope: 'user', env: { KIMI_CODE_HOME: path.join(f.root, 'kimi-state') } }).configPath, path.join(f.root, 'kimi-state/mcp.json'));
 });
 
+test('VS Code Copilot home selects only the user portable config and keeps values literal', async t => {
+  const f = { ...await fixture(t), agent: 'vscode' };
+  const copilotHome = path.join(f.root, 'copilot account with spaces');
+  const env = { COPILOT_HOME: copilotHome };
+  const user = resolveAdapter({ ...f, scope: 'user', env });
+  assert.equal(user.configPath, path.join(copilotHome, 'mcp-config.json'));
+  assert.equal(user.skillPath, path.join(f.home, '.agents/skills/fruitctl'));
+  assert.equal(resolveAdapter({ ...f, scope: 'user' }).configPath, path.join(f.home, '.copilot/mcp-config.json'));
+  assert.equal(resolveAdapter({ ...f, env }).configPath, path.join(f.projectDir, '.mcp.json'));
+  const literalHome = path.join(f.root, '${ACCOUNT_DIR}', '~');
+  assert.equal(resolveAdapter({ ...f, scope: 'user', env: { COPILOT_HOME: literalHome, ACCOUNT_DIR: 'never-expand' } }).configPath, path.join(literalHome, 'mcp-config.json'));
+  const planned = await install({ ...f, scope: 'user', env, dryRun: true });
+  assert.equal(planned.configPath, user.configPath);
+  assert.equal(JSON.parse(planned.snippet).mcpServers.fruitctl.env, undefined);
+  assert.deepEqual(await fs.readdir(f.home), []);
+});
+
+test('custom Copilot install, doctor, rollback and idempotent uninstall preserve both user and project settings', async t => {
+  const f = { ...await fixture(t), agent: 'vscode', scope: 'user' };
+  const copilotHome = path.join(f.root, 'copilot account with spaces'), env = { COPILOT_HOME: copilotHome };
+  const config = path.join(copilotHome, 'mcp-config.json'), defaultConfig = path.join(f.home, '.copilot/mcp-config.json');
+  const settings = path.join(copilotHome, 'config.json'), projectConfig = path.join(f.projectDir, '.mcp.json');
+  const original = '{\n // retain account comment\n "mcpServers":{"other":{"command":"other"}},\n "feature":false,\n}\n';
+  const defaultOriginal = '{"mcpServers":{"fruitctl":{"command":"user-owned-default"}}}\n';
+  const settingsOriginal = '{"fixtureSetting":"retain"}\n', projectOriginal = '{"fixtureProject":"retain"}\n';
+  await fs.mkdir(copilotHome); await fs.mkdir(path.dirname(defaultConfig));
+  await fs.writeFile(config, original, { mode: 0o640 });
+  await fs.writeFile(defaultConfig, defaultOriginal); await fs.writeFile(settings, settingsOriginal);
+  await fs.writeFile(projectConfig, projectOriginal);
+  const v1 = await releaseFixture(f), first = await install({ ...f, env, offline: v1.offline });
+  assert.equal(first.configPath, config);
+  const receipt = JSON.parse(await fs.readFile(first.receiptPath, 'utf8'));
+  assert.equal(receipt.config.path, config); assert.equal(receipt.config.owned, true);
+  assert.equal(receipt.config.baseExisted, true); assert.equal(receipt.skill.owned, true);
+  assert.equal(receipt.config.expectedEntry.env, undefined);
+  assert.equal((await fs.stat(config)).mode & 0o777, 0o640);
+  assert.equal((await fs.stat(first.receiptPath)).mode & 0o777, 0o600);
+  const project = { ...f, scope: 'project', env };
+  await install({ ...project, offline: v1.offline });
+  assert.equal((await doctor({ home: f.home, env: {} })).status, 'configured');
+  const v2 = await releaseFixture(f, 'v0.1.0-alpha.2');
+  await install({ ...f, env, version: v2.manifest.version, offline: v2.offline });
+  assert.equal((await rollback({ ...f, env: {} })).to, f.version);
+  assert.equal((await doctor({ ...f, env: {} })).status, 'configured');
+  assert.equal((await uninstall({ ...f, env: {} })).status, 'removed');
+  assert.equal(await fs.readFile(config, 'utf8'), original);
+  assert.equal((await uninstall({ ...f, env })).status, 'not-installed');
+  assert.equal((await doctor(project)).status, 'configured');
+  await uninstall(project);
+  assert.equal(await fs.readFile(projectConfig, 'utf8'), projectOriginal);
+  assert.equal(await fs.readFile(defaultConfig, 'utf8'), defaultOriginal);
+  assert.equal(await fs.readFile(settings, 'utf8'), settingsOriginal);
+  assert.equal((await doctor({ home: f.home, env })).status, 'not-installed');
+});
+
+test('changed install destinations cannot detach receipts and backups from their owned files', async t => {
+  for (const agent of ['vscode', 'codex']) await t.test(agent, async t => {
+    const f = { ...await fixture(t), agent, scope: 'user' }, release = await releaseFixture(f);
+    const installed = await install({ ...f, offline: release.offline });
+    const configBefore = await fs.readFile(installed.configPath, 'utf8');
+    const receiptBefore = await fs.readFile(installed.receiptPath, 'utf8');
+    const env = { [agent === 'vscode' ? 'COPILOT_HOME' : 'CODEX_HOME']: path.join(f.root, 'other account') };
+    const result = await install({ ...f, env }, { fetchImpl: () => { throw new Error('must not download'); } });
+    assert.equal(result.status, 'declarative-required');
+    assert.match(result.reasons.join(' '), /different MCP or skill destination/);
+    assert.equal(await fs.readFile(installed.configPath, 'utf8'), configBefore);
+    assert.equal(await fs.readFile(installed.receiptPath, 'utf8'), receiptBefore);
+    await assert.rejects(fs.lstat(result.configPath), { code: 'ENOENT' });
+    assert.equal((await doctor({ ...f, env })).status, 'configured');
+    assert.equal((await uninstall({ ...f, env })).status, 'removed');
+    assert.equal((await uninstall({ ...f, env })).status, 'not-installed');
+    await assert.rejects(fs.lstat(installed.configPath), { code: 'ENOENT' });
+  });
+});
+
+test('managed and unowned custom Copilot configurations retain their owning surface', async t => {
+  const f = { ...await fixture(t), agent: 'vscode', scope: 'user' };
+  const copilotHome = path.join(f.root, 'copilot custom'), config = path.join(copilotHome, 'mcp-config.json');
+  const managed = path.join(f.root, 'managed-copilot.json'), original = '{"mcpServers":{"fruitctl":{"command":"operator-tool"}}}\n';
+  await fs.mkdir(copilotHome); await fs.writeFile(managed, original); await fs.symlink(managed, config);
+  const options = { ...f, env: { COPILOT_HOME: copilotHome } };
+  assert.equal((await install(options)).status, 'declarative-required');
+  assert.equal(await fs.readlink(config), managed);
+  await fs.unlink(config); await fs.writeFile(config, original);
+  await assert.rejects(install({ ...options, dryRun: true }), /user-owned or changed/);
+  assert.equal(await fs.readFile(config, 'utf8'), original);
+  assert.deepEqual(await fs.readdir(f.home), []);
+});
+
 test('bootstrap dry run requires no Node install and rejects invalid versions without network', async t => {
   const f = await fixture(t), script = new URL('../scripts/install.sh', import.meta.url);
   const result = await run('sh', [script.pathname, '--agent', 'claude', '--version', f.version, '--target', f.target, '--dry-run'], { cwd: f.projectDir, env: { ...process.env, HOME: f.home } });
