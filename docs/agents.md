@@ -132,23 +132,43 @@ replaces native MCP behavior, so inspect the extension's actual registration
 before claiming native configuration will be read. [Pi changelog](https://pi.dev/changelog),
 [Pi MCP](https://pi.dev/docs/latest/mcp).
 
+The alpha.2 skill passed the official `skills-ref` 0.1.0 validator. An isolated
+Pi 1.0.4 SDK check discovered its user and project skill symlinks and loaded the
+user skill through `DefaultResourceLoader`. Pi's upstream MCP extension read the
+fixture's native user config, completed initialization and tool discovery, and
+preserved synthetic text and PNG results. The fixture used direct tool exposure;
+the installer's default codemode exposure was not qualified. These checks cover
+skill discovery and stdio transport. They do not qualify CLI/TUI image rendering, a model's use of
+Fruitctl, a real VNC desktop, input or leases. [Pi SDK](https://pi.dev/docs/latest/sdk),
+[Agent Skills validation](https://github.com/agentskills/agentskills/tree/69ef37e9424c0a7ea9dd2293b559e43ec8176379/skills-ref).
+
 **IntelliJ and Junie:** Junie CLI, standalone Junie IDE plugin and integrated
 AI Assistant/ACP are separate frontends. The installer writes the documented
 CLI/standalone config and also returns an `ideSettingsSnippet`. Integrated AI
 Assistant users add that snippet through Settings → Tools → AI Assistant → MCP.
+For Junie in AI Chat, also enable Settings → Tools → AI Assistant → Agents →
+**Pass custom MCP servers**. The standalone plugin uses Tools → Junie → MCP
+Settings instead; configuring one frontend does not qualify the others.
 The installer does not edit JetBrains internal XML or download/open an IDE.
 Current Junie documentation describes IDE skills, while older AI Assistant
 documentation lists a narrower support matrix; qualify the exact IDE build and
 agent frontend. [Junie skills](https://junie.jetbrains.com/docs/agent-skills.html),
 [standalone plugin](https://junie.jetbrains.com/docs/junie-ide-plugin.html),
-[AI Assistant MCP](https://www.jetbrains.com/help/ai-assistant/mcp.html).
+[AI Assistant MCP](https://www.jetbrains.com/help/ai-assistant/mcp.html),
+[Junie in AI Chat](https://www.jetbrains.com/help/ai-assistant/junie-agent.html).
 
-**VS Code:** the adapter uses current portable MCP files. Existing
+**VS Code:** the adapter uses current portable MCP files. Agent Host sessions
+read `.mcp.json` and `~/.copilot/mcp-config.json` directly. In an extension-host
+session, discovery of the Copilot user file is off by default; enable the
+`copilot` source in `chat.mcp.discovery.enabled` or configure the server through
+the VS Code MCP settings. A custom `COPILOT_HOME` changes that user location;
+the current installer uses the default, so use declarative configuration for
+that case. Record the selected harness when qualifying the connection. Existing
 `.vscode/mcp.json` uses `servers`, a different root. Merge through the documented
 legacy surface if that file already owns the Fruitctl entry. Remote SSH can move
 MCP execution to the remote host; configure the runtime and relay there. Codex
 through VS Code Agent Host is experimental and requires qualification separate
-from the official Codex extension. [VS Code MCP](https://code.visualstudio.com/docs/agent-customization/mcp-servers),
+from the official Codex extension. [VS Code MCP configuration](https://code.visualstudio.com/docs/agents/reference/mcp-configuration),
 [VS Code skills](https://code.visualstudio.com/docs/agent-customization/agent-skills).
 
 **OpenCode:** this adapter targets v1. The experimental v2 format nests servers
