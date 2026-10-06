@@ -4,6 +4,68 @@ import XCTest
 final class FruitctlHostTests: XCTestCase {
     private let owner = UUID()
     private let other = UUID()
+    private var defaultsSuites: [String] = []
+
+    private func isolatedDefaults() -> UserDefaults {
+        let name = "FruitctlHostTests.CaptureOptIn." + UUID().uuidString
+        defaultsSuites.append(name)
+        let defaults = UserDefaults(suiteName: name)!
+        defaults.removePersistentDomain(forName: name)
+        return defaults
+    }
+
+    override func tearDown() {
+        for name in defaultsSuites { UserDefaults(suiteName: name)?.removePersistentDomain(forName: name) }
+        defaultsSuites.removeAll()
+        super.tearDown()
+    }
+
+    func testFreshCapturePreferencesStayDisabledEvenWhenOSPermissionExists() {
+        let preferences = HostCapturePreferences(defaults: isolatedDefaults())
+        XCTAssertFalse(preferences.isEnabled)
+        XCTAssertFalse(preferences.permitsCapture(permissionGranted: true))
+        XCTAssertFalse(preferences.permitsCapture(permissionGranted: false))
+    }
+
+    func testExplicitCaptureOptInSurvivesConstructorRestartWithoutArguments() {
+        let defaults = isolatedDefaults()
+        let first = HostCapturePreferences(defaults: defaults, startupChoice: true)
+        XCTAssertTrue(first.isEnabled)
+        // A distinct defaults reader simulates a new invocation with no args.
+        let suite = defaultsSuites.last!
+        let reopened = HostCapturePreferences(defaults: UserDefaults(suiteName: suite)!)
+        XCTAssertTrue(reopened.isEnabled)
+        XCTAssertTrue(reopened.permitsCapture(permissionGranted: true))
+    }
+
+    func testHumanDisablePersistsAndNewPermissionCannotUndoIt() {
+        let defaults = isolatedDefaults()
+        let enabled = HostCapturePreferences(defaults: defaults, startupChoice: true)
+        enabled.setEnabled(false)
+        XCTAssertFalse(enabled.permitsCapture(permissionGranted: true))
+        let reopened = HostCapturePreferences(defaults: UserDefaults(suiteName: defaultsSuites.last!)!)
+        XCTAssertFalse(reopened.isEnabled)
+        XCTAssertFalse(reopened.permitsCapture(permissionGranted: true))
+    }
+
+    func testDeniedPermissionKeepsExplicitIntentButNeverAuthorizesCapture() {
+        let defaults = isolatedDefaults()
+        let enabled = HostCapturePreferences(defaults: defaults, startupChoice: true)
+        XCTAssertFalse(enabled.permitsCapture(permissionGranted: false))
+        let reopened = HostCapturePreferences(defaults: UserDefaults(suiteName: defaultsSuites.last!)!)
+        XCTAssertTrue(reopened.isEnabled)
+        XCTAssertFalse(reopened.permitsCapture(permissionGranted: false))
+        XCTAssertTrue(reopened.permitsCapture(permissionGranted: true))
+    }
+
+    func testExplicitStartupDisableOverridesPriorOptInAcrossRestart() {
+        let defaults = isolatedDefaults()
+        _ = HostCapturePreferences(defaults: defaults, startupChoice: true)
+        let disabled = HostCapturePreferences(defaults: defaults, startupChoice: false)
+        XCTAssertFalse(disabled.isEnabled)
+        let reopened = HostCapturePreferences(defaults: UserDefaults(suiteName: defaultsSuites.last!)!)
+        XCTAssertFalse(reopened.permitsCapture(permissionGranted: true))
+    }
 
     private func started(at now: UInt64 = 100) throws -> HostLeaseState {
         var state = HostLeaseState()

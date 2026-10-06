@@ -39,20 +39,33 @@ no GUI launch or live capture, and do not grant screen-recording permission.
 
 The product app identity is `com.xoxd.fruitctl.host`. Release signing and
 notarization apply to the complete bundle; they do not grant screen recording.
-Capture is disabled by default. An attended launch must select
-`--enable-capture`, optionally `--display-id <configured-display-id>`. Only an
-attended `--enable-capture --request-screen-capture` launch may request permission.
+Capture is disabled on a fresh install. An attended launch may select
+`--enable-capture`, optionally `--display-id <configured-display-id>`. This
+explicit choice persists in the app's preferences before any OS consent request,
+so macOS Quit & Reopen can drop startup arguments without losing the choice.
+`--disable-capture` persists the opposite choice. A screen-recording grant alone
+never enables capture. Only an attended
+`--enable-capture --request-screen-capture` launch may request startup permission.
 `--help`, `--doctor`, and `--stdio` never initialize AppKit application UI or
 request permission. The app cannot silently enable Screen Sharing or TCC.
 
 The resident app provides a standard menu bar item with **Stop agent control**,
-**Allow agent control**, and **Quit Fruitctl Host**. Stop immediately invalidates
+**Allow agent control**, **Enable capture**, **Disable capture**, and
+**Quit Fruitctl Host**. The local Enable capture action persists opt-in and may
+request OS consent; Disable capture persists opt-out, clears the current lease,
+hides panels, and prevents begin/capture. Neither action clears human stop or
+creates a lease. IPC cannot enable capture, grant permission, or change these
+preferences. Stop immediately invalidates
 the app's lease, hides panels, and latches begin/renew/capture unavailable. Only
 the local menu's Allow action clears that latch; IPC and session/display wake
 events cannot clear it. Allow establishes no lease and does not override other
 readiness checks. The latch lasts for the resident process lifetime; restarting
 the app is a new attended launch. The menu uses AppKit and requests no
 Accessibility permission.
+
+The persistent capture choice and process-local human stop latch are distinct.
+After any restart, a controller still needs a fresh lease and complete excluded
+capture; retaining opt-in does not restore an old lease or input permit.
 
 When the app and controlling broker are responsive, human stop makes the next
 renewal fail and the broker's local input permit expires within one second.
