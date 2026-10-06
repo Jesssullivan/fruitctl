@@ -243,10 +243,16 @@ final class HostApplicationController: NSObject, NSApplicationDelegate {
         let now = clock.milliseconds()
         if lease.expire(at: now) { clearActivityUI() }
         if lease.active != nil {
-            guard activityEligible, renderer.hasVisibleDisplayPanels else {
-                invalidateActivity(); return
+            switch HostLeaseState.uiHeartbeatDecision(activityEligible: activityEligible,
+                captureInProgress: captureInProgress, captureReady: captureReady,
+                overlayReady: overlayReady, visiblePanels: renderer.hasVisibleDisplayPanels) {
+            case .awaitingInitialCapture:
+                // expire(at:) above still enforces the original 3-second lease.
+                // No UI heartbeat or ready permit exists before excluded capture.
+                break
+            case .recordVisibleHeartbeat: lastUIHeartbeat = now
+            case .invalidate: invalidateActivity()
             }
-            lastUIHeartbeat = now
         }
     }
 

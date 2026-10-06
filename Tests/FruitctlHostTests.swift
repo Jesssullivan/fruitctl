@@ -67,6 +67,46 @@ final class FruitctlHostTests: XCTestCase {
         XCTAssertFalse(reopened.permitsCapture(permissionGranted: true))
     }
 
+    func testInitialCaptureTimerWaitsWithoutHeartbeatAndCannotExtendLease() throws {
+        var state = try started()
+        XCTAssertEqual(HostLeaseState.uiHeartbeatDecision(activityEligible: true,
+            captureInProgress: true, captureReady: false, overlayReady: false,
+            visiblePanels: false), .awaitingInitialCapture)
+        XCTAssertFalse(HostLeaseState.isReady(now: 200, uiHeartbeatAt: nil,
+                                              captureReady: false, overlayReady: false))
+        XCTAssertThrowsError(try renew(&state, at: 200, pulse: nil, capture: false, overlay: false)) {
+            XCTAssertEqual($0 as? HostLeaseError, .notReady)
+        }
+        XCTAssertEqual(state.active?.expiresAtMilliseconds, 3_100)
+        XCTAssertTrue(state.expire(at: 3_100))
+        XCTAssertThrowsError(try state.requireOwner(sessionID: "session-A", connectionID: owner,
+            displayGeneration: 7, now: 3_101)) { XCTAssertEqual($0 as? HostLeaseError, .expired) }
+    }
+
+    func testAcquisitionCannotIgnoreEligibilityOrPartialOrUnexpectedVisibleUI() {
+        for flags in [(false, true, false, false, false),
+                      (true, false, false, false, false),
+                      (true, true, true, false, false),
+                      (true, true, false, true, false),
+                      (true, true, false, false, true),
+                      (true, false, true, true, false)] {
+            XCTAssertEqual(HostLeaseState.uiHeartbeatDecision(activityEligible: flags.0,
+                captureInProgress: flags.1, captureReady: flags.2, overlayReady: flags.3,
+                visiblePanels: flags.4), .invalidate)
+        }
+    }
+
+    func testQualifiedVisibleUIReceivesHeartbeatDuringLaterCapture() {
+        for capturing in [false, true] {
+            XCTAssertEqual(HostLeaseState.uiHeartbeatDecision(activityEligible: true,
+                captureInProgress: capturing, captureReady: true, overlayReady: true,
+                visiblePanels: true), .recordVisibleHeartbeat)
+        }
+        XCTAssertEqual(HostLeaseState.uiHeartbeatDecision(activityEligible: false,
+            captureInProgress: true, captureReady: true, overlayReady: true,
+            visiblePanels: true), .invalidate)
+    }
+
     private func started(at now: UInt64 = 100) throws -> HostLeaseState {
         var state = HostLeaseState()
         try state.begin(sessionID: "session-A", connectionID: owner, sequence: 1,

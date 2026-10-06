@@ -62,7 +62,22 @@ struct HostActivityLease: Equatable {
 /// Value-only state machine. The AppKit controller calls it on the main actor;
 /// tests use an explicit clock and never start capture, sockets, or desktop UI.
 struct HostLeaseState {
+    enum UIHeartbeatDecision { case awaitingInitialCapture, recordVisibleHeartbeat, invalidate }
     private(set) var active: HostActivityLease?
+
+    /// Initial capture yields the main actor before panels may be shown. The
+    /// timer must not cancel that bounded acquisition just because the panels
+    /// are still hidden. It also must never certify a heartbeat while waiting.
+    static func uiHeartbeatDecision(activityEligible: Bool, captureInProgress: Bool,
+                                    captureReady: Bool, overlayReady: Bool,
+                                    visiblePanels: Bool) -> UIHeartbeatDecision {
+        guard activityEligible else { return .invalidate }
+        if captureReady && overlayReady && visiblePanels { return .recordVisibleHeartbeat }
+        if captureInProgress && !captureReady && !overlayReady && !visiblePanels {
+            return .awaitingInitialCapture
+        }
+        return .invalidate
+    }
 
     static func validToken(_ token: String) -> Bool {
         !token.isEmpty && token.utf8.count <= 256 && token.unicodeScalars.allSatisfy {
