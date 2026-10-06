@@ -30,6 +30,15 @@ enum HostIPC {
                        socklen_t(MemoryLayout<Int32>.size))
     }
 
+    /// Observe the write direction only. A peer's intentional SHUT_WR means
+    /// input is complete, while it can still receive this request's response.
+    /// Darwin poll maps a write EOF to HUP when the receiving peer is gone.
+    static func peerCanReceive(_ fd: Int32) -> Bool {
+        var item = pollfd(fd: fd, events: Int16(POLLOUT), revents: 0)
+        let result = poll(&item, 1, 0)
+        return result >= 0 && item.revents & Int16(POLLHUP | POLLERR | POLLNVAL) == 0
+    }
+
     static func write(_ data: Data, to fd: Int32, timeoutMilliseconds: Int32 = 2_000) throws {
         let deadline = ContinuousClock.now.advanced(by: .milliseconds(Int64(timeoutMilliseconds)))
         try data.withUnsafeBytes { bytes in
@@ -166,6 +175,7 @@ final class HostSocketServer {
     private var socketIdentity: (device: dev_t, inode: ino_t)?
     private let lock = NSLock()
     private var clients: Set<Int32> = []
+    private var connections: [UUID: Int32] = [:]
 
     init(path: String = HostIPC.socketPath, handler: @escaping Handler,
          disconnected: @escaping (UUID) -> Void) {
@@ -213,6 +223,14 @@ final class HostSocketServer {
         if fd >= 0 { _ = shutdown(fd, SHUT_RDWR); close(fd) }
         for peer in connected { _ = shutdown(peer, SHUT_RDWR) }
         removeOwnedSocket()
+    }
+
+    func connectionIsLive(_ connectionID: UUID) -> Bool {
+        // Keep the lifetime map and descriptor lock together. A reused fd
+        // belongs to a new UUID and cannot make an old operation look live.
+        lock.lock(); defer { lock.unlock() }
+        guard listener >= 0, let fd = connections[connectionID], clients.contains(fd) else { return false }
+        return HostIPC.peerCanReceive(fd)
     }
 
     private func removeOwnedSocket() {
@@ -265,9 +283,10 @@ final class HostSocketServer {
 
     private func serve(_ fd: Int32) {
         let connectionID = UUID()
+        lock.lock(); connections[connectionID] = fd; lock.unlock()
         defer {
+            lock.lock(); connections.removeValue(forKey: connectionID); clients.remove(fd); lock.unlock()
             disconnected(connectionID)
-            lock.lock(); clients.remove(fd); lock.unlock()
             close(fd)
         }
         var framer = HostLineFramer()
@@ -287,8 +306,14 @@ final class HostSocketServer {
                     }
                     let waiter = HostReplyWaiter()
                     handler(request, connectionID, waiter.finish)
-                    guard waiter.completed.wait(timeout: .now() + 2.5) == .success,
-                          let response = waiter.value() else { throw HostIPCError.requestTimeout }
+                    let deadline = ContinuousClock.now.advanced(by: .milliseconds(2_500))
+                    while waiter.completed.wait(timeout: .now() + .milliseconds(20)) != .success {
+                        guard connectionIsLive(connectionID) else { throw HostIPCError.unavailable }
+                        guard ContinuousClock.now < deadline else { throw HostIPCError.requestTimeout }
+                    }
+                    guard connectionIsLive(connectionID), let response = waiter.value() else {
+                        throw HostIPCError.unavailable
+                    }
                     try HostIPC.write(try response.line(), to: fd)
                 }
             }

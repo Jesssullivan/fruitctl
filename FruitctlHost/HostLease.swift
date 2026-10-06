@@ -30,8 +30,12 @@ struct HostAvailabilityState {
     private(set) var screensAwake = true
     private(set) var systemAwake = true
     private(set) var humanAllowed = true
+    /// Every notification is an episode boundary, including return/wake.
+    /// A pending idle reference cannot survive an away-and-back transition.
+    private(set) var revision = UUID()
 
     mutating func apply(_ event: Event) {
+        revision = UUID()
         switch event {
         case .sessionResigned: sessionActive = false
         case .sessionActivated: sessionActive = true

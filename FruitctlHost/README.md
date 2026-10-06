@@ -51,7 +51,8 @@ request permission. The app cannot silently enable Screen Sharing or TCC.
 
 The resident app provides a standard menu bar item with **Stop agent control**,
 **Allow agent control**, **Enable capture**, **Disable capture**, and
-**Quit Fruitctl Host**. The local Enable capture action persists opt-in and may
+**Arm one idle reference export (60s)**, and **Quit Fruitctl Host**.
+The local Enable capture action persists opt-in and may
 request OS consent; Disable capture persists opt-out, clears the current lease,
 hides panels, and prevents begin/capture. Neither action clears human stop or
 creates a lease. IPC cannot enable capture, grant permission, or change these
@@ -98,8 +99,9 @@ Each connection is serialized, and at most eight same-user connections attach.
 | `renew_activity` | Same session/connection, strictly increasing `sequence`, fresh `challenge`; requires recent main-thread heartbeat and capture/UI readiness. |
 | `release_activity` | `session_id`; releases only this connection's activity and hides the indicator. |
 | `capture` / `screenshot` | `session_id`, optional `max_dimension` (256–4096; default 1280), same configured display. Requires a live ready lease. Returns a complete PNG with image and display mapping metadata. |
+| `export_idle_reference` | `instance_id` must match the resident app; `reference_id` must match the transient local-menu arm reported by `health`. Optional display/backend must match configuration. Consumes the arm once and exports one full-native PNG plus a hashed private receipt while naturally idle. Creates no lease, readiness or input observation. |
 
-Unknown actions, including OCR, diff, baseline and custom input, fail explicitly
+Unknown actions, including OCR, diff, ordinary baseline and custom input, fail explicitly
 with `unsupported_host_action`. The seat's observation layer may derive supported
 observations from returned PNGs; this app does not advertise those operations.
 Other attached sessions cannot acquire, renew, release, or capture this lease.
@@ -117,6 +119,58 @@ preflight; `ready` also requires that preflight and visible panels on all displa
 Panel visibility is an AppKit state check, not proof that another system surface
 cannot occlude a panel. Physical qualification still supplies that evidence.
 `human_stop_latched` reports the local human stop latch.
+
+## Locally armed idle reference diagnostic
+
+The local menu arms one export for 60 seconds. The arm is process-local and never
+survives restart. It requires explicit capture opt-in, ordinary Screen Recording
+preflight, the owned awake console session, no lease/capture/readiness, and no
+visible indicator panel, including a partially visible display set. IPC cannot
+arm the diagnostic, request ordinary consent, enable capture or clear Stop.
+ScreenCaptureKit itself can still present an Apple direct-capture consent alert;
+ordinary preflight=true does not establish that every consent episode is resolved.
+
+The export uses the same running app, fixed display, entire-own-app exclusion,
+native source pixels, cursor and PNG encoding path as activity capture. It never
+hides an active indicator, excludes another app/system window, masks pixels, or
+changes a failed capture result. Its native dimensions may exceed ordinary
+`max_dimension`; compare pixel references only when active frames have identical
+native/scaled geometry and color conversion. An idle reference is a diagnostic
+scene, never an active-agent frame or a cold activity acceptance result. Taking
+one first warms subsequent capture; record that fact.
+
+One export writes `reference.png` and `receipt.json` to a fresh directory under
+`~/Library/Application Support/Fruitctl/qualification/`. Directories are 0700,
+files 0600 and same-user owned; paths are fixed by the app, never supplied through
+IPC. Symlink components, unsafe existing modes, extended allow ACL entries
+(including inherited grants) and incomplete/scaled PNGs fail without repair.
+ACL metadata is read from each opened descriptor; verified absence and deny-only
+ACLs are accepted, while unreadable or unknown metadata fails closed. Files are
+exclusive; the receipt is written last and binds the
+PNG hash, filter/geometry, instance, display generation, capture timing and
+`classification:idle_reference`, `input_observation:false`, `ready:false`.
+The response provides private paths and both hashes, not image pixels. A partial
+write stays private and is not a completed receipt. Failed acquisition consumes
+the arm; there is no automatic retry.
+
+Stop, Disable, display/session/sleep transitions and the exporting attachment's
+disconnect revoke an in-flight diagnostic. Returning to the prior session or
+choosing Allow/Enable cannot revive it. Other attachments cannot cancel its
+owner by merely disconnecting. The original connection UUID and receiving peer
+are checked before persistence; pending replies observe a closed receiving peer
+without waiting for capture completion. Intentional stdin EOF/`SHUT_WR` still
+allows its outstanding reply. This does not promise atomic rollback if a peer
+closes after the final check during synchronous file writing. Ordinary permission and capture intent are
+rechecked after framework awaits and before export/readiness completion. These
+checks do not identify an unobserved grant withdrawal-and-return or qualify a
+direct-picker alert. The injected offline faults exercise admission and
+revocation without AppKit UI, ScreenCaptureKit or the real preferences/TCC store.
+The 60 second arm is checked immediately before capture as well as at completion;
+slow admission cannot start a capture after that deadline.
+
+No native idle-reference files have been captured for this implementation yet.
+The optional Host remains outside the public installation/release payload until
+its separately attended qualification passes.
 
 ## Timing contract
 
