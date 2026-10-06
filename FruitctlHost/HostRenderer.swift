@@ -49,6 +49,8 @@ final class HostRenderer {
 
     var hasAllDisplayPanels: Bool { !panels.isEmpty && panels.count == NSScreen.screens.count }
 
+    var hasAnyVisiblePanels: Bool { panels.contains { $0.isVisible } }
+
     var hasVisibleDisplayPanels: Bool {
         isVisible && hasAllDisplayPanels && panels.allSatisfy { $0.isVisible }
     }

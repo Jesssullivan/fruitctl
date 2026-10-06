@@ -209,7 +209,12 @@ targets:
       - FruitctlHost/HostProtocol.swift
       - FruitctlHost/HostClock.swift
       - FruitctlHost/HostCapturePreferences.swift
+      - FruitctlHost/HostCapturePermission.swift
+      - FruitctlHost/HostIdleReference.swift
+      - FruitctlHost/HostIPC.swift
       - Tests/FruitctlHostTests.swift
+      - Tests/HostIdleReferenceTests.swift
+      - Tests/HostSocketTests.swift
     settings:
       base:
         ARCHS: arm64

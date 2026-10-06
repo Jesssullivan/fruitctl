@@ -44,12 +44,13 @@ struct HostOptions {
 }
 
 @MainActor
-final class HostApplicationController: NSObject, NSApplicationDelegate {
+final class HostApplicationController: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let options: HostOptions
     private let clock = HostClock()
     private let renderer = HostRenderer()
     private let capture: HostCapture
     private let capturePreferences: HostCapturePreferences
+    private let permission: HostCapturePermission
     private let instanceID = UUID().uuidString
     private var lease = HostLeaseState()
     private var availability = HostAvailabilityState()
@@ -67,12 +68,31 @@ final class HostApplicationController: NSObject, NSApplicationDelegate {
     private var allowMenuItem: NSMenuItem?
     private var enableCaptureMenuItem: NSMenuItem?
     private var disableCaptureMenuItem: NSMenuItem?
+    private var idleReferenceMenuItem: NSMenuItem?
+    private lazy var idleReference = HostIdleReferenceCoordinator(
+        permission: permission, clock: { [weak self] in self?.clock.milliseconds() ?? UInt64.max },
+        conditions: { [unowned self] in self.idleReferenceConditions },
+        capture: { [weak self] in
+            guard let self else { throw HostIdleReferenceError.lifecycleChanged }
+            // Native source axes are bounded at 16,384 by the shared capture
+            // path. This internal size requests ratio1 without exposing a new
+            // unbounded max_dimension to ordinary IPC observations.
+            let image = try await self.capture.snapshot(maximumDimension: 16_384)
+            return HostReferenceCapture(png: image.png, metadata: image.geometryMetadata)
+        }, connectionLive: { [weak self] connection in
+            self?.server?.connectionIsLive(connection) == true
+        }, persist: { image, receipt in
+            try HostReferenceStore(root: HostReferenceStore.defaultRoot).save(image, receipt: receipt)
+        })
 
     init(options: HostOptions) {
         self.options = options
         let preferences = HostCapturePreferences(startupChoice: options.captureChoice)
         capturePreferences = preferences
-        capture = HostCapture(preferences: preferences, displayID: options.displayID ?? CGMainDisplayID())
+        let authorization = HostCapturePermission.system()
+        permission = authorization
+        capture = HostCapture(preferences: preferences, permission: authorization,
+                              displayID: options.displayID ?? CGMainDisplayID())
         super.init()
     }
 
@@ -80,9 +100,10 @@ final class HostApplicationController: NSObject, NSApplicationDelegate {
         NSApplication.shared.setActivationPolicy(.accessory)
         installHumanControl()
         renderer.rebuild()
-        if options.requestPermission && !CGPreflightScreenCaptureAccess() {
+        if options.requestPermission && !permission.isGranted {
             // This flag is an explicit, attended opt-in. Stdio/doctor never ask.
-            _ = CGRequestScreenCaptureAccess()
+            _ = permission.requestFromHuman()
+            updateHumanControl()
         }
         let endpoint = HostSocketServer(handler: { [weak self] request, connection, reply in
             Task { @MainActor in
@@ -136,6 +157,7 @@ final class HostApplicationController: NSObject, NSApplicationDelegate {
         item.button?.setAccessibilityLabel("Fruitctl agent control")
         let menu = NSMenu(title: "Fruitctl agent control")
         menu.autoenablesItems = false
+        menu.delegate = self
         let stop = NSMenuItem(title: "Stop agent control", action: #selector(stopAgentControl(_:)),
                               keyEquivalent: "")
         stop.target = self
@@ -151,11 +173,16 @@ final class HostApplicationController: NSObject, NSApplicationDelegate {
         let disable = NSMenuItem(title: "Disable capture", action: #selector(disableCapture(_:)),
                                  keyEquivalent: "")
         disable.target = self
+        let reference = NSMenuItem(title: "Arm one idle reference export (60s)",
+                                   action: #selector(armIdleReference(_:)), keyEquivalent: "")
+        reference.target = self
         menu.addItem(stop); menu.addItem(allow); menu.addItem(.separator())
-        menu.addItem(enable); menu.addItem(disable); menu.addItem(.separator()); menu.addItem(quit)
+        menu.addItem(enable); menu.addItem(disable); menu.addItem(reference)
+        menu.addItem(.separator()); menu.addItem(quit)
         item.menu = menu
         statusItem = item; stopMenuItem = stop; allowMenuItem = allow
         enableCaptureMenuItem = enable; disableCaptureMenuItem = disable
+        idleReferenceMenuItem = reference
         updateHumanControl()
     }
 
@@ -164,8 +191,12 @@ final class HostApplicationController: NSObject, NSApplicationDelegate {
         allowMenuItem?.isEnabled = !availability.humanAllowed
         enableCaptureMenuItem?.isEnabled = !capturePreferences.isEnabled
         disableCaptureMenuItem?.isEnabled = capturePreferences.isEnabled
+        idleReferenceMenuItem?.isEnabled = capturePreferences.isEnabled && permission.isGranted
+            && idleReferenceConditions.isIdle && !idleReference.isExporting
         statusItem?.button?.title = availability.humanAllowed ? "Fruitctl" : "Fruitctl · Stopped"
     }
+
+    func menuWillOpen(_ menu: NSMenu) { updateHumanControl() }
 
     @objc private func stopAgentControl(_ sender: Any?) {
         availability.apply(.humanStopped)
@@ -191,12 +222,25 @@ final class HostApplicationController: NSObject, NSApplicationDelegate {
         capturePreferences.setEnabled(true)
         invalidateActivity()
         updateHumanControl()
-        if !CGPreflightScreenCaptureAccess() { _ = CGRequestScreenCaptureAccess() }
+        if !permission.isGranted { _ = permission.requestFromHuman() }
+        updateHumanControl()
     }
 
     @objc private func disableCapture(_ sender: Any?) {
         capturePreferences.setEnabled(false)
         invalidateActivity()
+        updateHumanControl()
+    }
+
+    @objc private func armIdleReference(_ sender: Any?) {
+        do {
+            _ = try idleReference.armFromHuman()
+            statusItem?.button?.toolTip = "One idle reference may be exported within 60 seconds"
+        } catch {
+            // This diagnostic never requests permission, enables capture,
+            // hides panels, or clears the human Stop latch.
+            statusItem?.button?.toolTip = "Idle reference unavailable; no capture started"
+        }
         updateHumanControl()
     }
 
@@ -242,6 +286,10 @@ final class HostApplicationController: NSObject, NSApplicationDelegate {
     private func tick() {
         let now = clock.milliseconds()
         if lease.expire(at: now) { clearActivityUI() }
+        if (lease.active != nil || idleReference.armedID != nil || idleReference.isExporting)
+            && (!activityEligible || !capture.enabled || !permission.isGranted) {
+            invalidateActivity()
+        }
         if lease.active != nil {
             switch HostLeaseState.uiHeartbeatDecision(activityEligible: activityEligible,
                 captureInProgress: captureInProgress, captureReady: captureReady,
@@ -273,15 +321,26 @@ final class HostApplicationController: NSObject, NSApplicationDelegate {
                                             displaysDrawable: drawable)
     }
 
+    private var idleReferenceConditions: HostIdleReferenceConditions {
+        HostIdleReferenceConditions(captureEnabled: capture.enabled, activityEligible: activityEligible,
+            activeLease: lease.active != nil, captureReady: captureReady, overlayReady: overlayReady,
+            anyVisiblePanel: renderer.hasAnyVisiblePanels, otherCaptureInProgress: captureInProgress,
+            lifecycleRevision: availability.revision, displayGeneration: generation)
+    }
+
     private func requireAvailable() throws {
         guard activityEligible else { invalidateActivity(); throw HostLeaseError.notReady }
     }
 
     private func disconnected(_ connectionID: UUID) {
+        idleReference.disconnected(connectionID)
         if lease.release(connectionID: connectionID) { clearActivityUI() }
     }
 
-    private func invalidateActivity() { lease.invalidate(); clearActivityUI() }
+    private func invalidateActivity() {
+        idleReference.invalidate()
+        lease.invalidate(); clearActivityUI()
+    }
 
     private func clearActivityUI() {
         renderer.hide()
@@ -340,20 +399,25 @@ final class HostApplicationController: NSObject, NSApplicationDelegate {
     private func handle(_ request: HostRequest, connectionID: UUID) async -> HostResponse {
         let now = clock.milliseconds()
         if lease.expire(at: now) { clearActivityUI() }
+        if (lease.active != nil || idleReference.armedID != nil || idleReference.isExporting)
+            && !permission.isGranted { invalidateActivity() }
         do {
             switch request.action {
             case "health":
                 var status = readiness(now: now)
-                status["screen_capture_permission"] = .boolean(CGPreflightScreenCaptureAccess())
+                status["screen_capture_permission"] = .boolean(permission.isGranted)
+                status["idle_reference_armed_id"] = idleReference.armedID.map { .string($0) } ?? .null
+                status["idle_reference_exporting"] = .boolean(idleReference.isExporting)
                 status["capabilities"] = .array(["capture", "begin_activity", "renew_activity",
-                                                 "release_activity"].map { .string($0) })
+                                                 "release_activity", "export_idle_reference"].map { .string($0) })
                 status["input_service"] = .boolean(false)
                 return .ok(request, status)
             case "begin_activity":
                 try validateDisplay(request)
                 try requireAvailable()
                 guard capture.enabled else { throw HostCaptureError.notEnabled }
-                guard !captureInProgress else { throw HostLeaseError.busy }
+                guard !captureInProgress, !idleReference.isExporting else { throw HostLeaseError.busy }
+                idleReference.invalidate()
                 let session = try request.requiredString("session_id")
                 let sequence = try request.requiredSequence()
                 let challenge = try request.requiredString("challenge")
@@ -368,6 +432,7 @@ final class HostApplicationController: NSObject, NSApplicationDelegate {
                     let current = try lease.requireOwner(sessionID: session, connectionID: connectionID,
                         displayGeneration: generation, now: acknowledgedAt)
                     try requireAvailable()
+                    try permission.requireCapture(enabled: capture.enabled)
                     captureReady = true
                     overlayReady = renderer.show()
                     guard overlayReady else { throw HostLeaseError.notReady }
@@ -380,7 +445,7 @@ final class HostApplicationController: NSObject, NSApplicationDelegate {
             case "renew_activity":
                 try validateDisplay(request)
                 try requireAvailable()
-                guard CGPreflightScreenCaptureAccess() else {
+                guard permission.isGranted else {
                     // Permission withdrawal must revoke readiness before a new
                     // seat permit can be granted, even between screenshots.
                     if lease.release(connectionID: connectionID,
@@ -408,7 +473,7 @@ final class HostApplicationController: NSObject, NSApplicationDelegate {
                                             displayGeneration: generation, now: now)
                 guard HostLeaseState.isReady(now: now, uiHeartbeatAt: lastUIHeartbeat,
                     captureReady: captureReady, overlayReady: overlayReady && renderer.hasVisibleDisplayPanels),
-                    !captureInProgress else { throw HostLeaseError.notReady }
+                    !captureInProgress, !idleReference.isExporting else { throw HostLeaseError.notReady }
                 captureInProgress = true
                 defer { captureInProgress = false }
                 do {
@@ -417,6 +482,7 @@ final class HostApplicationController: NSObject, NSApplicationDelegate {
                     let current = try lease.requireOwner(sessionID: session, connectionID: connectionID,
                         displayGeneration: generation, now: completedAt)
                     try requireAvailable()
+                    try permission.requireCapture(enabled: capture.enabled)
                     guard HostLeaseState.isReady(now: completedAt, uiHeartbeatAt: lastUIHeartbeat,
                         captureReady: captureReady, overlayReady: overlayReady && renderer.hasVisibleDisplayPanels) else {
                         throw HostLeaseError.notReady
@@ -427,12 +493,29 @@ final class HostApplicationController: NSObject, NSApplicationDelegate {
                     if lease.release(connectionID: connectionID, sessionID: session) { clearActivityUI() }
                     throw error
                 }
+            case "export_idle_reference":
+                try validateDisplay(request)
+                guard try request.requiredString("instance_id") == instanceID else {
+                    throw HostIdleReferenceError.lifecycleChanged
+                }
+                let referenceID = try request.requiredString("reference_id")
+                let exported = try await idleReference.export(armedID: referenceID,
+                    connectionID: connectionID, binding: [
+                    "instance_id": .string(instanceID), "capture_backend": .string("owned_sck"),
+                    "displayGeneration": .integer(Int64(clamping: generation)),
+                    "human_stop_latched": .boolean(!availability.humanAllowed),
+                    "capture_enabled": .boolean(capture.enabled), "raw_vnc_exclusion": .boolean(false)
+                ])
+                updateHumanControl()
+                return .ok(request, exported.metadata)
             default:
                 return .failure(id: request.id, code: -32601, message: "unsupported_host_action")
             }
         } catch let error as HostLeaseError {
             return .failure(id: request.id, message: error.rawValue)
         } catch let error as HostCaptureError {
+            return .failure(id: request.id, message: error.rawValue)
+        } catch let error as HostIdleReferenceError {
             return .failure(id: request.id, message: error.rawValue)
         } catch {
             return .failure(id: request.id, message: "host_action_failed")

@@ -6,16 +6,6 @@ import Darwin
 import ImageIO
 import UniformTypeIdentifiers
 
-enum HostCaptureError: String, Error {
-    case notEnabled = "capture_not_enabled"
-    case permissionRequired = "screen_capture_permission_required"
-    case displayUnavailable = "configured_display_unavailable"
-    case selfApplicationUnavailable = "own_application_exclusion_unavailable"
-    case incompleteImage = "incomplete_capture"
-    case captureFailed = "capture_failed"
-    case imageEncodingFailed = "image_encoding_failed"
-}
-
 struct HostCapturedImage {
     let png: Data
     let nativeWidth: Int
@@ -24,9 +14,11 @@ struct HostCapturedImage {
     let scaledHeight: Int
     let displayID: CGDirectDisplayID
     let bounds: CGRect
+    let excludedPID: pid_t
+    let excludedBundleID: String
 
-    var metadata: [String: HostValue] {
-        ["image": .string(png.base64EncodedString()), "mimeType": .string("image/png"),
+    var geometryMetadata: [String: HostValue] {
+        ["mimeType": .string("image/png"),
          "nativeWidth": .integer(Int64(nativeWidth)), "nativeHeight": .integer(Int64(nativeHeight)),
          "scaledWidth": .integer(Int64(scaledWidth)), "scaledHeight": .integer(Int64(scaledHeight)),
          "display_id": .integer(Int64(displayID)),
@@ -34,7 +26,16 @@ struct HostCapturedImage {
                                     "width": .number(Double(bounds.width)), "height": .number(Double(bounds.height))]),
          "pixels_per_point_x": .number(Double(nativeWidth) / Double(bounds.width)),
          "pixels_per_point_y": .number(Double(nativeHeight) / Double(bounds.height)),
-         "cursor_included": .boolean(true)]
+         "cursor_included": .boolean(true),
+         "capture_filter": .string("excluding_entire_own_application"),
+         "native_capture_resolution": .string("best"),
+         "native_pixel_format": .string("BGRA32"),
+         "excluded_application_pid": .integer(Int64(excludedPID)),
+         "excluded_application_bundle_id": .string(excludedBundleID)]
+    }
+
+    var metadata: [String: HostValue] {
+        geometryMetadata.merging(["image": .string(png.base64EncodedString())]) { _, value in value }
     }
 }
 
@@ -43,23 +44,25 @@ struct HostCapturedImage {
 @MainActor
 final class HostCapture {
     private let preferences: HostCapturePreferences
+    private let permission: HostCapturePermission
     var enabled: Bool { preferences.isEnabled }
     let displayID: CGDirectDisplayID
 
-    init(preferences: HostCapturePreferences, displayID: CGDirectDisplayID) {
-        self.preferences = preferences; self.displayID = displayID
+    init(preferences: HostCapturePreferences, permission: HostCapturePermission,
+         displayID: CGDirectDisplayID) {
+        self.preferences = preferences; self.permission = permission; self.displayID = displayID
     }
 
     func snapshot(maximumDimension: Int) async throws -> HostCapturedImage {
-        guard enabled else { throw HostCaptureError.notEnabled }
-        guard preferences.permitsCapture(permissionGranted: CGPreflightScreenCaptureAccess()) else {
-            throw HostCaptureError.permissionRequired
-        }
+        guard maximumDimension > 0 else { throw HostCaptureError.incompleteImage }
+        try permission.requireCapture(enabled: enabled)
         let content: SCShareableContent
         do {
-            content = try await SCShareableContent.excludingDesktopWindows(false,
-                                                                           onScreenWindowsOnly: false)
-        } catch { throw HostCaptureError.captureFailed }
+            content = try await permission.withCaptureAuthorization(enabled: { self.enabled }) {
+                try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
+            }
+        } catch let error as HostCaptureError { throw error }
+        catch { throw HostCaptureError.captureFailed }
         guard let display = content.displays.first(where: { $0.displayID == displayID }),
               CGDisplayIsActive(displayID) != 0 else { throw HostCaptureError.displayUnavailable }
         guard let ownApp = content.applications.first(where: {
@@ -84,9 +87,11 @@ final class HostCapture {
         configuration.captureResolution = .best
         let image: CGImage
         do {
-            image = try await SCScreenshotManager.captureImage(contentFilter: filter,
-                                                               configuration: configuration)
-        } catch { throw HostCaptureError.captureFailed }
+            image = try await permission.withCaptureAuthorization(enabled: { self.enabled }) {
+                try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: configuration)
+            }
+        } catch let error as HostCaptureError { throw error }
+        catch { throw HostCaptureError.captureFailed }
         guard image.width == width, image.height == height,
               CGDisplayBounds(displayID) == bounds,
               CGDisplayPixelsWide(displayID) == width, CGDisplayPixelsHigh(displayID) == height else {
@@ -114,6 +119,14 @@ final class HostCapture {
         CGImageDestinationAddImage(encoder, output, nil)
         guard CGImageDestinationFinalize(encoder) else { throw HostCaptureError.imageEncodingFailed }
         return HostCapturedImage(png: png as Data, nativeWidth: width, nativeHeight: height,
-            scaledWidth: scaledWidth, scaledHeight: scaledHeight, displayID: displayID, bounds: bounds)
+            scaledWidth: scaledWidth, scaledHeight: scaledHeight, displayID: displayID, bounds: bounds,
+            excludedPID: ownApp.processID, excludedBundleID: ownApp.bundleIdentifier)
+    }
+}
+
+extension HostCapturePermission {
+    static func system() -> HostCapturePermission {
+        HostCapturePermission(preflight: { CGPreflightScreenCaptureAccess() },
+                              request: { CGRequestScreenCaptureAccess() })
     }
 }
