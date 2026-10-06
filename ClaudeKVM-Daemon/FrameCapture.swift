@@ -7,25 +7,13 @@ extension ClaudeKVMDaemon {
 
     // MARK: - Diff State
 
-    static var baselineBuffer: Data?
-    static var maxImageDimension = 1280
+    static var framebufferBaseline = FramebufferBaseline()
 
     // MARK: - Diff Check
 
     /// Direct byte comparison — any pixel change returns true.
-    func diffCheck(buffer: UnsafeRawBufferPointer) -> Bool {
-        guard let baseline = Self.baselineBuffer else {
-            Self.baselineBuffer = Data(buffer)
-            return false
-        }
-
-        let count = min(baseline.count, buffer.count)
-        let changed = baseline.withUnsafeBytes { basePtr -> Bool in
-            memcmp(basePtr.baseAddress, buffer.baseAddress, count) != 0
-        }
-
-        Self.baselineBuffer = Data(buffer)
-        return changed
+    func diffCheck(buffer: UnsafeRawBufferPointer, context: VNCInputContext) -> Bool {
+        Self.framebufferBaseline.compareAndReplace(Data(buffer), context: context)
     }
 
     // MARK: - Cursor Crop with Crosshair
@@ -35,6 +23,9 @@ extension ClaudeKVMDaemon {
         width: Int, height: Int,
         centerX: Int, centerY: Int, radius: Int
     ) -> Data? {
+        guard FrameImageEncoder.validRGBA(buffer, width: width, height: height),
+              centerX >= 0, centerX < width, centerY >= 0, centerY < height,
+              (1...500).contains(radius) else { return nil }
         let left = max(0, centerX - radius)
         let top = max(0, centerY - radius)
         let right = min(width, centerX + radius)
@@ -91,6 +82,7 @@ extension ClaudeKVMDaemon {
         fbWidth: Int, fbHeight: Int,
         x: Int, y: Int, width cropW: Int, height cropH: Int
     ) -> Data? {
+        guard FrameImageEncoder.validRGBA(buffer, width: fbWidth, height: fbHeight) else { return nil }
         let clampedX = max(0, min(x, fbWidth))
         let clampedY = max(0, min(y, fbHeight))
         let clampedW = min(cropW, fbWidth - clampedX)
@@ -129,7 +121,9 @@ extension ClaudeKVMDaemon {
         width: Int, height: Int,
         scaling: DisplayScaling
     ) -> [TextElement] {
-        guard let baseAddress = buffer.baseAddress else { return [] }
+        guard FrameImageEncoder.validRGBA(buffer, width: width, height: height),
+              width == scaling.nativeWidth, height == scaling.nativeHeight,
+              let baseAddress = buffer.baseAddress else { return [] }
         let bytesPerRow = width * 4
 
         guard let colorSpace = CGColorSpace(name: CGColorSpace.sRGB),
@@ -178,55 +172,8 @@ extension ClaudeKVMDaemon {
 
     // MARK: - PNG Encoding
 
-    func createPNGFromRGBA(
-        buffer: UnsafeRawBufferPointer,
-        width: Int,
-        height: Int
-    ) -> Data? {
-        guard let baseAddress = buffer.baseAddress else { return nil }
-        let bytesPerRow = width * 4
-
-        guard let colorSpace = CGColorSpace(name: CGColorSpace.sRGB),
-              let context = CGContext(
-                  data: UnsafeMutableRawPointer(mutating: baseAddress),
-                  width: width,
-                  height: height,
-                  bitsPerComponent: 8,
-                  bytesPerRow: bytesPerRow,
-                  space: colorSpace,
-                  bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue
-              ),
-              let cgImage = context.makeImage() else {
-            return nil
-        }
-
-        let maxDim = Self.maxImageDimension
-        let finalImage: CGImage
-        if width > maxDim || height > maxDim {
-            let scale = Double(maxDim) / Double(max(width, height))
-            let newW = Int(Double(width) * scale)
-            let newH = Int(Double(height) * scale)
-
-            guard let scaleCtx = CGContext(
-                data: nil,
-                width: newW,
-                height: newH,
-                bitsPerComponent: 8,
-                bytesPerRow: newW * 4,
-                space: colorSpace,
-                bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue
-            ) else { return nil }
-
-            scaleCtx.interpolationQuality = .high
-            scaleCtx.draw(cgImage, in: CGRect(x: 0, y: 0, width: newW, height: newH))
-
-            guard let scaled = scaleCtx.makeImage() else { return nil }
-            finalImage = scaled
-        } else {
-            finalImage = cgImage
-        }
-
-        let rep = NSBitmapImageRep(cgImage: finalImage)
-        return rep.representation(using: .png, properties: [:])
+    func createPNGFromRGBA(buffer: UnsafeRawBufferPointer, width: Int, height: Int,
+                           scaling: DisplayScaling) -> Data? {
+        FrameImageEncoder.encode(buffer: buffer, width: width, height: height, scaling: scaling)
     }
 }

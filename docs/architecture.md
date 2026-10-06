@@ -1,0 +1,104 @@
+# Architecture
+
+Fruitctl separates the agent protocol, the shared desktop controller, and the
+human indication shown on a target. The public producer owns these interfaces;
+fleet configuration and deployment belong to each consumer.
+
+## Components
+
+| Component | Responsibility | Platform |
+| --- | --- | --- |
+| Agent adapter | Configure MCP and install the shared skill | Harness-dependent |
+| Shared relay | Forward agent requests and observations | Node.js 24 |
+| Darwin broker | Own target profiles, credentials, control leases, and native transport | macOS |
+| Native VNC client | Decode target pixels and send remote input | Apple Silicon macOS 15+ baseline |
+| SSH bridge | Attach a Linux seat to the Darwin controller | Linux client to Darwin |
+| Target indicator | Show the human an active control session | Optional macOS app |
+| Filtered capture | Exclude the indicator from qualified observations | Optional macOS ScreenCaptureKit path |
+
+The control path is `MCP → relay → Darwin broker → native VNC → target`.
+The indicator/capture path is separate. Existing `vnc_command`, `action_queue`,
+and completion tool names remain compatible while their implementation is
+refactored. See the [MCP schemas](../tools/index.js) for actual action names.
+
+## Session and credential ownership
+
+One broker owns each target's live control state. The operator selects a named
+profile that fixes the target and credential provider. Tool arguments cannot
+redirect that profile. A Linux bridge carries requests and observations without
+receiving the target secret. Credentials never become command-line arguments,
+adoption receipts, or public configuration.
+
+Use one profile per desktop. Before opening its socket, the broker rejects
+known overlaps in VNC endpoints, helper SSH hosts, and explicit `targetId`
+values. The operator may assign that stable physical identity when different
+addresses name the same machine. Fruitctl does not guess DNS or SSH aliases;
+the operator must resolve those aliases and keep one controller owner for the
+desktop.
+
+The broker binds a target lease to the connected relay client. Each accepted
+execute request from that owner renews the default 60-second lease; another
+client is rejected while it is owned or releasing. `task_complete` and
+`task_failed` release control, as do disconnect and lease expiry. Release cancels
+pending input, releases held native input, and closes the executor before a
+successor may acquire the target. Unconfirmed cleanup blocks the target until
+the operator reconciles it. An unused native executor also has a five-minute
+idle cleanup deadline.
+
+Reconnect requires a new observation and cannot replay previous input. The
+optional target app has its own short-lived indicator lease and local stop
+control. In the experimental helper path, the executor starts target activity
+on the task's first execute request and renews it every 500 milliseconds across
+requests and agent thinking gaps. It ends activity on explicit task release,
+completion, failure, disconnect, or the broker's 60-second ownership expiry.
+Input requires a current ready acknowledgement and independently
+qualified mapping. Loss of the helper, acknowledgement, or input permit stops
+the native executor. These implementation checks require runtime qualification;
+the broker's 60-second ownership lease alone does not prove that the human
+indicator is active.
+
+## Observation contract
+
+A successful capture contains a complete frame with current dimensions,
+coordinate mapping, and a frame identifier. A changing test target is necessary
+to qualify action-to-observation behavior. A static screenshot cannot prove a
+fresh frame, and a partial update cannot be reported as complete pixels.
+
+Input and capture failures are distinct. If an input's execution is uncertain,
+report that uncertainty and avoid replay. If capture fails after known input,
+report both facts and stop until a complete observation is available.
+
+## FuzzyBot spell
+
+The target-side indicator draws an edge-feathered deep purple pulse with the
+centered message: “Machine under FuzzyBot spell, courtesy xoxd.ai)”. It accepts
+no pointer or keyboard input and respects a reduced-motion setting. Human stop
+remains available through an accessible local control.
+
+The indicator must remain absent from every frame delivered to the agent while
+remaining visible to a person at the machine. Window sharing flags alone are
+not proof that VNC excludes it. The qualification lane uses filtered
+ScreenCaptureKit observations and records a simultaneous human-display and
+agent-frame comparison. Raw VNC mode does not enable the overlay until that
+mode passes the same exclusion proof. Hiding the overlay during capture or
+masking its pixels is outside the capture contract.
+
+The helper attaches over SSH to an already installed, resident target app
+through its `--stdio` interface. That attachment does not launch the app, grant
+macOS consent, or install it. Helper screenshots use owned filtered capture;
+input remains on the VNC client and requires a measured mapping between those
+observations and the VNC desktop. Until the installed path has an exclusion and
+mapping receipt, treat it as an unqualified preview.
+
+## Compatibility and release boundary
+
+Keep legacy executable aliases and the compatible signed application identity
+during the refactor. Publish signed bytes with exact source revision, checksums,
+and provenance. Consumers do not modify or re-sign those artifacts. macOS user
+consent remains separate from code-signing and notarization.
+
+The shared broker, Linux bridge, and optional target app are preview
+implementation lanes. Their source and offline checks do not constitute a
+qualified runtime release. This architecture states their contract; the
+[compatibility matrix](compatibility.md) limits claims to released and qualified
+combinations.

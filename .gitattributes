@@ -1,0 +1,2 @@
+# Preserve verified upstream notice bytes, including their original line endings.
+LICENSES/** -text -whitespace

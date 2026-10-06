@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "releaseStatus": "pending",
+  "runtimeBaseline": "node-24",
+  "nativeBuildBaseline": {
+    "os": "macos",
+    "minimumVersion": "15.0",
+    "architecture": "arm64"
+  },
+  "linuxPath": "ssh-bridge-to-darwin-controller",
+  "sourcePinPolicy": "full-commit-sha",
+  "binaryPinPolicy": "immutable-release-tag-and-sha256",
+  "credentials": "darwin-controller-local-provider",
+  "targetSelection": "operator-configured-profile",
+  "uncertainInput": "stop-without-automatic-replay",
+  "indicatorPolicy": "qualified-capture-exclusion-only",
+  "support": "public-best-effort"
+}

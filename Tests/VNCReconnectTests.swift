@@ -160,6 +160,62 @@ private final class FakeNative {
 }
 
 final class VNCReconnectTests: XCTestCase {
+    func testExternalObservationAdoptsIncompleteAllocationWithoutCapturingPixels() async throws {
+        let native = FakeNative(polls: [true]); native.completeDuringInitialize = false
+        let scheduler = ManualScheduler()
+        let bridge = VNCBridge(operations: native.operations, schedule: scheduler.schedule)
+        try await bridge.connect()
+        let expected = VNCInputContext(bridge.framebufferDiagnostics)
+        let requestsBefore = native.observedFullUpdates
+        XCTAssertFalse(bridge.framebufferDiagnostics.complete)
+        let admitted = try await bridge.validateExternalObservation(expected)
+        XCTAssertEqual(admitted, expected)
+        XCTAssertEqual(native.observedFullUpdates, requestsBefore)
+        XCTAssertEqual(bridge.framebufferDiagnostics.rectangles, 0)
+        XCTAssertEqual(bridge.framebufferDiagnostics.finishedUpdates, 0)
+        bridge.disconnect(); XCTAssertEqual(bridge.framebufferWidth, 0)
+    }
+
+    func testExternalObservationRefusesReallocationWithUnchangedDimensions() async throws {
+        let native = FakeNative(polls: [true]); native.completeDuringInitialize = false
+        let scheduler = ManualScheduler()
+        let bridge = VNCBridge(operations: native.operations, schedule: scheduler.schedule)
+        try await bridge.connect()
+        let previous = VNCInputContext(bridge.framebufferDiagnostics)
+        native.beforePoll = { client in XCTAssertNotEqual(vncMallocFrameBuffer(client), 0) }
+        scheduler.runNext()
+        let current = VNCInputContext(bridge.framebufferDiagnostics)
+        XCTAssertEqual(previous.width, current.width)
+        XCTAssertEqual(previous.height, current.height)
+        XCTAssertNotEqual(previous.allocation, current.allocation)
+        do { _ = try await bridge.validateExternalObservation(previous); XCTFail("stale allocation admitted") }
+        catch VNCError.sendFailed {} catch { XCTFail("unexpected error: \(error)") }
+        let admitted = try await bridge.validateExternalObservation(current)
+        XCTAssertEqual(admitted, current)
+        bridge.disconnect(); XCTAssertEqual(bridge.framebufferWidth, 0)
+    }
+
+    func testExternalObservationRefusesReconnectedGenerationWithIdenticalGeometry() async throws {
+        let native = FakeNative(outcomes: [true, true], polls: [false, true])
+        native.completeDuringInitialize = false
+        let scheduler = ManualScheduler()
+        let bridge = VNCBridge(operations: native.operations, schedule: scheduler.schedule)
+        try await bridge.connect()
+        let previous = VNCInputContext(bridge.framebufferDiagnostics)
+        scheduler.runNext() // connection loss
+        scheduler.runNext() // reconnect into another generation
+        let current = VNCInputContext(bridge.framebufferDiagnostics)
+        XCTAssertEqual(previous.width, current.width)
+        XCTAssertEqual(previous.height, current.height)
+        XCTAssertEqual(previous.allocation, current.allocation)
+        XCTAssertNotEqual(previous.connectionGeneration, current.connectionGeneration)
+        do { _ = try await bridge.validateExternalObservation(previous); XCTFail("stale generation admitted") }
+        catch VNCError.sendFailed {} catch { XCTFail("unexpected error: \(error)") }
+        let admitted = try await bridge.validateExternalObservation(current)
+        XCTAssertEqual(admitted, current)
+        bridge.disconnect(); XCTAssertEqual(bridge.framebufferWidth, 0)
+    }
+
     func testFreshCaptureRefusesHistoricalCompletionAndMetadataUntilOriginalDeadline() async throws {
         let native = FakeNative(polls: [true])
         let scheduler = ManualScheduler(), deadline = ManualScheduler()

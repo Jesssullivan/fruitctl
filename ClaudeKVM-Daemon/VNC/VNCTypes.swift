@@ -1,5 +1,24 @@
 import Foundation
 
+/// Input is bound to the observed allocation, not just a cached display size.
+struct VNCInputContext: Equatable, Sendable {
+    let width: Int
+    let height: Int
+    let connectionGeneration: Int
+    let allocation: Int
+
+    init(width: Int, height: Int, connectionGeneration: Int, allocation: Int) {
+        self.width = width; self.height = height
+        self.connectionGeneration = connectionGeneration; self.allocation = allocation
+    }
+
+    init(_ diagnostics: VNCFramebufferDiagnostics) {
+        self.init(width: diagnostics.width, height: diagnostics.height,
+                  connectionGeneration: diagnostics.connectionGeneration,
+                  allocation: diagnostics.allocations)
+    }
+}
+
 /// Diagnostics describe control flow and coverage only, never framebuffer,
 /// clipboard, credentials, or server-supplied text. The native queue publishes
 /// bounded snapshots so a blocked decoder cannot block the frame deadline.

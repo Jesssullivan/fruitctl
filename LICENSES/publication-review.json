@@ -1,0 +1,80 @@
+{
+  "schema_version": 1,
+  "kind": "fruitctl-publication-review",
+  "reviewed_at_utc": "2026-10-06T01:37:03.139182+00:00",
+  "scope": "Authored public source identity, component licensing, dependency/notice correspondence, and bounded private-material scan; no binary/runtime qualification.",
+  "source_head": "66e6e75855a1984e09274798abb478afb8c26d08",
+  "canonical_repository": {
+    "full_name": "xoxd-ai/fruitctl",
+    "id": 1362062444,
+    "private": false,
+    "default_branch": "main",
+    "homepage": "https://fruitctl.clients.xoxd.ai",
+    "verification": "Read back from GitHub repository API during this review."
+  },
+  "source_publication_review": "passed_with_release_acceptance_separate",
+  "checks": {
+    "root_mit": "byte-identical to current Git HEAD LICENSE",
+    "native_component_mapping": "Linked VNC controller GPL-3.0-or-later; independent FruitctlHost/proxy/installer MIT; Node retains exact aggregate terms.",
+    "npm_inventory": {
+      "packages": 97,
+      "runtime": 93,
+      "development": 4,
+      "dependency_entries_sha256": "f194b548030a0da11d8b9edeb6292226ac33524d78ab18f2e97f3f40835d555a",
+      "notice_hashes": "all passed"
+    },
+    "native_source_lock": "OpenSSL/LibVNC source hashes and all three upstream patch hashes match component provenance.",
+    "node_inventory": "Official source and three runtime archives independently downloaded/hashchecked; exact executable and license hashes retained. Checksum signature is not claimed locally verified.",
+    "local_notice_links": "all exist",
+    "private_material_scan": {
+      "text_files_checked": 258,
+      "findings": 0,
+      "rules": [
+        "private key material",
+        "GitHub token shapes",
+        "AWS access IDs",
+        "raw agent rollout identifiers",
+        "private workspace paths",
+        "tailnet inventory IPs"
+      ],
+      "manual_review": "Public source/docs/config/license surfaces; intentional Linear project link contains no private payload."
+    }
+  },
+  "reviewed_inputs_sha256": {
+    "LICENSE": "8653e6134b771adcb4e36fcf23eb5a68ea27b74b5ee277e8da9aadc3118a55bf",
+    "LICENSES/dependency-provenance.json": "83f5e5627c3125bc20703f0de3acf350197baa351fbea0a01fb458dbba90865d",
+    "LICENSES/npm-dependencies.json": "93f058c40a9a4f43228f735276da056acaed76e073a41fb29649409215d4070d",
+    "LICENSES/node-runtime-provenance.json": "fd6afe1654b867eb7eec73d98d1d78ad89ece357961db5e060c9aa439adcbcaf",
+    "THIRD_PARTY_NOTICES.md": "8d0bf7c8a4100a9e16f0155559714ab634e6cf07cb3c3f3a22020aa8be877312",
+    "docs/licensing.md": "c5e512a065312be0999284cd96611fca9b79702b135154707d9f578d04a56d25",
+    "release/native-dependencies.lock.json": "3236a6d558a1907bcc32a0ab249992150bc253730f7dd3bd788643ee784bc81d"
+  },
+  "release_review": {
+    "source_rail": "Reviewed required notices/scripts, exact dependency source inventories, pinned Swift checkout and native output/signing-receipt correspondence.",
+    "runtime_rail": "Reviewed exact production npm archive/file verification, lock-to-notice digest, unchanged pinned Node executable and complete notices.",
+    "open_findings": [],
+    "acceptance_remaining": [
+      "Check source packaging refuses legacy opaque prebuilt inputs in the reviewed public inventory.",
+      "Inspect actual corresponding-source/runtime archives and receipts after generation.",
+      "Publish matching Node source with a runtime-only release; matching complete source with each linked native binary.",
+      "Enable release immutability after complete draft assembly and before publication.",
+      "Run actual installer/runtime fixtures; native signing, notarization, capture and frontend qualification remain separate."
+    ],
+    "immutable_releases_enabled_at_readback": false,
+    "binary_qualification": "not-established-by-this-review",
+    "historical_native_source_correspondence": "unestablished; new baseline is not claimed to correspond to historical signed assets.",
+    "resolved_findings": [
+      {
+        "id": "runtime-asset-name-shadowing",
+        "path": "scripts/release/package_runtime.py",
+        "status": "fixed-in-reviewed-source",
+        "evidence": "Dedicated asset_name variable is retained through notice-copy loops and receipt URL construction."
+      },
+      {
+        "id": "matching-source-and-runtime-input-coverage",
+        "status": "fixed-in-reviewed-source",
+        "evidence": "Required source notices/build/install scripts, exact reused dependency trees, Swift checkout, native output/signing receipt, npm lock inventory and production archive file hashes are enforced."
+      }
+    ]
+  }
+}

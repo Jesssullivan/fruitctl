@@ -1,0 +1,50 @@
+{
+  "schema": "fruitctl.agents.v1",
+  "skill": "skills/fruitctl",
+  "qualification": "configuration-documented; runtime acceptance pending",
+  "agents": {
+    "claude": {
+      "name": "Claude Code",
+      "config": { "user": ".claude.json", "project": ".mcp.json", "format": "json", "container": ["mcpServers"] },
+      "skill": { "user": ".claude/skills/fruitctl", "project": ".claude/skills/fruitctl" },
+      "reference": "https://code.claude.com/docs/en/mcp"
+    },
+    "codex": {
+      "name": "Codex",
+      "config": { "user": ".codex/config.toml", "project": ".codex/config.toml", "format": "toml", "container": ["mcp_servers"] },
+      "skill": { "user": ".agents/skills/fruitctl", "project": ".agents/skills/fruitctl" },
+      "reference": "https://learn.chatgpt.com/docs/extend/mcp?surface=cli"
+    },
+    "pi": {
+      "name": "Pi (native MCP, >=0.99.0)",
+      "config": { "user": ".pi/agent/mcp.json", "project": ".pi/mcp.json", "format": "json", "container": ["mcpServers"] },
+      "skill": { "user": ".agents/skills/fruitctl", "project": ".agents/skills/fruitctl" },
+      "reference": "https://pi.dev/docs/latest/mcp"
+    },
+    "junie": {
+      "name": "Junie CLI / standalone IDE plugin",
+      "config": { "user": ".junie/mcp/mcp.json", "project": ".junie/mcp/mcp.json", "format": "json", "container": ["mcpServers"] },
+      "skill": { "user": ".junie/skills/fruitctl", "project": ".junie/skills/fruitctl" },
+      "ideSettingsSnippet": true,
+      "reference": "https://junie.jetbrains.com/docs/junie-cli-mcp-configuration.html"
+    },
+    "opencode": {
+      "name": "OpenCode v1",
+      "config": { "user": ".config/opencode/opencode.json", "project": "opencode.json", "format": "jsonc", "container": ["mcp"] },
+      "skill": { "user": ".agents/skills/fruitctl", "project": ".agents/skills/fruitctl" },
+      "reference": "https://opencode.ai/docs/mcp-servers/"
+    },
+    "vscode": {
+      "name": "VS Code / GitHub Copilot (portable MCP)",
+      "config": { "user": ".copilot/mcp-config.json", "project": ".mcp.json", "format": "jsonc", "container": ["mcpServers"] },
+      "skill": { "user": ".agents/skills/fruitctl", "project": ".agents/skills/fruitctl" },
+      "reference": "https://code.visualstudio.com/docs/agents/reference/mcp-configuration"
+    },
+    "kimi": {
+      "name": "Kimi native CLI",
+      "config": { "user": ".kimi-code/mcp.json", "project": ".kimi-code/mcp.json", "format": "json", "container": ["mcpServers"] },
+      "skill": { "user": ".agents/skills/fruitctl", "project": ".agents/skills/fruitctl" },
+      "reference": "https://www.kimi.com/code/docs/en/kimi-code-cli/customization/mcp.html"
+    }
+  }
+}

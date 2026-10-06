@@ -45,3 +45,7 @@ Package.resolved
 .vscode/
 
 # Claude
+
+# Generated documentation and release staging
+build-docs/
+release-out/

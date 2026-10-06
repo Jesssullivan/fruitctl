@@ -62,6 +62,10 @@ final class VNCBridge: @unchecked Sendable {
         let height: Int
         let connectionGeneration: Int
         let allocation: Int
+        var inputContext: VNCInputContext {
+            VNCInputContext(width: width, height: height,
+                            connectionGeneration: connectionGeneration, allocation: allocation)
+        }
         func withFramebuffer<T>(_ body: (UnsafeRawBufferPointer, Int, Int) -> T) -> T {
             pixels.withUnsafeBytes { body($0, width, height) }
         }
@@ -685,7 +689,7 @@ final class VNCBridge: @unchecked Sendable {
                     let (bytes, byteOverflow) = pixels.multipliedReportingOverflow(by: bpp)
                     guard client.pointee.frameBuffer != nil,
                           client.pointee.frameBuffer == ownedFramebuffer,
-                          width > 0, height > 0, bpp > 0,
+                          width > 0, height > 0, bpp == 4,
                           diagnostics.width == width, diagnostics.height == height,
                           !pixelOverflow, !byteOverflow, bytes <= Self.maximumFramebufferBytes,
                           bytes == ownedFramebufferBytes else {
@@ -755,65 +759,105 @@ final class VNCBridge: @unchecked Sendable {
 
     // MARK: - Input
 
-    func sendMouseEvent(x: Int, y: Int, buttonMask: Int = 0) async throws {
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-            messageQueue.async { [self] in
-                guard let client = activeClient else {
-                    continuation.resume(throwing: VNCError.notConnected)
-                    return
+    private func admitsInput(_ context: VNCInputContext?, releaseOnly: Bool) -> Bool {
+        guard let context else { return true }
+        let current = VNCInputContext(framebufferDiagnostics)
+        guard context.connectionGeneration == current.connectionGeneration else { return false }
+        return releaseOnly || context == current
+    }
+
+    /// A qualified external capture can seed input without requesting or
+    /// reading an RFB image. Recheck its binding on the same queue as input.
+    func validateExternalObservation(_ expected: VNCInputContext) async throws -> VNCInputContext {
+        try await sendOnNativeQueue { [self] in
+            guard let client = activeClient, let session = clientSession, wants(session) else {
+                throw VNCError.notConnected
+            }
+            let current = VNCInputContext(framebufferDiagnostics)
+            let width = Int(client.pointee.width), height = Int(client.pointee.height)
+            let (pixels, overflow) = width.multipliedReportingOverflow(by: height)
+            let (bytes, byteOverflow) = pixels.multipliedReportingOverflow(by: 4)
+            guard expected == current, width == expected.width, height == expected.height,
+                  width > 0, height > 0, !overflow, !byteOverflow,
+                  Int(client.pointee.format.bitsPerPixel) == 32,
+                  client.pointee.frameBuffer != nil, client.pointee.frameBuffer == ownedFramebuffer,
+                  bytes == ownedFramebufferBytes else {
+                throw VNCError.sendFailed("External observation does not match the current VNC allocation")
+            }
+        }
+        return expected
+    }
+
+    /// Cancellation can arrive while this operation is behind a blocked RFB
+    /// decoder. Check again on the native queue before emitting any input.
+    private func sendOnNativeQueue(releaseOnly: Bool = false,
+                                   _ operation: @escaping () throws -> Void) async throws {
+        let cancelled = OSAllocatedUnfairLock(initialState: false)
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                messageQueue.async {
+                    guard !cancelled.withLock({ $0 }) else {
+                        continuation.resume(throwing: CancellationError())
+                        return
+                    }
+                    do { try operation(); continuation.resume() }
+                    catch { continuation.resume(throwing: error) }
                 }
-                if SendPointerEvent(client, Int32(x), Int32(y), Int32(buttonMask)) != 0 {
-                    continuation.resume()
-                } else {
-                    continuation.resume(throwing: VNCError.sendFailed("pointer event"))
-                }
+            }
+        } onCancel: {
+            if !releaseOnly { cancelled.withLock { $0 = true } }
+        }
+    }
+
+    func sendMouseEvent(x: Int, y: Int, buttonMask: Int = 0,
+                        context: VNCInputContext? = nil, releaseOnly: Bool = false) async throws {
+        try await sendOnNativeQueue(releaseOnly: releaseOnly) { [self] in
+            guard let client = activeClient else { throw VNCError.notConnected }
+            guard admitsInput(context, releaseOnly: releaseOnly),
+                  buttonMask >= 0, buttonMask <= 255, !releaseOnly || buttonMask == 0 else {
+                throw VNCError.sendFailed("Observed display changed; take a new screenshot before input")
+            }
+            let width = Int(client.pointee.width), height = Int(client.pointee.height)
+            let pointerX = releaseOnly ? min(max(0, x), max(0, width - 1)) : x
+            let pointerY = releaseOnly ? min(max(0, y), max(0, height - 1)) : y
+            guard width > 0, height > 0, pointerX >= 0, pointerX < width,
+                  pointerY >= 0, pointerY < height,
+                  let nativeX = Int32(exactly: pointerX), let nativeY = Int32(exactly: pointerY) else {
+                throw VNCError.sendFailed("Pointer coordinates outside current framebuffer")
+            }
+            guard SendPointerEvent(client, nativeX, nativeY, Int32(buttonMask)) != 0 else {
+                throw VNCError.sendFailed("pointer event")
             }
         }
     }
 
-    func sendKeyEvent(key: UInt32, down: Bool) async throws {
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-            messageQueue.async { [self] in
-                guard let client = activeClient else {
-                    continuation.resume(throwing: VNCError.notConnected)
-                    return
-                }
-                // macOS Apple VNC expects Super_L/R for Command, not Meta_L/R
-                var remappedKey = key
-                if isMacOS {
-                    if key == 0xFFE7 { remappedKey = 0xFFEB }
-                    if key == 0xFFE8 { remappedKey = 0xFFEC }
-                }
-                let rfbDown: rfbBool = down ? -1 : 0
-                if SendKeyEvent(client, remappedKey, rfbDown) != 0 {
-                    continuation.resume()
-                } else {
-                    continuation.resume(throwing: VNCError.sendFailed("key event"))
-                }
+    func sendKeyEvent(key: UInt32, down: Bool,
+                      context: VNCInputContext? = nil, releaseOnly: Bool = false) async throws {
+        try await sendOnNativeQueue(releaseOnly: releaseOnly) { [self] in
+            guard let client = activeClient else { throw VNCError.notConnected }
+            guard admitsInput(context, releaseOnly: releaseOnly), !releaseOnly || !down else {
+                throw VNCError.sendFailed("Observed display changed; take a new screenshot before input")
             }
+            // macOS Apple VNC expects Super_L/R for Command, not Meta_L/R.
+            var remappedKey = key
+            if isMacOS {
+                if key == 0xFFE7 { remappedKey = 0xFFEB }
+                if key == 0xFFE8 { remappedKey = 0xFFEC }
+            }
+            let rfbDown: rfbBool = down ? -1 : 0
+            guard SendKeyEvent(client, remappedKey, rfbDown) != 0 else { throw VNCError.sendFailed("key event") }
         }
     }
 
-    func sendKeyTap(key: UInt32) async throws {
-        try await sendKeyEvent(key: key, down: true)
-        try await sendKeyEvent(key: key, down: false)
-    }
-
-    func sendClipboardText(_ text: String) async throws {
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-            messageQueue.async { [self] in
-                guard let client = activeClient else {
-                    continuation.resume(throwing: VNCError.notConnected)
-                    return
-                }
-                var cStr = Array(text.utf8CString)
-                let len = Int32(cStr.count - 1)
-                if SendClientCutText(client, &cStr, len) != 0 {
-                    continuation.resume()
-                } else {
-                    continuation.resume(throwing: VNCError.sendFailed("clipboard text"))
-                }
+    func sendClipboardText(_ text: String, context: VNCInputContext? = nil) async throws {
+        try await sendOnNativeQueue { [self] in
+            guard let client = activeClient else { throw VNCError.notConnected }
+            guard admitsInput(context, releaseOnly: false), text.utf8.count <= 1_048_576 else {
+                throw VNCError.sendFailed("Clipboard input is unavailable for the observed display")
             }
+            var cStr = Array(text.utf8CString)
+            let len = Int32(cStr.count - 1)
+            guard SendClientCutText(client, &cStr, len) != 0 else { throw VNCError.sendFailed("clipboard text") }
         }
     }
 

@@ -1,0 +1,6 @@
+interface:
+  display_name: "Fruitctl"
+  short_description: "Observe and control a configured VNC desktop"
+  default_prompt: "Use $fruitctl to complete the authorized task on my configured desktop and verify the result."
+policy:
+  allow_implicit_invocation: true

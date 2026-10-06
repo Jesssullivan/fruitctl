@@ -6,12 +6,14 @@ extension ClaudeKVMDaemon {
 
     func runCommandLoop(vnc: VNCBridge, input: InputController, scaling: DisplayScaling) async {
         let stdin = FileHandle.standardInput
+        let lifetime = NativeCommandLifetime()
 
         let stdinStream = AsyncStream<Data> { continuation in
             DispatchQueue.global(qos: .userInteractive).async {
                 while true {
                     let data = stdin.availableData
                     if data.isEmpty {
+                        lifetime.close()
                         continuation.finish()
                         return
                     }
@@ -21,26 +23,51 @@ extension ClaudeKVMDaemon {
         }
 
         var buffer = Data()
+        var discardOversizedLine = false
+        let maximumRequestBytes = 8 * 1024 * 1024
 
         for await chunk in stdinStream {
-            buffer.append(chunk)
+            if discardOversizedLine {
+                guard let newline = chunk.firstIndex(of: UInt8(ascii: "\n")) else { continue }
+                buffer.append(chunk[chunk.index(after: newline)...])
+                discardOversizedLine = false
+            } else {
+                buffer.append(chunk)
+            }
 
             while let newlineIndex = buffer.firstIndex(of: UInt8(ascii: "\n")) {
                 let lineData = buffer[buffer.startIndex..<newlineIndex]
                 buffer = Data(buffer[buffer.index(after: newlineIndex)...])
 
                 guard !lineData.isEmpty else { continue }
+                guard lineData.count <= maximumRequestBytes else {
+                    respond(.error(id: nil, code: -32600, message: "Native request exceeds 8 MiB"))
+                    continue
+                }
 
                 do {
                     let request = try JSONDecoder().decode(PCRequest.self, from: lineData)
-                    await handleRequest(request, vnc: vnc, input: input, scaling: scaling)
+                    let task = Task { await handleRequest(request, vnc: vnc, input: input, scaling: scaling) }
+                    lifetime.register(task)
+                    await withTaskCancellationHandler {
+                        await task.value
+                    } onCancel: {
+                        task.cancel()
+                    }
+                    lifetime.finished()
                 } catch {
                     respond(.error(id: nil, code: -32700, message: "Parse error: \(error.localizedDescription)"))
                 }
             }
+            if buffer.count > maximumRequestBytes {
+                buffer.removeAll(keepingCapacity: false)
+                discardOversizedLine = true
+                respond(.error(id: nil, code: -32600, message: "Native request exceeds 8 MiB"))
+            }
         }
 
         log("stdin closed — shutting down")
+        await input.releaseHeldInput()
     }
 
     // MARK: - Request Handler
@@ -55,6 +82,18 @@ extension ClaudeKVMDaemon {
         let p = req.params
 
         do {
+            try Task.checkCancellation()
+            if req.method == "adopt_observation" { input.context = nil }
+            try req.validate(scaling: scaling)
+            if PCRequest.inputMethods.contains(req.method) {
+                guard input.heldKeys.isEmpty, !input.heldButtons else {
+                    throw VNCError.sendFailed("Previous input release is unconfirmed; reconcile the target before continuing")
+                }
+                guard let context = input.context,
+                      context == VNCInputContext(vnc.framebufferDiagnostics) else {
+                    throw VNCError.sendFailed("Observed display changed; take a new screenshot before input")
+                }
+            }
             // Screen observations require newly received full pixel coverage,
             // then encode an owned copy bound to the admitted generation.
             let capturedFrame: VNCBridge.FrameCapture?
@@ -63,18 +102,27 @@ extension ClaudeKVMDaemon {
                 capturedFrame = try await vnc.captureFreshFramebuffer()
             default: capturedFrame = nil
             }
+            if let frame = capturedFrame {
+                scaling.updateGeometry(width: frame.width, height: frame.height)
+                // Do not authorize input from a frame that later fails encoding.
+                input.context = nil
+                input.cursorX = min(max(0, input.cursorX), frame.width - 1)
+                input.cursorY = min(max(0, input.cursorY), frame.height - 1)
+            }
             switch req.method {
 
             // ── Screen ────────────────────────────────────────
 
             case "screenshot":
                 guard let imageData = capturedFrame?.withFramebuffer({ buf, w, h -> Data? in
-                    createPNGFromRGBA(buffer: buf, width: w, height: h)
+                    createPNGFromRGBA(buffer: buf, width: w, height: h, scaling: scaling)
                 }) ?? nil else {
                     throw VNCError.sendFailed("No framebuffer")
                 }
+                input.context = capturedFrame?.inputContext
                 respond(.success(id: id, image: imageData.base64EncodedString(),
-                                  scaledWidth: scaling.scaledWidth, scaledHeight: scaling.scaledHeight))
+                                  scaledWidth: scaling.scaledWidth, scaledHeight: scaling.scaledHeight,
+                                  frameContext: capturedFrame?.inputContext))
 
             case "cursor_crop":
                 let pos = input.cursorPosition
@@ -85,21 +133,24 @@ extension ClaudeKVMDaemon {
                 }) ?? nil else {
                     throw VNCError.sendFailed("No framebuffer")
                 }
+                input.context = capturedFrame?.inputContext
                 respond(.success(id: id, image: imageData.base64EncodedString(),
-                                  x: scaledPos.x, y: scaledPos.y))
+                                  x: scaledPos.x, y: scaledPos.y,
+                                  frameContext: capturedFrame?.inputContext))
 
             case "diff_check":
-                guard let changed = capturedFrame?.withFramebuffer({ buf, _, _ -> Bool in
-                    diffCheck(buffer: buf)
-                }) else { throw VNCError.sendFailed("No framebuffer") }
-                respond(.success(id: id, detail: "changeDetected: \(changed)"))
+                guard let frame = capturedFrame else { throw VNCError.sendFailed("No framebuffer") }
+                let changed = frame.withFramebuffer { buf, _, _ -> Bool in
+                    diffCheck(buffer: buf, context: frame.inputContext)
+                }
+                input.context = frame.inputContext
+                respond(.success(id: id, detail: "changeDetected: \(changed)", frameContext: frame.inputContext))
 
             case "set_baseline":
-                guard capturedFrame?.withFramebuffer({ buf, _, _ in
-                    Self.baselineBuffer = Data(buf)
-                    return true
-                }) != nil else { throw VNCError.sendFailed("No framebuffer") }
-                respond(.success(id: id, detail: "OK"))
+                guard let frame = capturedFrame else { throw VNCError.sendFailed("No framebuffer") }
+                Self.framebufferBaseline.set(frame.pixels, context: frame.inputContext)
+                input.context = frame.inputContext
+                respond(.success(id: id, detail: "OK", frameContext: frame.inputContext))
 
             // ── Mouse ─────────────────────────────────────────
 
@@ -195,11 +246,18 @@ extension ClaudeKVMDaemon {
                 guard let elements = capturedFrame?.withFramebuffer({ buf, w, h -> [TextElement] in
                     detectTextElements(buffer: buf, width: w, height: h, scaling: scaling)
                 }) else { throw VNCError.sendFailed("No framebuffer") }
+                input.context = capturedFrame?.inputContext
                 respond(.success(id: id, detail: "\(elements.count) elements",
                                   scaledWidth: scaling.scaledWidth, scaledHeight: scaling.scaledHeight,
-                                  elements: elements))
+                                  elements: elements, frameContext: capturedFrame?.inputContext))
 
             // ── Configuration ─────────────────────────────────
+
+            case "adopt_observation":
+                let expected = try req.externalObservation(scaling: scaling)
+                try await input.adoptObservation(expected, scaling: scaling)
+                respond(.success(id: id, detail: "OK", scaledWidth: scaling.scaledWidth,
+                                  scaledHeight: scaling.scaledHeight, frameContext: expected))
 
             case "configure":
                 handleConfigure(id: id, params: p, input: input, scaling: scaling)
@@ -218,10 +276,17 @@ extension ClaudeKVMDaemon {
                 respond(.success(id: id, detail: "OK"))
 
             case "health":
+                let current = VNCInputContext(vnc.framebufferDiagnostics)
+                let liveScaling = DisplayScaling(nativeWidth: current.width, nativeHeight: current.height,
+                                                 maxDimension: scaling.maxDimension)
                 respond(.success(id: id, detail: "\(vnc.connectionState)",
-                                  scaledWidth: scaling.scaledWidth, scaledHeight: scaling.scaledHeight))
+                                  scaledWidth: liveScaling.scaledWidth, scaledHeight: liveScaling.scaledHeight,
+                                  frameContext: current))
 
             case "shutdown":
+                guard await input.releaseHeldInput() else {
+                    throw VNCError.sendFailed("Shutdown could not confirm held-state release")
+                }
                 respond(.success(id: id, detail: "OK"))
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { Foundation.exit(0) }
                 return
@@ -230,6 +295,7 @@ extension ClaudeKVMDaemon {
                 respond(.error(id: id, code: -32601, message: "Method not found: \(req.method)"))
             }
         } catch {
+            await input.releaseHeldInput()
             respond(.error(id: id, message: error.localizedDescription))
         }
     }
@@ -244,6 +310,7 @@ extension ClaudeKVMDaemon {
     ) {
         if p?.reset == true {
             input.timing = InputTiming()
+            scaling.reset()
             let timing = buildTimingMap(input: input, scaling: scaling)
             respond(.success(id: id, detail: "OK — reset to defaults",
                               scaledWidth: scaling.scaledWidth, scaledHeight: scaling.scaledHeight,
@@ -256,7 +323,6 @@ extension ClaudeKVMDaemon {
         // Display
         if let v = p?.maxDimension {
             scaling.reconfigure(maxDimension: v)
-            Self.maxImageDimension = v
             changed.append("max_dimension")
         }
 
@@ -401,5 +467,33 @@ extension ClaudeKVMDaemon {
         case "middle": return .middle
         default:       return .left
         }
+    }
+}
+
+/// EOF can arrive while the serial loop is inside a long input operation.
+/// Cancel that operation immediately rather than waiting for its next request.
+private final class NativeCommandLifetime: @unchecked Sendable {
+    private let lock = NSLock()
+    private var closed = false
+    private var task: Task<Void, Never>?
+
+    func register(_ task: Task<Void, Never>) {
+        lock.lock()
+        self.task = task
+        let shouldCancel = closed
+        lock.unlock()
+        if shouldCancel { task.cancel() }
+    }
+
+    func finished() {
+        lock.lock(); task = nil; lock.unlock()
+    }
+
+    func close() {
+        lock.lock()
+        closed = true
+        let current = task
+        lock.unlock()
+        current?.cancel()
     }
 }

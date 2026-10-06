@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://fruitctl.clients.xoxd.ai/schemas/native-input-manifest.schema.json",
+  "title": "Fruitctl regenerated native input manifest",
+  "type": "object",
+  "required": ["schemaVersion", "kind", "platform", "architecture", "minimumMacOS", "sourceLockSha256", "files"],
+  "properties": {
+    "schemaVersion": {"const": 1},
+    "kind": {"const": "fruitctl-native-inputs"},
+    "platform": {"const": "darwin"},
+    "architecture": {"const": "arm64"},
+    "minimumMacOS": {"const": "15.0"},
+    "sourceLockSha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "files": {
+      "type": "object", "minProperties": 7,
+      "additionalProperties": {
+        "type": "object", "required": ["sha256", "bytes"], "additionalProperties": false,
+        "properties": {"sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"}, "bytes": {"type": "integer", "minimum": 1}}
+      }
+    }
+  },
+  "additionalProperties": false
+}

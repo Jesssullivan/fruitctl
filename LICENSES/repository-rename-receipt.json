@@ -1,0 +1,72 @@
+{
+  "schema_version": 1,
+  "observed_at": "2026-10-05T23:18:35.361294+00:00",
+  "mode": "read_only",
+  "repository_id_expected": 1362062444,
+  "checks": [
+    {
+      "name": "canonical_repo_api",
+      "requested_url": "https://api.github.com/repos/xoxd-ai/fruitctl",
+      "status": 200,
+      "final_url": "https://api.github.com/repos/xoxd-ai/fruitctl",
+      "repository_id": 1362062444,
+      "full_name": "xoxd-ai/fruitctl",
+      "private": false,
+      "default_branch": "main"
+    },
+    {
+      "name": "agent_kvm_repo",
+      "requested_url": "https://github.com/xoxd-ai/agent-kvm",
+      "status": 200,
+      "final_url": "https://github.com/xoxd-ai/fruitctl"
+    },
+    {
+      "name": "tinyland_agent_kvm_repo",
+      "requested_url": "https://github.com/tinyland-inc/agent-kvm",
+      "status": 200,
+      "final_url": "https://github.com/xoxd-ai/fruitctl"
+    },
+    {
+      "name": "tinyland_claude_kvm_repo",
+      "requested_url": "https://github.com/tinyland-inc/claude-kvm",
+      "status": 200,
+      "final_url": "https://github.com/xoxd-ai/fruitctl"
+    },
+    {
+      "name": "old_commit",
+      "requested_url": "https://github.com/xoxd-ai/agent-kvm/commit/7dabce46de812cbe5be507c22091593534328e1c",
+      "status": 200,
+      "final_url": "https://github.com/xoxd-ai/fruitctl/commit/7dabce46de812cbe5be507c22091593534328e1c"
+    },
+    {
+      "name": "old_release",
+      "requested_url": "https://github.com/xoxd-ai/agent-kvm/releases/tag/daemon-v1.0.2-tinyland.4",
+      "status": 200,
+      "final_url": "https://github.com/xoxd-ai/fruitctl/releases/tag/daemon-v1.0.2-tinyland.4"
+    },
+    {
+      "name": "old_release_receipt",
+      "requested_url": "https://github.com/xoxd-ai/agent-kvm/releases/download/daemon-v1.0.2-tinyland.4/receipt.json",
+      "status": 200,
+      "final_url": "https://release-assets.githubusercontent.com/github-production-release-asset/1362062444/ed086178-906c-4854-ae34-de43ea410f20",
+      "bytes": 2878,
+      "sha256": "a50d32c8b580486028d74cea6fbd415c27048fb894748551e7c756ce3eae96ed"
+    },
+    {
+      "name": "tinyland_release_receipt",
+      "requested_url": "https://github.com/tinyland-inc/claude-kvm/releases/download/daemon-v1.0.2-tinyland.4/receipt.json",
+      "status": 200,
+      "final_url": "https://release-assets.githubusercontent.com/github-production-release-asset/1362062444/ed086178-906c-4854-ae34-de43ea410f20",
+      "bytes": 2878,
+      "sha256": "a50d32c8b580486028d74cea6fbd415c27048fb894748551e7c756ce3eae96ed"
+    },
+    {
+      "name": "old_native_asset",
+      "requested_url": "https://github.com/xoxd-ai/agent-kvm/releases/download/daemon-v1.0.2-tinyland.4/claude-kvm-daemon-1.0.2-tinyland.4-darwin-arm64.tar.gz",
+      "status": 200,
+      "final_url": "https://release-assets.githubusercontent.com/github-production-release-asset/1362062444/df6777b0-f7c6-4eb6-ae3f-9ecbe0266587",
+      "bytes": 3010003,
+      "sha256": "27e1c47efa72a11fbb0115800cc3bbe475bfafbfa7fb34c21fd644751cd7f314"
+    }
+  ]
+}

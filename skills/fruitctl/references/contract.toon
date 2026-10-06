@@ -1,0 +1,22 @@
+product: fruitctl
+repository: https://github.com/xoxd-ai/fruitctl
+docs: https://fruitctl.clients.xoxd.ai/
+contract: instructions_only
+wire: MCP_JSON
+target: operator_configured_profile
+credentials: controller_provider
+tools[4]{name,purpose}:
+  vnc_command,observe_or_input
+  action_queue,bounded_confident_sequence
+  task_complete,report_observed_completion
+  task_failed,report_incomplete_work
+loop[5]: health,screenshot,inspect,authorized_input,fresh_screenshot_verify
+uncertainty: pause_input_and_report
+replay_uncertain_input: forbidden
+geometry_change: pause_and_reestablish_mapping
+qualification: exact_release_frontend_platform_mode_receipt
+public_support: best_effort
+indicator: optional_qualified_modes_only
+indicator_lifetime: owned_session_including_thinking_gaps
+ownership_idle_expiry_ms: 60000
+human_stop: cease_input_and_wait_for_human_allow
