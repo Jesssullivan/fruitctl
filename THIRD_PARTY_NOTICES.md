@@ -63,7 +63,7 @@ packages.
 | Package | Version | Use | SPDX license | Exact upstream notice |
 |---|---|---|---|---|
 | `@hono/node-server` | 1.19.17 | runtime | MIT | [notice](LICENSES/npm/_hono_node-server@1.19.17/LICENSE) |
-| `@modelcontextprotocol/sdk` | 1.26.0 | runtime | MIT | [notice](LICENSES/npm/_modelcontextprotocol_sdk@1.26.0/LICENSE) |
+| `@modelcontextprotocol/sdk` | 1.32.1 | runtime | MIT | [notice](LICENSES/npm/_modelcontextprotocol_sdk@1.32.1/LICENSE) |
 | `@types/node` | 25.2.3 | development | MIT | [notice](LICENSES/npm/_types_node@25.2.3/LICENSE) |
 | `accepts` | 2.0.0 | runtime | MIT | [notice](LICENSES/npm/accepts@2.0.0/LICENSE) |
 | `ajv` | 8.18.0 | runtime | MIT | [notice](LICENSES/npm/ajv@8.18.0/LICENSE) |

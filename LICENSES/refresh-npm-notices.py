@@ -2,8 +2,9 @@
 """Copy exact notices from integrity-verified locked npm package archives.
 
 This does not install packages or execute package scripts. Run from the repo
-root after changing package-lock.json. Obsolete notice files are retained until
-the maintainer removes them after checking their consumers.
+root after changing package-lock.json. The inventory and its provenance summary
+are refreshed together. Obsolete notice files are retained until the maintainer
+removes them after checking their consumers.
 """
 
 import base64
@@ -85,6 +86,8 @@ def fetch_notices(entry):
 
 def main():
     lock = json.loads((ROOT / "package-lock.json").read_text())
+    provenance_path = ROOT / "LICENSES" / "dependency-provenance.json"
+    provenance = json.loads(provenance_path.read_text())
     entries = sorted((path, value) for path, value in lock["packages"].items() if path)
     # Hash only dependency entries: a product-name change is not a dependency change.
     dependency_bytes = json.dumps(dict(entries), sort_keys=True, separators=(",", ":")).encode()
@@ -100,7 +103,16 @@ def main():
         "packages": packages,
     }
     target = ROOT / "LICENSES" / "npm-dependencies.json"
+    provenance["npm_inventory"] = {
+        "path": "LICENSES/npm-dependencies.json",
+        "source": "package-lock.json",
+        "dependency_entries_sha256": inventory["dependency_entries_sha256"],
+        "package_count": len(packages),
+        "runtime_package_count": sum(package["scope"] == "runtime" for package in packages),
+        "development_package_count": sum(package["scope"] == "development" for package in packages),
+    }
     target.write_text(json.dumps(inventory, indent=2, ensure_ascii=False) + "\n")
+    provenance_path.write_text(json.dumps(provenance, indent=2, ensure_ascii=False) + "\n")
     print(json.dumps({"packages": len(packages), "notices": sum(len(p['notices']) for p in packages)}))
 
 

@@ -14,7 +14,7 @@
       "notice_paths": [
         "LICENSE"
       ],
-      "copyright": "Copyright (c) 2026 R\u0131za Emre ARAS <r.emrearas@proton.me>",
+      "copyright": "Copyright (c) 2026 Rıza Emre ARAS <r.emrearas@proton.me>",
       "relationship": "Preserved origin of JS proxy and Swift source; linked native distribution follows the native distribution license.",
       "upstream_revisions": {
         "proxy_main": "0b4669eef2139681c710e13790b798b8ae2ce7e8",
@@ -193,7 +193,7 @@
   "npm_inventory": {
     "path": "LICENSES/npm-dependencies.json",
     "source": "package-lock.json",
-    "dependency_entries_sha256": "f8cef78fefbf024e836d7993e5d61d807c8fb92d4e0135558648a2605dd30f63",
+    "dependency_entries_sha256": "82cff2604e2f913190d613df4f7acb66a4b84c46556dc3bc2ed787398bcae058",
     "package_count": 95,
     "runtime_package_count": 93,
     "development_package_count": 2

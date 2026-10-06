@@ -3,7 +3,7 @@
   "version": "0.1.0-alpha.2",
   "description": "Fruitctl: shared VNC MCP transport, agent skill and rootless installation",
   "license": "MIT",
-  "author": "R\u0131za Emre ARAS <r.emrearas@proton.me>",
+  "author": "Rıza Emre ARAS <r.emrearas@proton.me>",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/xoxd-ai/fruitctl.git"
@@ -47,7 +47,7 @@
     "build:host": "./scripts/build-host.sh"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.26.0",
+    "@modelcontextprotocol/sdk": "1.32.1",
     "zod": "^4.3.6"
   },
   "devDependencies": {
