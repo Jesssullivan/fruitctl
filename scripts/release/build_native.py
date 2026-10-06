@@ -72,6 +72,54 @@ def source_inventory():
     return files
 
 
+
+PUBLIC_OPENSSL_PREFIX = "/opt/fruitctl"
+
+
+def dependency_build_configuration():
+    # Cache identity concerns library construction, independent of the later
+    # executable stripping policy and a particular private workspace path.
+    return {"version": 1, "architecture": "arm64", "minimumMacOS": "15.0",
+            "openssl": {"prefix": PUBLIC_OPENSSL_PREFIX, "openssldir": PUBLIC_OPENSSL_PREFIX + "/ssl",
+                        "libdir": "lib", "configureOptions": ["darwin64-arm64-cc", "no-shared", "no-module", "no-tests"],
+                        "privateInstallStage": "${BUILD_ROOT}/openssl-stage", "compilerFlagsPolicy": "path-free",
+                        "compilerFlags": ["-mmacosx-version-min=15.0"]},
+            "libvncCompilerPathMapPolicy": {"source": "/fruitctl/source", "build": "/fruitctl/build",
+                                      "cOptions": ["-ffile-prefix-map", "-fdebug-prefix-map"]},
+            "libvncclient": {"target": "vncclient", "shared": False, "tls": "static-openssl"}}
+
+
+def dependency_configuration_sha256():
+    return hashlib.sha256(json.dumps(dependency_build_configuration(), sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+
+def verify_reusable_dependency_configuration(receipt, manifest):
+    for value in (receipt, manifest):
+        if (value.get("dependencyBuildConfiguration") != dependency_build_configuration()
+                or value.get("dependencyBuildConfigurationSha256") != dependency_configuration_sha256()):
+            raise ValueError("reused native dependencies lack the exact public dependency build configuration")
+
+
+def c_path_maps(output):
+    return [option + "=" + str(path) + "=" + replacement
+            for option in ("-ffile-prefix-map", "-fdebug-prefix-map")
+            for path, replacement in ((ROOT, "/fruitctl/source"), (output, "/fruitctl/build"))]
+
+
+def build_openssl(openssl, output, run, jobs):
+    openssl_stage = output / "openssl-stage"
+    prefix = openssl_stage / PUBLIC_OPENSSL_PREFIX.lstrip("/")
+    openssl_build = output / "openssl-build"
+    openssl_build.mkdir()
+    # OpenSSL exposes configured compiler flags through OPENSSL_CFLAGS.
+    # Absolute prefix-map arguments would recreate the private path leak.
+    run(["perl", openssl / "Configure", "darwin64-arm64-cc", "no-shared", "no-module", "no-tests",
+         "--prefix=" + PUBLIC_OPENSSL_PREFIX, "--openssldir=" + PUBLIC_OPENSSL_PREFIX + "/ssl", "--libdir=lib",
+         "-mmacosx-version-min=15.0"], openssl_build, "openssl-configure")
+    run(["make", "-j" + str(jobs), "build_sw"], openssl_build, "openssl-build")
+    run(["make", "DESTDIR=" + str(openssl_stage), "install_sw"], openssl_build, "openssl-install")
+    return prefix
+
 def prepare_dependencies(output, run, jobs, sdk, cmake):
     sources = json.loads(LOCK.read_text())
     openssl_archive = output / "downloads/openssl.tar.gz"
@@ -85,13 +133,7 @@ def prepare_dependencies(output, run, jobs, sdk, cmake):
         download(patch, patch_path)
         run(["git", "apply", "--check", patch_path], cwd=libvnc, label="check-" + patch["commit"][:8])
         run(["git", "apply", patch_path], cwd=libvnc, label="apply-" + patch["commit"][:8])
-    prefix = output / "openssl-install"
-    openssl_build = output / "openssl-build"
-    openssl_build.mkdir()
-    run(["perl", openssl / "Configure", "darwin64-arm64-cc", "no-shared", "no-module", "no-tests",
-         "--prefix=" + str(prefix), "--libdir=lib", "-mmacosx-version-min=15.0"], openssl_build, "openssl-configure")
-    run(["make", "-j" + str(jobs), "build_sw"], openssl_build, "openssl-build")
-    run(["make", "install_sw"], openssl_build, "openssl-install")
+    prefix = build_openssl(openssl, output, run, jobs)
     native = output / "native-inputs"
     (native / "lib").mkdir(parents=True)
     shutil.copytree(prefix / "include", native / "include", symlinks=False)
@@ -103,6 +145,7 @@ def prepare_dependencies(output, run, jobs, sdk, cmake):
                 "WITH_EXAMPLES", "WITH_TESTS", "WITH_QT")]
     run([cmake, "-S", libvnc, "-B", libvnc_build, "-DCMAKE_POLICY_VERSION_MINIMUM=3.5", "-DCMAKE_BUILD_TYPE=Release",
          "-DCMAKE_OSX_ARCHITECTURES=arm64", "-DCMAKE_OSX_DEPLOYMENT_TARGET=15.0", "-DCMAKE_OSX_SYSROOT=" + sdk,
+         "-DCMAKE_C_FLAGS=" + " ".join(c_path_maps(output)),
          "-DOPENSSL_ROOT_DIR=" + str(prefix), "-DOPENSSL_USE_STATIC_LIBS=TRUE", "-DOPENSSL_SSL_LIBRARY=" + str(prefix / "lib/libssl.a"),
          "-DOPENSSL_CRYPTO_LIBRARY=" + str(prefix / "lib/libcrypto.a"), "-DOPENSSL_INCLUDE_DIR=" + str(prefix / "include"),
          "-DZLIB_LIBRARY=" + sdk + "/usr/lib/libz.tbd", "-DZLIB_INCLUDE_DIR=" + sdk + "/usr/include", *options], label="libvnc-configure")
@@ -125,10 +168,25 @@ def prepare_dependencies(output, run, jobs, sdk, cmake):
     native.chmod(0o555)
     manifest = output / "native-input-manifest.json"
     write_json(manifest, {"schemaVersion": 1, "kind": "fruitctl-native-inputs", "platform": "darwin", "architecture": "arm64",
-                          "minimumMacOS": "15.0", "sourceLockSha256": digest(LOCK), "files": files})
+                          "minimumMacOS": "15.0", "sourceLockSha256": digest(LOCK), "files": files,
+                          "dependencyBuildConfiguration": dependency_build_configuration(),
+                          "dependencyBuildConfigurationSha256": dependency_configuration_sha256()})
     manifest.chmod(0o444)
     return native, manifest
 
+
+
+def verify_public_native_binary(path):
+    """Reject private build paths anywhere in the bytes admitted to distribution."""
+    if not path.is_absolute() or path.is_symlink() or not path.is_file() or path.resolve(strict=True) != path:
+        raise ValueError("native artifact must be a canonical regular file")
+    data = path.read_bytes()
+    if not data:
+        raise ValueError("native artifact must not be empty")
+    markers = (b"/Users/", b"/home/", b"fruitctl-builds/")
+    if any(marker in data for marker in markers):
+        raise ValueError("native artifact contains private workspace paths: " + path.name)
+    return {"sha256": digest(path), "bytes": len(data), "privateWorkspacePathsAbsent": True}
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
@@ -156,6 +214,10 @@ def main():
                "architecture": "arm64", "minimumMacOS": "15.0", "nativeLicense": "GPL-3.0-or-later",
                "componentLicenses": {"claude-kvm-daemon": "GPL-3.0-or-later", "FruitctlHost.app": "MIT"},
                "sourceLockSha256": digest(LOCK), "commands": [], "startedAtUnix": int(time.time()),
+               "dependencyBuildConfiguration": dependency_build_configuration(),
+               "dependencyBuildConfigurationSha256": dependency_configuration_sha256(),
+               "nativeArtifactPolicy": {"stripDebugArguments": ["-S"], "swiftPathMapOptions": ["-file-prefix-map", "-debug-prefix-map"],
+                                        "sourceReplacement": "/fruitctl/source", "buildReplacement": "/fruitctl/build"},
                "tools": {}, "tests": [], "qualification": "not-publicly-qualified"}
     for name, command in {"xcode": ["xcodebuild", "-version"], "clang": ["xcrun", "clang", "--version"],
                           "cmake": [cmake, "--version"], "xcodegen": [xcodegen, "--version"],
@@ -184,6 +246,7 @@ def main():
             receipt["dependencyBuildDir"] = str(dependency)
             receipt["dependencyBuildReceiptSha256"] = digest(dependency / "build-receipt.json")
             receipt["dependencyBuildReceipt"] = json.loads((dependency / "build-receipt.json").read_text())
+            verify_reusable_dependency_configuration(receipt["dependencyBuildReceipt"], json.loads(manifest.read_text()))
             reviewed = json.loads(LOCK.read_text())
             for name, entry in (("openssl.tar.gz", reviewed["openssl"]), ("libvnc.tar.gz", reviewed["libvncclient"])):
                 if digest(dependency / "downloads" / name) != entry["sha256"]:
@@ -215,7 +278,15 @@ def main():
         project = ROOT / "Claude-KVM-Daemon.xcodeproj"
         common = ["xcodebuild", "-project", project, "-configuration", "Release", "-derivedDataPath", output / "derived",
                   "-jobs", str(args.jobs), "FRUITCTL_NATIVE_INPUT_MANIFEST=" + str(manifest), "FRUITCTL_NATIVE_INPUT_DIR=" + str(native),
-                  "CODE_SIGNING_ALLOWED=NO", "CODE_SIGNING_REQUIRED=NO"]
+                  "CODE_SIGNING_ALLOWED=NO", "CODE_SIGNING_REQUIRED=NO",
+                  "OTHER_SWIFT_FLAGS=$(inherited) -file-prefix-map " + str(ROOT) + "=/fruitctl/source"
+                  + " -debug-prefix-map " + str(ROOT) + "=/fruitctl/source"
+                  + " -file-prefix-map " + str(output) + "=/fruitctl/build"
+                  + " -debug-prefix-map " + str(output) + "=/fruitctl/build",
+                  "OTHER_CFLAGS=$(inherited) -ffile-prefix-map=" + str(ROOT) + "=/fruitctl/source"
+                  + " -fdebug-prefix-map=" + str(ROOT) + "=/fruitctl/source"
+                  + " -ffile-prefix-map=" + str(output) + "=/fruitctl/build"
+                  + " -fdebug-prefix-map=" + str(output) + "=/fruitctl/build"]
         builds = args.build_scheme or ["claude-kvm-daemon", "FruitctlHost"]
         tests = args.test_scheme or ["VNCReconnectTests", "NativeBehaviorTests", "FruitctlHostTests"]
         for scheme in builds:
@@ -245,6 +316,27 @@ def main():
         tracked = subprocess.check_output(["git", "ls-files", "-z"], cwd=swift_checkout).decode().split("\0")
         receipt["swiftPackageSourceFiles"] = {name: digest(swift_checkout / name) for name in tracked if name}
         products = output / "derived/Build/Products/Release"
+        # Keep unstripped unsigned originals privately for diagnostics. Admit
+        # only pre-signing stripped products to artifact receipts.
+        originals = output / "unstripped-unsigned"
+        originals.mkdir()
+        receipt["unstrippedUnsignedArtifacts"] = {}
+        receipt["publicBinaryPrivacy"] = {}
+        for relative in ("claude-kvm-daemon", "FruitctlHost.app/Contents/MacOS/FruitctlHost"):
+            binary = products / relative
+            requested = "FruitctlHost" if relative.startswith("FruitctlHost.app/") else "claude-kvm-daemon"
+            if not binary.is_file():
+                if requested in builds:
+                    raise ValueError("requested native build artifact is missing: " + relative)
+                continue
+            if binary.is_symlink() or binary.resolve(strict=True) != binary:
+                raise ValueError("native build artifact is linked or noncanonical")
+            copied = originals / relative
+            copied.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(binary, copied)
+            receipt["unstrippedUnsignedArtifacts"][relative] = {"sha256": digest(copied), "bytes": copied.stat().st_size}
+            run(["xcrun", "strip", "-S", binary], label="strip-debug-" + binary.name)
+            receipt["publicBinaryPrivacy"][relative] = verify_public_native_binary(binary)
         receipt["artifacts"] = {}
         for name in ("claude-kvm-daemon", "FruitctlHost.app"):
             artifact = products / name

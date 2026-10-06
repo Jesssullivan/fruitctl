@@ -3,6 +3,7 @@
 import hashlib
 import copy
 import json
+import subprocess
 import importlib.util
 import io
 from pathlib import Path
@@ -20,6 +21,124 @@ apple_spec = importlib.util.spec_from_file_location("apple_distribution", ROOT /
 apple = importlib.util.module_from_spec(apple_spec); apple_spec.loader.exec_module(apple)
 source_spec = importlib.util.spec_from_file_location("source_packager", ROOT / "scripts/release/package_source.py")
 source = importlib.util.module_from_spec(source_spec); source_spec.loader.exec_module(source)
+
+
+class NativeBuildPrivacyTests(unittest.TestCase):
+    def configured(self):
+        return {"dependencyBuildConfiguration": source.builder.dependency_build_configuration(),
+                "dependencyBuildConfigurationSha256": source.builder.dependency_configuration_sha256()}
+
+    def test_compiled_configuration_literals_are_rejected_without_debug_symbols(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory).resolve() / "controller"
+            # Ten ordinary runtime string constants, rather than DWARF data.
+            path.write_bytes(b"\xcf\xfa\xed\xfe" + b"\x00".join(
+                b"/Users/build-user/private-stage/ssl/default" + str(index).encode() for index in range(10)))
+            with self.assertRaisesRegex(ValueError, "private workspace paths"):
+                source.builder.verify_public_native_binary(path)
+
+    def test_private_debug_paths_are_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory).resolve() / "host"
+            for value in (b"/Users/build-user/source.swift", b"/home/build-user/source.swift", b"fruitctl-builds/source.swift"):
+                with self.subTest(value=value):
+                    path.write_bytes(b"fixture debug symbols\x00" + value)
+                    with self.assertRaisesRegex(ValueError, "private workspace paths"):
+                        source.builder.verify_public_native_binary(path)
+
+    def test_public_config_defaults_are_admitted(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory).resolve() / "controller"
+            path.write_bytes(b"/opt/fruitctl/ssl\x00/opt/fruitctl/lib/ossl-modules\x00/fruitctl/source/Input.swift")
+            value = source.builder.verify_public_native_binary(path)
+            self.assertTrue(value["privateWorkspacePathsAbsent"])
+            self.assertEqual(value["sha256"], hashlib.sha256(path.read_bytes()).hexdigest())
+
+    def test_empty_native_file_is_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory).resolve() / "controller"; path.write_bytes(b"")
+            with self.assertRaisesRegex(ValueError, "empty"):
+                source.builder.verify_public_native_binary(path)
+
+    def test_symlink_native_file_is_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory).resolve() / "controller"; path.write_bytes(b"public bytes")
+            alias = Path(directory).resolve() / "alias"; alias.symlink_to(path)
+            with self.assertRaisesRegex(ValueError, "canonical regular"):
+                source.builder.verify_public_native_binary(alias)
+
+    def test_old_source_only_cache_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, "public dependency build configuration"):
+            source.builder.verify_reusable_dependency_configuration({"sourceLockSha256": "a" * 64}, {})
+
+    def test_changed_manifest_configuration_is_rejected(self):
+        built, manifest = self.configured(), self.configured()
+        manifest["dependencyBuildConfiguration"]["openssl"]["prefix"] = "/private/staging"
+        with self.assertRaisesRegex(ValueError, "public dependency build configuration"):
+            source.builder.verify_reusable_dependency_configuration(built, manifest)
+
+    def test_changed_build_receipt_configuration_hash_is_rejected(self):
+        built = self.configured(); built["dependencyBuildConfigurationSha256"] = "0" * 64
+        with self.assertRaisesRegex(ValueError, "public dependency build configuration"):
+            source.builder.verify_reusable_dependency_configuration(built, self.configured())
+
+    def test_matching_public_cache_ignores_executable_strip_policy(self):
+        built = self.configured(); built["nativeArtifactPolicy"] = {"stripDebugArguments": ["-S", "-x"]}
+        source.builder.verify_reusable_dependency_configuration(built, self.configured())
+
+    def test_generated_and_historical_native_manifest_use_actual_json_schema(self):
+        schema = json.loads((ROOT / "release/native-input-manifest.schema.json").read_text())
+        historical = {"schemaVersion": 1, "kind": "fruitctl-native-inputs", "platform": "darwin",
+                      "architecture": "arm64", "minimumMacOS": "15.0", "sourceLockSha256": "a" * 64,
+                      "files": {"include/file" + str(index): {"sha256": "b" * 64, "bytes": 1} for index in range(7)}}
+        generated = {**historical, **self.configured()}
+        fixtures = [{"name": "historical-v1", "value": historical, "expected": True},
+                    {"name": "generated-public-configuration", "value": generated, "expected": True}]
+        mutations = [("lone-config", {**historical, "dependencyBuildConfiguration": self.configured()["dependencyBuildConfiguration"]}),
+                     ("lone-hash", {**historical, "dependencyBuildConfigurationSha256": "a" * 64}),
+                     ("malformed-hash", {**generated, "dependencyBuildConfigurationSha256": "not-a-sha256"}),
+                     ("extra-top-field", {**generated, "unsupported": True})]
+        changed = copy.deepcopy(generated); changed["dependencyBuildConfiguration"]["openssl"]["openssldir"] = "/private/config"
+        mutations.append(("changed-config-default", changed))
+        changed = copy.deepcopy(generated); changed["dependencyBuildConfiguration"]["version"] = "1"
+        mutations.append(("wrong-config-type", changed))
+        changed = copy.deepcopy(generated); changed["dependencyBuildConfiguration"]["unsupported"] = True
+        mutations.append(("extra-config-field", changed))
+        fixtures.extend({"name": name, "value": value, "expected": False} for name, value in mutations)
+        # AJV is an existing pinned SDK dependency, not a new host package.
+        script = """const fs = require('node:fs');
+const Ajv = require('ajv/dist/2020.js').default;
+const input = JSON.parse(fs.readFileSync(0, 'utf8'));
+const validate = new Ajv({strict:true,allErrors:true}).compile(input.schema);
+for (const fixture of input.fixtures) {
+  if (validate(fixture.value) !== fixture.expected) {
+    console.error(JSON.stringify({name:fixture.name,errors:validate.errors})); process.exit(1);
+  }
+}
+process.stdout.write(JSON.stringify({fixtures:input.fixtures.length,status:'passed'}));"""
+        result = subprocess.run(["node", "-e", script], cwd=ROOT,
+                                input=json.dumps({"schema": schema, "fixtures": fixtures}),
+                                text=True, capture_output=True, timeout=20)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout), {"fixtures": len(fixtures), "status": "passed"})
+
+    def test_openssl_installs_only_inside_destdir_with_path_free_flags(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory).resolve(); calls = []
+            def capture(command, cwd, label):
+                calls.append((command, cwd, label))
+            prefix = source.builder.build_openssl(output / "source", output, capture, 2)
+            self.assertEqual(prefix, output / "openssl-stage/opt/fruitctl")
+            self.assertTrue(prefix.is_relative_to(output))
+            self.assertEqual(len(calls), 3)
+            configure = calls[0][0]
+            self.assertIn("--prefix=/opt/fruitctl", configure)
+            self.assertIn("--openssldir=/opt/fruitctl/ssl", configure)
+            self.assertIn("--libdir=lib", configure)
+            self.assertFalse(any("prefix-map" in str(value) for value in configure))
+            self.assertEqual(calls[1][0], ["make", "-j2", "build_sw"])
+            self.assertEqual(calls[2][0], ["make", "DESTDIR=" + str(output / "openssl-stage"), "install_sw"])
+            self.assertFalse(prefix.exists())  # capture never wrote the public or staged prefix
 
 
 class AppleCertificateTests(unittest.TestCase):
