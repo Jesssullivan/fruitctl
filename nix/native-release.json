@@ -1,0 +1,82 @@
+{
+  "schema": "fruitctl.nix-native-release.v1",
+  "version": "0.1.0-alpha.2",
+  "tag": "v0.1.0-alpha.2",
+  "repository": "xoxd-ai/fruitctl",
+  "sourceRevision": "6c8a5751b1ab92ee4093aa0091e88ef212021dab",
+  "nativeSourceTreeSha256": "7edc502424701cdc799e395f307aaa6e954dbb362791ddb2f0814fbc4cbcad6c",
+  "runtimeArchive": {
+    "name": "fruitctl-v0.1.0-alpha.2-darwin-arm64.tar.gz",
+    "url": "https://github.com/xoxd-ai/fruitctl/releases/download/v0.1.0-alpha.2/fruitctl-v0.1.0-alpha.2-darwin-arm64.tar.gz",
+    "sha256": "8b430e5f1d4e795b86258ebab95e8dd480f4a00783307e7e815b85b6c9b23834",
+    "hash": "sha256-i0MOXx1OeVuGJY66uV6N1ID0oAeDMH5+gVuFtsmyODQ=",
+    "bytes": 45278805
+  },
+  "releaseManifestSha256": "64b6f024267bf653848b0b828a7c2e394041ac626f42241800c372bc5fb9b4ea",
+  "controller": {
+    "archivePath": "bin/claude-kvm-daemon",
+    "sha256": "4c74c43fee17ac36cfc1cb5b2e4240f609b237c424e97a25b3a8056c97a6850e",
+    "bytes": 7116640,
+    "mode": 493,
+    "architecture": "arm64",
+    "minimumMacOS": "15.0",
+    "signingIdentifier": "dev.tinyland.pzm-computer-use",
+    "developerIDTeam": "QP994XQKNH",
+    "certificateSha1": "61A8E77C4F3D678921FF0A7DC9D7E317F7754F50"
+  },
+  "notarization": {
+    "status": "Accepted",
+    "submissionId": "990f1830-319b-4e87-8bde-f615a2dc207f",
+    "stapled": false
+  },
+  "correspondingSource": {
+    "name": "fruitctl-v0.1.0-alpha.2-corresponding-source.tar.gz",
+    "url": "https://github.com/xoxd-ai/fruitctl/releases/download/v0.1.0-alpha.2/fruitctl-v0.1.0-alpha.2-corresponding-source.tar.gz",
+    "sha256": "6f28c834020b671f41e045559eee025dbbd9e095179d4d0c46318df158d2964f",
+    "bytes": 167432625
+  },
+  "noticeFiles": {
+    "LICENSE": {
+      "sha256": "8653e6134b771adcb4e36fcf23eb5a68ea27b74b5ee277e8da9aadc3118a55bf",
+      "bytes": 1095
+    },
+    "THIRD_PARTY_NOTICES.md": {
+      "sha256": "9039ed07fdbe73769931f490a7721066f9693a4738721b4eb4cf2becfbbaa153",
+      "bytes": 12899
+    },
+    "LICENSES/GPL-3.0-or-later.txt": {
+      "sha256": "fb981668c18a279e285fc4d83fba1e836cc84dd4daa73c9697d3cfd2d8aca6e0",
+      "bytes": 34674
+    },
+    "LICENSES/GPL-2.0-or-later.txt": {
+      "sha256": "4d23c8c814e5baf007d854f01d8502e77dc56a41144934e003fb32c4e052d20f",
+      "bytes": 18043
+    },
+    "LICENSES/LibVNC-0.9.15-AUTHORS.txt": {
+      "sha256": "ccf0eacbb640adb3a0e770aa78157e12589fa230a9b3683aa71acac1e1285f48",
+      "bytes": 3169
+    },
+    "LICENSES/OpenSSL-3.5.9-Apache-2.0.txt": {
+      "sha256": "7d5450cb2d142651b8afa315b5f238efc805dad827d91ba367d8516bc9d49e7a",
+      "bytes": 10175
+    },
+    "LICENSES/Swift-Argument-Parser-Apache-2.0.txt": {
+      "sha256": "770af8291f708538d8ff885a0bbc4e045cd700531741c4f99528d435c14d7f55",
+      "bytes": 11751
+    },
+    "LICENSES/dependency-provenance.json": {
+      "sha256": "28b8f24a325cc71a2c97617fb77b7aafcf2c927482af82b1091e4550d2c40eb2",
+      "bytes": 11415
+    }
+  },
+  "verifiedScopes": {
+    "nativeXCTestCount": 74,
+    "runtimeArchiveFilesAndModes": true,
+    "signedBinaryPrivacy": true,
+    "developerIDSignature": true,
+    "appleAccepted": true,
+    "hostShipped": false,
+    "physicalDesktopQualification": false,
+    "agentFrontendQualification": false
+  }
+}

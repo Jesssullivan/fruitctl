@@ -30,6 +30,17 @@ let
       vnc.username = "fixture-user";
     };
   };
+  nativeController = fruitctlFlake.packages.aarch64-darwin.native-controller;
+  nativeDarwin = evaluate "aarch64-darwin" {
+    enable = true;
+    enableService = false;
+    nativePackage = nativeController;
+    targets.desktop.credentialFile = "/Users/fruitctl-test/.config/private/desktop-password";
+  };
+  disabledDarwin = evaluate "aarch64-darwin" { };
+  # Only this evaluator fixture discards dependency context before JSON parsing.
+  nativeDocument = builtins.fromJSON (builtins.unsafeDiscardStringContext
+    nativeDarwin.home.file."Library/Application Support/fruitctl/config.json".text);
   helperDarwin = evaluate "aarch64-darwin" {
     enable = true;
     targets.desktop = {
@@ -74,6 +85,17 @@ let
   }).programs.fruitctl.mcpServers).success;
   skillRoots = builtins.filter (path: pkgs.lib.hasSuffix "skills/fruitctl" path) (builtins.attrNames linux.home.file);
 in
+assert builtins.attrNames fruitctlFlake.packages.aarch64-darwin == [ "default" "fruitctl" "legacy-native" "native-controller" "proxy" "runtime" ];
+assert builtins.all (system: !(builtins.hasAttr "native-controller" fruitctlFlake.packages.${system})) [ "x86_64-darwin" "aarch64-linux" "x86_64-linux" ];
+assert nativeController.dontBuild && nativeController.dontFixup && nativeController.dontStrip;
+assert nativeController.containsHost == false;
+assert nativeController.releaseMetadata.notarization.status == "Accepted";
+assert nativeDocument.targets.desktop.daemonPath == "${nativeController}/bin/claude-kvm-daemon";
+assert !(nativeDocument.targets.desktop ? hostHelper);
+assert builtins.elem nativeController.drvPath (map (package: package.drvPath) nativeDarwin.home.packages);
+assert !(nativeDarwin.launchd.agents ? fruitctl-broker);
+assert !disabledDarwin.programs.fruitctl.enable && disabledDarwin.programs.fruitctl.nativePackage == null;
+assert linux.programs.fruitctl.nativePackage == null;
 assert !(builtins.hasAttr "fruitctl/config.json" linuxFiles);
 assert linuxRelay.Restart == "no";
 assert darwinBroker.KeepAlive == false;
