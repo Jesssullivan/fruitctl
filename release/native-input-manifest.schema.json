@@ -11,6 +11,44 @@
     "architecture": {"const": "arm64"},
     "minimumMacOS": {"const": "15.0"},
     "sourceLockSha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "dependencyBuildConfiguration": {
+      "type": "object",
+      "const": {
+        "version": 1,
+        "architecture": "arm64",
+        "minimumMacOS": "15.0",
+        "openssl": {
+          "prefix": "/opt/fruitctl",
+          "openssldir": "/opt/fruitctl/ssl",
+          "libdir": "lib",
+          "configureOptions": [
+            "darwin64-arm64-cc",
+            "no-shared",
+            "no-module",
+            "no-tests"
+          ],
+          "privateInstallStage": "${BUILD_ROOT}/openssl-stage",
+          "compilerFlagsPolicy": "path-free",
+          "compilerFlags": [
+            "-mmacosx-version-min=15.0"
+          ]
+        },
+        "libvncCompilerPathMapPolicy": {
+          "source": "/fruitctl/source",
+          "build": "/fruitctl/build",
+          "cOptions": [
+            "-ffile-prefix-map",
+            "-fdebug-prefix-map"
+          ]
+        },
+        "libvncclient": {
+          "target": "vncclient",
+          "shared": false,
+          "tls": "static-openssl"
+        }
+      }
+    },
+    "dependencyBuildConfigurationSha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
     "files": {
       "type": "object", "minProperties": 7,
       "additionalProperties": {
@@ -18,6 +56,10 @@
         "properties": {"sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"}, "bytes": {"type": "integer", "minimum": 1}}
       }
     }
+  },
+  "dependentRequired": {
+    "dependencyBuildConfiguration": ["dependencyBuildConfigurationSha256"],
+    "dependencyBuildConfigurationSha256": ["dependencyBuildConfiguration"]
   },
   "additionalProperties": false
 }
