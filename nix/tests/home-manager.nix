@@ -21,6 +21,12 @@ let
     targets.desktop = { };
     targets."second.desktop" = { };
   };
+  linuxWithoutService = evaluate "x86_64-linux" {
+    enable = true;
+    enableService = false;
+    bridgeHost = "darwin-bridge";
+    targets.desktop = { };
+  };
   darwin = evaluate "aarch64-darwin" {
     enable = true;
     targets.desktop = {
@@ -38,6 +44,68 @@ let
     targets.desktop.credentialFile = "/Users/fruitctl-test/.config/private/desktop-password";
   };
   disabledDarwin = evaluate "aarch64-darwin" { };
+  systems = [ "aarch64-darwin" "x86_64-darwin" "aarch64-linux" "x86_64-linux" ];
+  installations = pkgs.lib.genAttrs systems (system: evaluate system {
+    enable = true;
+    installOnly = true;
+  });
+  nativeInstallation = evaluate "aarch64-darwin" {
+    enable = true;
+    installOnly = true;
+    nativePackage = nativeController;
+  };
+  installedSkills = configuration: builtins.filter
+    (path: pkgs.lib.hasSuffix "skills/fruitctl" path)
+    (builtins.attrNames configuration.home.file);
+  installationHasNoConnection = configuration:
+    configuration.programs.fruitctl.configPath == null
+    && configuration.programs.fruitctl.mcpServers == { }
+    && configuration.programs.fruitctl.targets == { }
+    && !configuration.programs.fruitctl.enableService
+    && !(configuration.home.file ? "Library/Application Support/fruitctl/config.json")
+    && !(builtins.any (path: pkgs.lib.hasPrefix "fruitctl/" path)
+      (builtins.attrNames configuration.xdg.configFile))
+    && !(configuration.home.activation ? fruitctlSocketDirectory)
+    && !(configuration.launchd.agents ? fruitctl-broker)
+    && !(configuration.systemd.user.services ? fruitctl-relay);
+  rejected = system: settings:
+    !(builtins.tryEval (evaluate system settings).programs.fruitctl.mcpServers).success;
+  installServiceRejected = builtins.all (system: rejected system {
+    enable = true;
+    installOnly = true;
+    enableService = true;
+  }) [ "aarch64-darwin" "x86_64-linux" ];
+  installTargetsRejected = rejected "aarch64-darwin" {
+    enable = true;
+    installOnly = true;
+    targets.desktop = {
+      credentialFile = "/Users/fruitctl-test/private/password";
+      daemonPath = "/Users/fruitctl-test/Applications/qualified-native/claude-kvm-daemon";
+    };
+  };
+  installBridgeRejected = builtins.all (bridge: rejected "x86_64-linux" ({
+    enable = true;
+    installOnly = true;
+  } // bridge)) [
+    { bridgeHost = "darwin-bridge"; }
+    { bridgeSocketPath = "/Users/bridge/custom/broker.sock"; }
+    { bridgeCommand = "/nix/store/example/bin/fruitctl"; }
+  ];
+  installLinuxNativeRejected = rejected "x86_64-linux" {
+    enable = true;
+    installOnly = true;
+    nativePackage = nativeController;
+  };
+  installWrongDarwinNativeRejected = rejected "x86_64-darwin" {
+    enable = true;
+    installOnly = true;
+    nativePackage = nativeController;
+  };
+  installInvalidNativeRejected = !(builtins.tryEval (evaluate "aarch64-darwin" {
+    enable = true;
+    installOnly = true;
+    nativePackage = false;
+  }).programs.fruitctl.nativePackage).success;
   # Only this evaluator fixture discards dependency context before JSON parsing.
   nativeDocument = builtins.fromJSON (builtins.unsafeDiscardStringContext
     nativeDarwin.home.file."Library/Application Support/fruitctl/config.json".text);
@@ -83,6 +151,14 @@ let
   noProfilesRejected = !(builtins.tryEval (evaluate "aarch64-darwin" {
     enable = true;
   }).programs.fruitctl.mcpServers).success;
+  missingDarwinCredentialRejected = rejected "aarch64-darwin" {
+    enable = true;
+    targets.desktop.daemonPath = "/Users/fruitctl-test/Applications/qualified-native/claude-kvm-daemon";
+  };
+  missingDarwinNativeRejected = rejected "aarch64-darwin" {
+    enable = true;
+    targets.desktop.credentialFile = "/Users/fruitctl-test/private/password";
+  };
   skillRoots = builtins.filter (path: pkgs.lib.hasSuffix "skills/fruitctl" path) (builtins.attrNames linux.home.file);
 in
 assert builtins.attrNames fruitctlFlake.packages.aarch64-darwin == [ "default" "fruitctl" "legacy-native" "native-controller" "proxy" "runtime" ];
@@ -95,6 +171,25 @@ assert !(nativeDocument.targets.desktop ? hostHelper);
 assert builtins.elem nativeController.drvPath (map (package: package.drvPath) nativeDarwin.home.packages);
 assert !(nativeDarwin.launchd.agents ? fruitctl-broker);
 assert !disabledDarwin.programs.fruitctl.enable && disabledDarwin.programs.fruitctl.nativePackage == null;
+assert disabledDarwin.programs.fruitctl.configPath == null && disabledDarwin.programs.fruitctl.mcpServers == { };
+assert builtins.all (system: let configuration = installations.${system}; in
+  installationHasNoConnection configuration
+  && configuration.programs.fruitctl.nativePackage == null
+  && builtins.elem configuration.programs.fruitctl.package.drvPath
+    (map (package: package.drvPath) configuration.home.packages)
+  && installedSkills configuration == [ ".agents/skills/fruitctl" ".claude/skills/fruitctl" ".junie/skills/fruitctl" ]
+  && builtins.all (root:
+    configuration.home.file.${root}.source == "${configuration.programs.fruitctl.package}/share/fruitctl/skills/fruitctl"
+    && configuration.home.file.${root}.recursive)
+    (installedSkills configuration)
+) systems;
+assert installationHasNoConnection nativeInstallation;
+assert builtins.elem nativeController.drvPath (map (package: package.drvPath) nativeInstallation.home.packages);
+assert installServiceRejected && installTargetsRejected && installBridgeRejected && installLinuxNativeRejected && installWrongDarwinNativeRejected && installInvalidNativeRejected;
+assert !(linuxWithoutService.systemd.user.services ? fruitctl-relay);
+assert builtins.attrNames linuxWithoutService.programs.fruitctl.mcpServers == [ "fruitctl-desktop" ];
+assert linuxWithoutService.programs.fruitctl.configPath != null;
+assert linuxWithoutService.home.activation ? fruitctlSocketDirectory;
 assert linux.programs.fruitctl.nativePackage == null;
 assert !(builtins.hasAttr "fruitctl/config.json" linuxFiles);
 assert linuxRelay.Restart == "no";
@@ -111,7 +206,7 @@ assert helperDocument.targets.desktop.hostHelper.mapping.nativeWidth == 3840;
 assert helperDocument.targets.desktop.hostHelper.mapping.qualificationReceipt == "fixture/owned-capture-mapping.json";
 assert darwinBroker.ProgramArguments == [ "${darwin.programs.fruitctl.package}/bin/fruitctl" "broker" "--socket" "/Users/fruitctl-test/Library/Application Support/fruitctl/run/broker.sock" "--config" "/Users/fruitctl-test/Library/Application Support/fruitctl/config.json" ];
 assert builtins.elem ".agents/skills/fruitctl" skillRoots && builtins.elem ".claude/skills/fruitctl" skillRoots && builtins.elem ".junie/skills/fruitctl" skillRoots;
-assert credentialRejected && missingBridgeRejected && noProfilesRejected;
+assert credentialRejected && missingBridgeRejected && noProfilesRejected && missingDarwinCredentialRejected && missingDarwinNativeRejected;
 pkgs.runCommand "fruitctl-home-manager-contract" { } ''
   # Configuration assertions above run at evaluation, without native builds,
   # credential reads, SSH, service startup or a Home Manager switch.
