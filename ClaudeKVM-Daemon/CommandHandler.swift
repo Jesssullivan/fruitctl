@@ -99,6 +99,8 @@ extension ClaudeKVMDaemon {
             let capturedFrame: VNCBridge.FrameCapture?
             switch req.method {
             case "screenshot", "cursor_crop", "diff_check", "set_baseline", "detect_elements":
+                // Revoke the prior observation before a refresh can fail.
+                input.context = nil
                 capturedFrame = try await vnc.captureFreshFramebuffer()
             default: capturedFrame = nil
             }

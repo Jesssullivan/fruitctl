@@ -134,12 +134,21 @@ before claiming native configuration will be read. [Pi changelog](https://pi.dev
 
 The alpha.2 skill passed the official `skills-ref` 0.1.0 validator. An isolated
 Pi 1.0.4 SDK check discovered its user and project skill symlinks and loaded the
-user skill through `DefaultResourceLoader`. Pi's upstream MCP extension read the
-fixture's native user config, completed initialization and tool discovery, and
-preserved synthetic text and PNG results. The fixture used direct tool exposure;
-the installer's default codemode exposure was not qualified. These checks cover
-skill discovery and stdio transport. They do not qualify CLI/TUI image rendering, a model's use of
-Fruitctl, a real VNC desktop, input or leases. [Pi SDK](https://pi.dev/docs/latest/sdk),
+user skill through `DefaultResourceLoader`. A fresh isolated alpha.2 Pi user
+installation then supplied the configuration for an SDK fixture using the
+installer's default codemode exposure: the entry has no `exposure` field.
+Only the server launch fields were substituted with an owned synthetic stdio
+server. Pi's upstream MCP and codemode extensions initialized and discovered
+that server, invoked health, and projected a byte-identical synthetic PNG through
+`image(block)`. The fixture supplied synthetic assistant call records; no model
+or provider turn ran, and the Fruitctl MCP server and broker were not launched.
+
+A nested MCP image reaches codemode's outer image content only when the script
+calls `image(block)`; printing its metadata alone emits no outer image. These
+checks cover installed skill discovery and Pi's stdio/codemode image plumbing.
+They do not qualify CLI/TUI image rendering, a model's use of Fruitctl, a real
+VNC desktop, input or leases. [Pi SDK](https://pi.dev/docs/latest/sdk),
+[Pi codemode](https://pi.dev/docs/latest/codemode),
 [Agent Skills validation](https://github.com/agentskills/agentskills/tree/69ef37e9424c0a7ea9dd2293b559e43ec8176379/skills-ref).
 
 **IntelliJ and Junie:** Junie CLI, standalone Junie IDE plugin and integrated
