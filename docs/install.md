@@ -6,13 +6,16 @@ appropriate adapter, and qualify the connection. Supply host names and secrets
 through local configuration and the controller's credential provider, not this
 prompt or a checked-in MCP file.
 
-The [v0.1.0-alpha.1 runtime preview](https://github.com/xoxd-ai/fruitctl/releases/tag/v0.1.0-alpha.1)
+The [v0.1.0-alpha.2 runtime preview](https://github.com/xoxd-ai/fruitctl/releases/tag/v0.1.0-alpha.2)
 is immutable and source-pinned to
-`7064d349890a9b18717b62a142452363629681ee`. It installs the bundled Node.js 24.21.0
-runtime, skill and adapter. It requires an existing Darwin native controller,
-an operator-configured profile and normal macOS consent. Runtime packaging,
-Linux x64 adapter bootstrap and synthetic MCP image exchanges have scoped
-checks; this is not full desktop or frontend qualification.
+`6c8a5751b1ab92ee4093aa0091e88ef212021dab`. It installs the bundled Node.js 24.21.0
+runtime, skill and adapter. On Apple Silicon macOS 15+, that runtime also
+installs the unchanged signed, Apple-notarized VNC controller at
+`bin/claude-kvm-daemon` inside its versioned cache. Linux uses the SSH bridge
+to a configured Darwin controller. Every route needs an operator-configured
+profile, controller-local credentials and owner-enabled target Screen Sharing.
+Archive integrity, offline native checks and synthetic VNC/MCP image exchanges
+have scoped evidence; this is not full desktop or frontend qualification.
 
 The canonical docs are live at
 [fruitctl.clients.xoxd.ai](https://fruitctl.clients.xoxd.ai/). If the listed preview lacks your runtime
@@ -20,7 +23,7 @@ asset or desktop prerequisite, stop with that missing requirement.
 
 ## Before installation
 
-- Controller: Apple Silicon macOS 15 or later for the existing native build.
+- Controller: Apple Silicon macOS 15 or later for the bundled native build.
 - Client runtime: Node.js 24 for this productization baseline.
 - Target: a reachable VNC service, with Screen Sharing enabled by its owner.
 - Agent: an adapter whose MCP configuration can be changed through its normal
@@ -40,8 +43,8 @@ profile, and preserve any Home Manager-owned configuration through its owner:
 
 ```sh
 (
-  FRUITCTL_SOURCE_SHA='7064d349890a9b18717b62a142452363629681ee'
-  FRUITCTL_RELEASE_TAG='v0.1.0-alpha.1'
+  FRUITCTL_SOURCE_SHA='6c8a5751b1ab92ee4093aa0091e88ef212021dab'
+  FRUITCTL_RELEASE_TAG='v0.1.0-alpha.2'
   FRUITCTL_SCRIPT=$(mktemp)
   trap 'rm -f "$FRUITCTL_SCRIPT"' EXIT
   curl --disable --fail --silent --show-error --location --proto '=https' --proto-redir '=https' \
@@ -60,22 +63,36 @@ profile, and preserve any Home Manager-owned configuration through its owner:
 
 The source fetch ignores user `curlrc` options and checks the pinned script's
 SHA-256 before execution. The bootstrap verifies release
-bytes and uses the bundled Node runtime. Actual anonymous bootstrap and exact
-configuration restoration have been checked on Rocky Linux 10.2. macOS
-consent, profile creation, the native controller and real frontend acceptance
-remain separate prerequisites. Rollback and uninstall preserve unrelated
-configuration.
+bytes and uses the bundled Node runtime. Alpha2 passed actual anonymous public
+bootstrap for all seven user adapters and Claude project scope on Linux x64,
+including doctor, every runtime hash and mode, uninstall and exact unrelated
+configuration restoration. These checks qualify installed adapters, not a real
+frontend or desktop. Doctor checks
+installed hashes and modes, including the bundled controller. Rollback uses
+the previous verified runtime; uninstall preserves verified versioned caches
+and unrelated configuration. Explicit operator native-path overrides remain
+operator-owned.
 
-A target-side indicator is optional and separate from the VNC controller. Its
-installation does not replace Screen Sharing setup. Signing and notarization
-do not grant Screen Recording or Accessibility permission. When macOS requires
-user consent, the installer explains the exact local step and resumes after the
-user completes it. It does not promise a headless TCC bypass.
+Installation does not start or stop services, launch a GUI, create profiles or
+credentials, enable target Screen Sharing, or grant macOS privacy permission.
+The target owner follows [Apple's Screen Sharing setup](https://support.apple.com/guide/mac-help/mh11848/mac).
+The signed bare controller uses VNC observations; it has no stapled ticket.
+Gatekeeper may retrieve its notarization ticket online and request normal user
+approval. See [Apple's notarization workflow](https://developer.apple.com/documentation/security/notarizing-macos-software-before-distribution).
+Do not modify or re-sign its bytes to bypass that approval.
+
+The optional Host indicator remains an unqualified source prototype and is
+excluded from public runtime payloads and automatic installation. Signing and
+notarization do not grant Screen Recording or Accessibility permission. Host
+would need its own attended consent and permission qualification; no managed
+or headless Screen Capture grant is provided. [Apple's ScreenCaptureKit sample](https://developer.apple.com/documentation/screencapturekit/capturing-screen-content-in-macos)
+requires user permission and an app restart before capture.
 
 ## Choose the control path
 
-On macOS, install the verified native controller and connect the agent adapter
-to the shared controller through the local relay. On Linux, including Rocky
+On macOS, the Darwin ARM64 runtime provides the verified native controller;
+connect the agent adapter to the shared controller through the local relay.
+On Linux, including Rocky
 Linux, use the SSH bridge to that Darwin controller. Linux native VNC control is
 not part of the initial supported path.
 

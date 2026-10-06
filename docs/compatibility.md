@@ -9,24 +9,27 @@ it to qualified status.
 
 | Role | Baseline | Status |
 | --- | --- | --- |
-| Native controller | Apple Silicon; macOS 15+ | Inherited build target; Fruitctl release qualification pending |
+| Native controller | Apple Silicon; macOS 15+ | Alpha2 bundles signed, Apple-notarized bytes; offline and synthetic VNC checks passed; live desktop qualification pending |
 | Public Node relay | Bundled Node.js 24.21.0 | Immutable runtime preview; synthetic MCP checks on Linux x64 and Darwin arm64 |
-| Linux x64 runtime | Rootless preview bundle | Actual seven-adapter bootstrap checks passed |
+| Linux x64 runtime | Rootless preview bundle | Alpha2 actual public bootstrap passed for seven user adapters and Claude project scope |
 | Linux arm64 runtime | Preview bundle available | Archive integrity checked; runtime execution pending |
 | Linux agent seat | SSH bridge to Darwin controller | Initial supported design; acceptance pending |
-| Rocky Linux agent seat | Same SSH bridge | Runtime bootstrap checked on Rocky Linux 10.2; SSH/desktop journey pending |
+| Rocky Linux agent seat | Same SSH bridge | Actual alpha2 Linux x64 bootstrap passed; SSH/desktop journey pending |
 | Native Linux VNC controller | No native binary promised | Outside initial release |
 | Intel macOS controller | No x86_64 artifact promised | Requires separate build and runtime qualification |
 | macOS target | Owner-configured Screen Sharing/VNC | Record target OS and capture/input results |
 | Other VNC target | Protocol capability varies | No blanket target-OS claim |
-| Purple target indicator | Qualified filtered macOS capture only | Separate prototype and exclusion-proof lane |
+| Purple target indicator | Qualified filtered macOS capture only | Unqualified source prototype; no public Host binary or automatic setup |
 
 `project.yml` targets macOS 15.0 and `arm64`. This is a build baseline, not a
 claim that every later OS version is tested. The immutable
-[v0.1.0-alpha.1 preview](https://github.com/xoxd-ai/fruitctl/releases/tag/v0.1.0-alpha.1)
-publishes Darwin arm64, Linux x64 and Linux arm64 runtime archives. It needs an
-existing Darwin native controller; it contains no newly qualified signed native
-distribution. `versions.json` records scoped preview checks separately from
+[v0.1.0-alpha.2 preview](https://github.com/xoxd-ai/fruitctl/releases/tag/v0.1.0-alpha.2)
+publishes Darwin arm64, Linux x64 and Linux arm64 runtime archives. Its Darwin
+runtime includes `bin/claude-kvm-daemon`, with exact Developer ID signature,
+Apple Accepted notarization and corresponding source evidence. A bare binary
+has no stapled ticket. Linux still needs a configured Darwin controller through
+SSH. The older alpha1 preview retains its existing-controller prerequisite.
+`versions.json` records scoped preview checks separately from
 fully qualified product releases. The current fully qualified release count is
 zero.
 
@@ -54,9 +57,11 @@ upstream references. The [adoption contract](../integrations/adoption.json) owns
 frontend qualification state. This matrix summarizes those records; generated
 configuration does not promote runtime status.
 
-All seven installer adapters have been exercised with the released Linux x64
-bundle. Synthetic MCP checks cover protocol and PNG exchange using the bundled
-runtime on Linux x64 and Darwin arm64. Those checks do not start the real agent
+All seven user adapters and Claude project scope passed actual anonymous
+bootstrap with the released alpha2 Linux x64 bundle, including runtime hashes,
+modes, doctor, uninstall and exact unrelated configuration restoration. Alpha2's
+Darwin synthetic RFB checks exercise the bundled native controller and all four
+MCP tools with complete PNG images. Those checks do not start the real agent
 frontends, render their returned images, connect the Linux SSH journey or prove
 physical overlay exclusion. Each of those remains a separate acceptance lane.
 

@@ -23,6 +23,9 @@
           # Historical qualified bytes. This does not contain the fresh-frame
           # repair in the current source and is never silently selected by HM.
           legacy-native = pkgs.callPackage ./nix/legacy-native.nix { };
+          # Released signed bytes, selected explicitly by the Darwin consumer.
+          # The unqualified Host prototype has no public package export.
+          native-controller = pkgs.callPackage ./nix/native-controller.nix { };
         };
     in {
       packages = forAllSystems packagesFor;
