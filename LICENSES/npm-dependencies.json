@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "source": "package-lock.json",
-  "dependency_entries_sha256": "f194b548030a0da11d8b9edeb6292226ac33524d78ab18f2e97f3f40835d555a",
+  "dependency_entries_sha256": "0449cf48ce36e3231553b65f64a126ad3e4d9fbc61df9272b19bdb65f3c9da05",
   "package_count": 97,
   "generation": "python3 LICENSES/refresh-npm-notices.py",
   "verification": "Downloaded package archives match locked npm integrity; notice bytes retained exactly.",
@@ -1198,17 +1198,17 @@
     },
     {
       "name": "proxy-addr",
-      "version": "2.0.7",
+      "version": "2.0.8",
       "lock_path": "node_modules/proxy-addr",
       "scope": "runtime",
       "license_expression": "MIT",
-      "source_archive_url": "https://registry.npmjs.org/proxy-addr/-/proxy-addr-2.0.7.tgz",
-      "source_archive_integrity": "sha512-llQsMLSUDUPT44jdrU/O37qlnifitDP+ZwrmmZcoSKyLKvtZxpyV0n2/bD/N4tBAAZ/gJEdZU7KMraoK1+XYAg==",
-      "source_archive_sha256": "a0d1b6f34f6d4e733429ba95f7adb7833c8ceab916ba574a93f8a8476bee46d9",
+      "source_archive_url": "https://registry.npmjs.org/proxy-addr/-/proxy-addr-2.0.8.tgz",
+      "source_archive_integrity": "sha512-5nnx0yGyVUcY6t9RnWcARWtwT9F1D8O9rt08htPvnd49W1IgZtmLkhu9WfMzQj1cFxjHIO6connUNVW5k7AVyQ==",
+      "source_archive_sha256": "ffcc8055b78b0852b2889a426ad3a3003b60bc79df704faca194157efa2b2587",
       "notices": [
         {
           "upstream_path": "package/LICENSE",
-          "path": "LICENSES/npm/proxy-addr@2.0.7/LICENSE",
+          "path": "LICENSES/npm/proxy-addr@2.0.8/LICENSE",
           "sha256": "a7996721249a136fbcfc1c201bcb5f414f38a701d4a24f28abe65e16cfcce813"
         }
       ]
