@@ -14,11 +14,46 @@ Darwin only. Linux uses the SSH bridge. The Host prototype has no public package
 export or runtime payload.
 
 ```nix
-inputs.fruitctl.url = "github:xoxd-ai/fruitctl/bdba6721693d60e24093429cb7f88fb0506f2231";
+inputs.fruitctl.url = "github:xoxd-ai/fruitctl/b0efd25aeabe382ce938fc587d25f97095534b2c";
 
 # In the Home Manager module list:
 imports = [ inputs.fruitctl.homeManagerModules.default ];
 ```
+
+This reviewed development-source pin adds the installation mode below and
+continues to consume the released alpha.2 controller bytes.
+
+## CLI and skills installation
+
+Install the portable CLI and selected agents' canonical skills before declaring
+a desktop connection:
+
+```nix
+programs.fruitctl = {
+  enable = true;
+  installOnly = true;
+  agents = [ "claude" "codex" "pi" "junie" ];
+};
+```
+
+This mode needs no target, credential file or SSH bridge on Darwin or Linux.
+It installs the Node package and skill links, with no broker configuration,
+MCP fragments, socket directory or service. `enableService` defaults to false
+in this mode; explicitly enabling it, declaring targets or setting bridge
+options is rejected. `mcpServers` is empty and `configPath` is null.
+
+An explicitly selected `nativePackage` may also be staged on its supported
+Darwin architecture. It stays null by default and is rejected on Linux or an
+incompatible Darwin architecture; installation starts no native process
+and grants no target access or macOS permissions. Selecting the published
+controller verifies distribution integrity, without qualifying a desktop
+connection or an agent frontend.
+
+To configure a connection, set `installOnly = false` (its default) and declare
+the controller prerequisites below. `enableService = false` in controller mode
+still writes connection configuration and MCP fragments while withholding the
+service. This allows an operator to inspect the complete configuration before
+a separate activation.
 
 ## Darwin controller
 
