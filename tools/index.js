@@ -15,17 +15,37 @@
 
 import { z } from 'zod';
 
+// Display-specific bounds belong to the executor's current geometry. Keeping
+// this schema stable lets MCP clients retain it across resize and configure.
+const coordinate = () => z.number().int().min(0).max(0x7fffffff);
+
+export function validateActionParameters(input) {
+  const required = {
+    mouse_click: ['x', 'y'], mouse_double_click: ['x', 'y'],
+    mouse_move: ['x', 'y'], hover: ['x', 'y'],
+    mouse_drag: ['x', 'y', 'toX', 'toY'], scroll: ['x', 'y', 'direction'],
+    nudge: ['dx', 'dy'], key_tap: ['key'], key_type: ['text'], paste: ['text'],
+  }[input.action] || [];
+  for (const field of required) {
+    if (input[field] === undefined) throw new Error(`Missing ${field} for ${input.action}`);
+  }
+  if (input.action === 'key_combo' && input.key === undefined &&
+      (!Array.isArray(input.keys) || input.keys.length === 0)) {
+    throw new Error('Missing key or nonempty keys for key_combo');
+  }
+}
+
 /**
- * Build vnc_command tool definition with display dimensions.
- * @param {number} width  - Scaled display width
- * @param {number} height - Scaled display height
+ * Build the stable vnc_command tool definition. Display bounds are validated
+ * against the executor's current geometry rather than cached in the schema.
  */
-export function vncCommandTool(width, height) {
+export function vncCommandTool() {
   return {
     name: 'vnc_command',
     description: [
-      `Control a remote desktop via VNC. Display: ${width}×${height}px.`,
-      'All coordinates are in this scaled space.',
+      'Control the configured remote desktop via VNC.',
+      'Coordinates use the current scaled display space returned by screenshot or health.',
+      'Display dimensions may change after configure, reconnect or resize.',
       '',
       'ACTIONS:',
       '  screenshot                              → full screen PNG',
@@ -63,10 +83,10 @@ export function vncCommandTool(width, height) {
         'configure', 'get_timing',
         'wait', 'health', 'shutdown',
       ]).describe('The action to perform'),
-      x: z.number().int().min(0).max(width - 1).optional().describe('X coordinate'),
-      y: z.number().int().min(0).max(height - 1).optional().describe('Y coordinate'),
-      toX: z.number().int().min(0).max(width - 1).optional().describe('Drag target X'),
-      toY: z.number().int().min(0).max(height - 1).optional().describe('Drag target Y'),
+      x: coordinate().optional().describe('X coordinate in the current scaled display'),
+      y: coordinate().optional().describe('Y coordinate in the current scaled display'),
+      toX: coordinate().optional().describe('Drag target X'),
+      toY: coordinate().optional().describe('Drag target Y'),
       dx: z.number().int().min(-50).max(50).optional().describe('Relative X offset (nudge)'),
       dy: z.number().int().min(-50).max(50).optional().describe('Relative Y offset (nudge)'),
       button: z.enum(['left', 'right', 'middle']).optional().describe('Mouse button'),
@@ -102,12 +122,10 @@ export function vncCommandTool(width, height) {
 }
 
 /**
- * Build action_queue tool definition with display dimensions.
+ * Build the stable action_queue tool definition.
  * Executes multiple VNC actions in sequence, returns text-only results.
- * @param {number} width  - Scaled display width
- * @param {number} height - Scaled display height
  */
-export function actionQueueTool(width, height) {
+export function actionQueueTool() {
   const queueAction = z.object({
     action: z.enum([
       'mouse_click', 'mouse_double_click', 'mouse_move', 'hover', 'nudge',
@@ -116,10 +134,10 @@ export function actionQueueTool(width, height) {
       'set_baseline', 'diff_check',
       'wait',
     ]).describe('The action to perform'),
-    x: z.number().int().min(0).max(width - 1).optional().describe('X coordinate'),
-    y: z.number().int().min(0).max(height - 1).optional().describe('Y coordinate'),
-    toX: z.number().int().min(0).max(width - 1).optional().describe('Drag target X'),
-    toY: z.number().int().min(0).max(height - 1).optional().describe('Drag target Y'),
+    x: coordinate().optional().describe('X coordinate in the current scaled display'),
+    y: coordinate().optional().describe('Y coordinate in the current scaled display'),
+    toX: coordinate().optional().describe('Drag target X'),
+    toY: coordinate().optional().describe('Drag target Y'),
     dx: z.number().int().min(-50).max(50).optional().describe('Relative X offset (nudge)'),
     dy: z.number().int().min(-50).max(50).optional().describe('Relative Y offset (nudge)'),
     button: z.enum(['left', 'right', 'middle']).optional().describe('Mouse button'),
@@ -135,7 +153,8 @@ export function actionQueueTool(width, height) {
     name: 'action_queue',
     description: [
       'Execute multiple VNC actions in sequence. Returns text results only (no screenshots).',
-      'Stops on first error. Use for batching confident action sequences.',
+      'The batch has one 30-second deadline and stops on first error.',
+      'Use for batching confident action sequences.',
       '',
       'Examples:',
       '  Navigate: [click(640,91), ctrl+a, paste("url"), return]',

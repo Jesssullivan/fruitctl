@@ -20,49 +20,51 @@ targets:
       - package: swift-argument-parser
         product: ArgumentParser
     preBuildScripts:
-      - name: Verify qualified OpenSSL input before-link
+      - name: Verify locked native inputs before-link
         script: |
-          exec /usr/bin/python3 -I "$SRCROOT/scripts/verify-openssl-input.py" "$TINYLAND_OPENSSL_LIBRARY_DIR" before-link
+          exec /usr/bin/python3 -I "$SRCROOT/scripts/verify-native-input.py" "$FRUITCTL_NATIVE_INPUT_MANIFEST" "$FRUITCTL_NATIVE_INPUT_DIR" before-link
         inputFiles:
-          - "$(SRCROOT)/scripts/verify-openssl-input.py"
-          - "$(TINYLAND_OPENSSL_LIBRARY_DIR)"
-          - "$(TINYLAND_OPENSSL_LIBRARY_DIR)/libssl.a"
-          - "$(TINYLAND_OPENSSL_LIBRARY_DIR)/libcrypto.a"
+          - "$(SRCROOT)/scripts/verify-native-input.py"
+          - "$(FRUITCTL_NATIVE_INPUT_MANIFEST)"
+          - "$(FRUITCTL_NATIVE_INPUT_DIR)/lib/libvncclient.a"
+          - "$(FRUITCTL_NATIVE_INPUT_DIR)/lib/libssl.a"
+          - "$(FRUITCTL_NATIVE_INPUT_DIR)/lib/libcrypto.a"
         showEnvVars: false
         basedOnDependencyAnalysis: false
         runOnlyWhenInstalling: false
     postBuildScripts:
-      - name: Verify qualified OpenSSL input after-link
+      - name: Verify locked native inputs after-link
         script: |
-          exec /usr/bin/python3 -I "$SRCROOT/scripts/verify-openssl-input.py" "$TINYLAND_OPENSSL_LIBRARY_DIR" after-link
+          exec /usr/bin/python3 -I "$SRCROOT/scripts/verify-native-input.py" "$FRUITCTL_NATIVE_INPUT_MANIFEST" "$FRUITCTL_NATIVE_INPUT_DIR" after-link
         inputFiles:
-          - "$(SRCROOT)/scripts/verify-openssl-input.py"
-          - "$(TINYLAND_OPENSSL_LIBRARY_DIR)"
-          - "$(TINYLAND_OPENSSL_LIBRARY_DIR)/libssl.a"
-          - "$(TINYLAND_OPENSSL_LIBRARY_DIR)/libcrypto.a"
+          - "$(SRCROOT)/scripts/verify-native-input.py"
+          - "$(FRUITCTL_NATIVE_INPUT_MANIFEST)"
+          - "$(FRUITCTL_NATIVE_INPUT_DIR)/lib/libvncclient.a"
+          - "$(FRUITCTL_NATIVE_INPUT_DIR)/lib/libssl.a"
+          - "$(FRUITCTL_NATIVE_INPUT_DIR)/lib/libcrypto.a"
         showEnvVars: false
         basedOnDependencyAnalysis: false
         runOnlyWhenInstalling: false
     settings:
       base:
         # Required carrier input; no Homebrew or host-path fallback.
-        TINYLAND_OPENSSL_LIBRARY_DIR: ""
+        FRUITCTL_NATIVE_INPUT_MANIFEST: ""
+        FRUITCTL_NATIVE_INPUT_DIR: ""
         ARCHS: arm64
         SWIFT_VERSION: "5.9"
         MACOSX_DEPLOYMENT_TARGET: "15.0"
         OTHER_SWIFT_FLAGS: "-parse-as-library"
-        SWIFT_INCLUDE_PATHS: "$(SRCROOT)/vendor/libvnc/prebuilt"
+        SWIFT_INCLUDE_PATHS: "$(FRUITCTL_NATIVE_INPUT_DIR)"
         LIBRARY_SEARCH_PATHS:
-          - "$(TINYLAND_OPENSSL_LIBRARY_DIR)"
-          - "$(SRCROOT)/vendor/libvnc/prebuilt"
-        HEADER_SEARCH_PATHS: "$(SRCROOT)/vendor/libvnc/prebuilt/include"
+          - "$(FRUITCTL_NATIVE_INPUT_DIR)/lib"
+        HEADER_SEARCH_PATHS: "$(FRUITCTL_NATIVE_INPUT_DIR)/include"
         OTHER_LDFLAGS:
           - "-Wl,-search_paths_first"
-          - "-lvncclient"
+          - '"$(FRUITCTL_NATIVE_INPUT_DIR)/lib/libvncclient.a"'
           - "-lz"
           - "-lpthread"
-          - '"$(TINYLAND_OPENSSL_LIBRARY_DIR)/libssl.a"'
-          - '"$(TINYLAND_OPENSSL_LIBRARY_DIR)/libcrypto.a"'
+          - '"$(FRUITCTL_NATIVE_INPUT_DIR)/lib/libssl.a"'
+          - '"$(FRUITCTL_NATIVE_INPUT_DIR)/lib/libcrypto.a"'
       configs:
         Release:
           SWIFT_OPTIMIZATION_LEVEL: -O
@@ -75,50 +77,145 @@ targets:
       - ClaudeKVM-Daemon/VNC
       - Tests/VNCReconnectTests.swift
     preBuildScripts:
-      - name: Verify qualified OpenSSL input before-link
+      - name: Verify locked native inputs before-link
         script: |
-          exec /usr/bin/python3 -I "$SRCROOT/scripts/verify-openssl-input.py" "$TINYLAND_OPENSSL_LIBRARY_DIR" before-link
+          exec /usr/bin/python3 -I "$SRCROOT/scripts/verify-native-input.py" "$FRUITCTL_NATIVE_INPUT_MANIFEST" "$FRUITCTL_NATIVE_INPUT_DIR" before-link
         inputFiles:
-          - "$(SRCROOT)/scripts/verify-openssl-input.py"
-          - "$(TINYLAND_OPENSSL_LIBRARY_DIR)"
-          - "$(TINYLAND_OPENSSL_LIBRARY_DIR)/libssl.a"
-          - "$(TINYLAND_OPENSSL_LIBRARY_DIR)/libcrypto.a"
+          - "$(SRCROOT)/scripts/verify-native-input.py"
+          - "$(FRUITCTL_NATIVE_INPUT_MANIFEST)"
+          - "$(FRUITCTL_NATIVE_INPUT_DIR)/lib/libvncclient.a"
+          - "$(FRUITCTL_NATIVE_INPUT_DIR)/lib/libssl.a"
+          - "$(FRUITCTL_NATIVE_INPUT_DIR)/lib/libcrypto.a"
         showEnvVars: false
         basedOnDependencyAnalysis: false
         runOnlyWhenInstalling: false
     postBuildScripts:
-      - name: Verify qualified OpenSSL input after-link
+      - name: Verify locked native inputs after-link
         script: |
-          exec /usr/bin/python3 -I "$SRCROOT/scripts/verify-openssl-input.py" "$TINYLAND_OPENSSL_LIBRARY_DIR" after-link
+          exec /usr/bin/python3 -I "$SRCROOT/scripts/verify-native-input.py" "$FRUITCTL_NATIVE_INPUT_MANIFEST" "$FRUITCTL_NATIVE_INPUT_DIR" after-link
         inputFiles:
-          - "$(SRCROOT)/scripts/verify-openssl-input.py"
-          - "$(TINYLAND_OPENSSL_LIBRARY_DIR)"
-          - "$(TINYLAND_OPENSSL_LIBRARY_DIR)/libssl.a"
-          - "$(TINYLAND_OPENSSL_LIBRARY_DIR)/libcrypto.a"
+          - "$(SRCROOT)/scripts/verify-native-input.py"
+          - "$(FRUITCTL_NATIVE_INPUT_MANIFEST)"
+          - "$(FRUITCTL_NATIVE_INPUT_DIR)/lib/libvncclient.a"
+          - "$(FRUITCTL_NATIVE_INPUT_DIR)/lib/libssl.a"
+          - "$(FRUITCTL_NATIVE_INPUT_DIR)/lib/libcrypto.a"
         showEnvVars: false
         basedOnDependencyAnalysis: false
         runOnlyWhenInstalling: false
     settings:
       base:
         # Required carrier input; no Homebrew or host-path fallback.
-        TINYLAND_OPENSSL_LIBRARY_DIR: ""
+        FRUITCTL_NATIVE_INPUT_MANIFEST: ""
+        FRUITCTL_NATIVE_INPUT_DIR: ""
         ARCHS: arm64
         SWIFT_VERSION: "5.9"
         MACOSX_DEPLOYMENT_TARGET: "15.0"
         GENERATE_INFOPLIST_FILE: YES
         CODE_SIGNING_ALLOWED: NO
-        SWIFT_INCLUDE_PATHS: "$(SRCROOT)/vendor/libvnc/prebuilt"
+        SWIFT_INCLUDE_PATHS: "$(FRUITCTL_NATIVE_INPUT_DIR)"
         LIBRARY_SEARCH_PATHS:
-          - "$(TINYLAND_OPENSSL_LIBRARY_DIR)"
-          - "$(SRCROOT)/vendor/libvnc/prebuilt"
-        HEADER_SEARCH_PATHS: "$(SRCROOT)/vendor/libvnc/prebuilt/include"
+          - "$(FRUITCTL_NATIVE_INPUT_DIR)/lib"
+        HEADER_SEARCH_PATHS: "$(FRUITCTL_NATIVE_INPUT_DIR)/include"
         OTHER_LDFLAGS:
           - "-Wl,-search_paths_first"
-          - "-lvncclient"
+          - '"$(FRUITCTL_NATIVE_INPUT_DIR)/lib/libvncclient.a"'
           - "-lz"
           - "-lpthread"
-          - '"$(TINYLAND_OPENSSL_LIBRARY_DIR)/libssl.a"'
-          - '"$(TINYLAND_OPENSSL_LIBRARY_DIR)/libcrypto.a"'
+          - '"$(FRUITCTL_NATIVE_INPUT_DIR)/lib/libssl.a"'
+          - '"$(FRUITCTL_NATIVE_INPUT_DIR)/lib/libcrypto.a"'
+
+
+  NativeBehaviorTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - ClaudeKVM-Daemon/VNC
+      - ClaudeKVM-Daemon/Input
+      - ClaudeKVM-Daemon/Protocol
+      - ClaudeKVM-Daemon/DisplayScaling.swift
+      - ClaudeKVM-Daemon/FramebufferBaseline.swift
+      - ClaudeKVM-Daemon/FrameImageEncoder.swift
+      - Tests/NativeBehaviorTests.swift
+    preBuildScripts:
+      - name: Verify locked native inputs before-link
+        script: |
+          exec /usr/bin/python3 -I "$SRCROOT/scripts/verify-native-input.py" "$FRUITCTL_NATIVE_INPUT_MANIFEST" "$FRUITCTL_NATIVE_INPUT_DIR" before-link
+        inputFiles:
+          - "$(SRCROOT)/scripts/verify-native-input.py"
+          - "$(FRUITCTL_NATIVE_INPUT_MANIFEST)"
+          - "$(FRUITCTL_NATIVE_INPUT_DIR)/lib/libvncclient.a"
+          - "$(FRUITCTL_NATIVE_INPUT_DIR)/lib/libssl.a"
+          - "$(FRUITCTL_NATIVE_INPUT_DIR)/lib/libcrypto.a"
+        showEnvVars: false
+        basedOnDependencyAnalysis: false
+        runOnlyWhenInstalling: false
+    postBuildScripts:
+      - name: Verify locked native inputs after-link
+        script: |
+          exec /usr/bin/python3 -I "$SRCROOT/scripts/verify-native-input.py" "$FRUITCTL_NATIVE_INPUT_MANIFEST" "$FRUITCTL_NATIVE_INPUT_DIR" after-link
+        inputFiles:
+          - "$(SRCROOT)/scripts/verify-native-input.py"
+          - "$(FRUITCTL_NATIVE_INPUT_MANIFEST)"
+          - "$(FRUITCTL_NATIVE_INPUT_DIR)/lib/libvncclient.a"
+          - "$(FRUITCTL_NATIVE_INPUT_DIR)/lib/libssl.a"
+          - "$(FRUITCTL_NATIVE_INPUT_DIR)/lib/libcrypto.a"
+        showEnvVars: false
+        basedOnDependencyAnalysis: false
+        runOnlyWhenInstalling: false
+    settings:
+      base:
+        # Required carrier input; no Homebrew or host-path fallback.
+        FRUITCTL_NATIVE_INPUT_MANIFEST: ""
+        FRUITCTL_NATIVE_INPUT_DIR: ""
+        ARCHS: arm64
+        SWIFT_VERSION: "5.9"
+        MACOSX_DEPLOYMENT_TARGET: "15.0"
+        GENERATE_INFOPLIST_FILE: YES
+        CODE_SIGNING_ALLOWED: NO
+        SWIFT_INCLUDE_PATHS: "$(FRUITCTL_NATIVE_INPUT_DIR)"
+        LIBRARY_SEARCH_PATHS:
+          - "$(FRUITCTL_NATIVE_INPUT_DIR)/lib"
+        HEADER_SEARCH_PATHS: "$(FRUITCTL_NATIVE_INPUT_DIR)/include"
+        OTHER_LDFLAGS:
+          - "-Wl,-search_paths_first"
+          - '"$(FRUITCTL_NATIVE_INPUT_DIR)/lib/libvncclient.a"'
+          - "-lz"
+          - "-lpthread"
+          - '"$(FRUITCTL_NATIVE_INPUT_DIR)/lib/libssl.a"'
+          - '"$(FRUITCTL_NATIVE_INPUT_DIR)/lib/libcrypto.a"'
+
+
+  FruitctlHost:
+    type: application
+    platform: macOS
+    sources:
+      - path: FruitctlHost
+        excludes: [Info.plist]
+    settings:
+      base:
+        ARCHS: arm64
+        SWIFT_VERSION: "5.9"
+        MACOSX_DEPLOYMENT_TARGET: "15.0"
+        PRODUCT_BUNDLE_IDENTIFIER: com.xoxd.fruitctl.host
+        INFOPLIST_FILE: FruitctlHost/Info.plist
+        GENERATE_INFOPLIST_FILE: NO
+        CODE_SIGNING_ALLOWED: NO
+
+  FruitctlHostTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - FruitctlHost/HostLease.swift
+      - FruitctlHost/HostProtocol.swift
+      - FruitctlHost/HostClock.swift
+      - Tests/FruitctlHostTests.swift
+    settings:
+      base:
+        ARCHS: arm64
+        SWIFT_VERSION: "5.9"
+        MACOSX_DEPLOYMENT_TARGET: "15.0"
+        GENERATE_INFOPLIST_FILE: YES
+        CODE_SIGNING_ALLOWED: NO
 
 
   CredentialInputHarness:
@@ -153,3 +250,23 @@ schemes:
     build:
       targets:
         CredentialInputHarness: all
+  NativeBehaviorTests:
+    build:
+      targets:
+        NativeBehaviorTests: [test]
+    test:
+      targets:
+        - name: NativeBehaviorTests
+          parallelizable: false
+  FruitctlHost:
+    build:
+      targets:
+        FruitctlHost: all
+  FruitctlHostTests:
+    build:
+      targets:
+        FruitctlHostTests: [test]
+    test:
+      targets:
+        - name: FruitctlHostTests
+          parallelizable: false

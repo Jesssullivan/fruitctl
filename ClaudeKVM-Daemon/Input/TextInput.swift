@@ -5,33 +5,35 @@ extension InputController {
     /// Type text character by character. Fixed timing, zero randomness.
     /// Per char: [shift down 10ms] → key down 20ms → key up → [10ms shift up] → 20ms inter-key.
     func typeText(_ text: String) async throws {
-        for ch in text {
-            let (keysym, needsShift) = charToKeysym(ch)
-            guard keysym != 0 else { continue }
+        try await releasingOnFailure {
+            for ch in text {
+                let (keysym, needsShift) = charToKeysym(ch)
+                guard keysym != 0 else { continue }
 
-            if needsShift {
-                try await vnc.sendKeyEvent(key: KeySym.shiftLeft, down: true)
-                usleep(timing.typeShiftUs)
+                if needsShift {
+                    try await emitKey(key: KeySym.shiftLeft, down: true)
+                    try await pause(timing.typeShiftUs)
+                }
+
+                try await emitKey(key: keysym, down: true)
+                try await pause(timing.typeKeyUs)
+                try await emitKey(key: keysym, down: false)
+
+                if needsShift {
+                    try await pause(timing.typeShiftUs)
+                    try await emitKey(key: KeySym.shiftLeft, down: false)
+                }
+
+                try await pause(timing.typeInterKeyUs)
             }
-
-            try await vnc.sendKeyEvent(key: keysym, down: true)
-            usleep(timing.typeKeyUs)
-            try await vnc.sendKeyEvent(key: keysym, down: false)
-
-            if needsShift {
-                usleep(timing.typeShiftUs)
-                try await vnc.sendKeyEvent(key: KeySym.shiftLeft, down: false)
-            }
-
-            usleep(timing.typeInterKeyUs)
         }
     }
 
     /// Paste via VNC clipboard + combo. Always preferred over typeText.
     /// clientCutText → 30ms → cmd+v (macOS) or ctrl+v (other).
     func pasteText(_ text: String) async throws {
-        try await vnc.sendClipboardText(text)
-        usleep(timing.pasteSettleUs)
+        try await vnc.sendClipboardText(text, context: context)
+        try await pause(timing.pasteSettleUs)
         if vnc.isMacOS {
             try await keyCombo("cmd+v")
         } else {

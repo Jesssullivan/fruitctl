@@ -190,6 +190,21 @@ struct ClaudeKVMDaemon: AsyncParsableCommand {
 
     // MARK: - Run
 
+    func validate() throws {
+        guard (1...65535).contains(port) else { throw ValidationError("--port must be 1...65535") }
+        guard (320...3840).contains(maxDimension) else { throw ValidationError("--max-dimension must be 320...3840") }
+        if let bits = bitsPerSample, bits != 8 { throw ValidationError("Only 8-bit RGBA samples are supported") }
+        if let timeout = connectTimeout, !(1...120).contains(timeout) {
+            throw ValidationError("--connect-timeout must be 1...120 seconds")
+        }
+        if let delay = reconnectDelay, !delay.isFinite || !(0.1...30).contains(delay) {
+            throw ValidationError("--reconnect-delay must be 0.1...30 seconds")
+        }
+        if let attempts = maxReconnectAttempts, !(0...100).contains(attempts) {
+            throw ValidationError("--max-reconnect-attempts must be 0...100")
+        }
+    }
+
     func run() async throws {
         try await runDaemon()
     }
@@ -197,6 +212,7 @@ struct ClaudeKVMDaemon: AsyncParsableCommand {
     // MARK: - Daemon
 
     private func runDaemon() async throws {
+        signal(SIGPIPE, SIG_IGN)
         let password = try CredentialInput.readInherited(fd: passwordFD)
         log("Starting daemon — VNC \(host):\(port)")
 
@@ -228,7 +244,6 @@ struct ClaudeKVMDaemon: AsyncParsableCommand {
 
         log("macOS mode: \(vnc.isMacOS)")
 
-        Self.maxImageDimension = maxDimension
         let scaling = DisplayScaling(
             nativeWidth: vnc.framebufferWidth,
             nativeHeight: vnc.framebufferHeight,
@@ -242,10 +257,29 @@ struct ClaudeKVMDaemon: AsyncParsableCommand {
         ])
 
         let input = InputController(vnc: vnc)
+        input.context = VNCInputContext(vnc.framebufferDiagnostics)
 
-        await runCommandLoop(vnc: vnc, input: input, scaling: scaling)
+        let commandTask = Task { await runCommandLoop(vnc: vnc, input: input, scaling: scaling) }
+        // Cancel the owning loop, which unwinds the current input action and
+        // releases held state before disconnect. A signal never replays input.
+        let signalSources = [SIGTERM, SIGINT].map { number -> DispatchSourceSignal in
+            signal(number, SIG_IGN)
+            let source = DispatchSource.makeSignalSource(signal: number, queue: .global(qos: .userInitiated))
+            source.setEventHandler { commandTask.cancel() }
+            source.resume()
+            return source
+        }
+        defer {
+            for source in signalSources { source.cancel() }
+        }
+        await commandTask.value
+        let released = await input.releaseHeldInput()
 
         vnc.disconnect()
+        guard released else {
+            printError("Native shutdown could not confirm held-state release")
+            throw ExitCode.failure
+        }
         log("Daemon stopped")
     }
 

@@ -1,12 +1,12 @@
 {
-  "name": "claude-kvm",
-  "version": "2.0.12",
-  "description": "Agent KVM: an MCP proxy for a native macOS VNC client",
+  "name": "@xoxd-ai/fruitctl",
+  "version": "0.1.0-alpha.1",
+  "description": "Fruitctl: shared VNC MCP transport, agent skill and rootless installation",
   "license": "MIT",
-  "author": "Rıza Emre ARAS <r.emrearas@proton.me>",
+  "author": "R\u0131za Emre ARAS <r.emrearas@proton.me>",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/tinyland-inc/agent-kvm.git"
+    "url": "git+https://github.com/xoxd-ai/fruitctl.git"
   },
   "keywords": [
     "mcp",
@@ -20,18 +20,31 @@
   ],
   "main": "index.js",
   "bin": {
-    "claude-kvm": "index.js"
+    "claude-kvm": "index.js",
+    "fruitctl": "bin/fruitctl.mjs"
   },
   "files": [
+    "bin/",
+    "lib/",
     "index.js",
     "tools/",
+    "integrations/",
+    "skills/",
     "LICENSE",
+    "LICENSES/",
+    "THIRD_PARTY_NOTICES.md",
     "README.md"
   ],
   "type": "module",
   "scripts": {
     "start": "node index.js",
-    "test:offline": "node --test --test-concurrency=1 test/credential-transport.test.js test/credential-proxy-integration.test.js"
+    "test:offline": "node --test --test-concurrency=1 test/*.test.js",
+    "test": "node --test --test-concurrency=1 test/*.test.js",
+    "docs:build": "node scripts/build-docs.mjs",
+    "docs:check": "node scripts/build-docs.mjs --check",
+    "check": "npm test && npm run docs:check",
+    "build:native": "./scripts/build-native.sh",
+    "build:host": "./scripts/build-host.sh"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.26.0",
@@ -42,5 +55,8 @@
     "@types/node": "^25.2.3",
     "dotenv": "^17.3.1"
   },
-  "private": true
+  "private": true,
+  "engines": {
+    "node": ">=24 <25"
+  }
 }

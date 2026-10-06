@@ -1,0 +1,23 @@
+{
+  "canonicalOrigin": "https://fruitctl.clients.xoxd.ai",
+  "provider": "cloudflare-pages-direct-upload",
+  "projectIntent": "xoxd-ai-fruitctl",
+  "productionBranch": "main",
+  "audience": "public",
+  "status": "pending",
+  "allocatedProject": "xoxd-ai-fruitctl",
+  "allocatedPagesHostname": "xoxd-ai-fruitctl.pages.dev",
+  "customDomainStatus": "pending",
+  "allocationReceipt": {
+    "projectId": "3c68aed8-4aba-4d92-ae20-767fdd06a7ef",
+    "projectCreatedOn": "2026-10-05T23:51:58.628619Z",
+    "customDomainId": "542ab787-7c63-4bfd-80ac-5fb0d3d2b822",
+    "customDomainCreatedOn": "2026-10-05T23:52:03.284732Z",
+    "customDomainVerification": "pending",
+    "customDomainVerificationReason": "CNAME record not set",
+    "dnsApplied": false
+  },
+  "zoneOwner": "xoxd-ai/tinyland-infra",
+  "zoneStack": "tofu/stacks/xoxd-ai-edge",
+  "receipt": null
+}

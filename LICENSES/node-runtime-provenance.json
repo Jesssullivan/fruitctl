@@ -1,0 +1,88 @@
+{
+  "schema_version": 1,
+  "id": "nodejs",
+  "name": "Node.js runtime",
+  "version": "24.21.0",
+  "upstream_repository": "https://github.com/nodejs/node",
+  "upstream_revision": "955266bfdd854cd280dffd47548673914484e4c0",
+  "upstream_tag": "v24.21.0",
+  "tag_signature_verification": "GitHub tag API reports verified=true, reason=valid; checksum signature not locally verified.",
+  "release_page": "https://nodejs.org/en/blog/release/v24.21.0",
+  "license_expression": "LicenseRef-Nodejs-24.21.0",
+  "authored_code_license_expression": "MIT",
+  "license_mapping": "Node authored code is MIT; the exact aggregate LICENSE retains bundled dependency terms. This separately aggregated executable does not change Fruitctl native GPL or proxy MIT grants.",
+  "bundled_files": [
+    "bin/node",
+    "LICENSES/Node-24.21.0-LICENSE.txt"
+  ],
+  "excluded_files": [
+    "npm",
+    "npx",
+    "corepack",
+    "node_modules from the Node release archive"
+  ],
+  "source_archive": {
+    "source_url": "https://nodejs.org/download/release/v24.21.0/node-v24.21.0.tar.xz",
+    "sha256": "a6f54defb6fd7c84f41dba13d61e78e9b4e0961712cf61f29715c05f5ced94fc",
+    "bytes": 57357488,
+    "verification": "Independently downloaded source archive matches official SHASUMS256.txt; exact source LICENSE checked."
+  },
+  "license_files": [
+    {
+      "path": "LICENSES/Node-24.21.0-LICENSE.txt",
+      "source_url": "https://raw.githubusercontent.com/nodejs/node/955266bfdd854cd280dffd47548673914484e4c0/LICENSE",
+      "sha256": "5888dbb9a1d2b18f2c3e6c5f6af1b39de658372b402a0577b002777f14c62ace",
+      "bytes": 157609
+    }
+  ],
+  "release_checksums": {
+    "path": "LICENSES/Node-24.21.0-SHASUMS256.txt",
+    "source_url": "https://nodejs.org/download/release/v24.21.0/SHASUMS256.txt",
+    "sha256": "f410428039e2c922a14058df067a4482691c9304a5c01a75847f9f3f2d3307f6",
+    "signature_path": "LICENSES/Node-24.21.0-SHASUMS256.txt.asc",
+    "signature_source_url": "https://nodejs.org/download/release/v24.21.0/SHASUMS256.txt.asc",
+    "signature_sha256": "dd0fe71660e64f4dc01342664835509c84679d8a87ab4d76cc2f15fdda82ea3e",
+    "signature_verification": "Not locally verified; HTTPS official source and downloaded archive hash checks are recorded without a signature-verification claim."
+  },
+  "binaries": [
+    {
+      "platform": "darwin-arm64",
+      "source_url": "https://nodejs.org/download/release/v24.21.0/node-v24.21.0-darwin-arm64.tar.gz",
+      "sha256": "bed7eea5325e1108f32ce5228ddd6a5f0f08a499ee42aa7442aea583702f6057",
+      "bytes": 52909993,
+      "executable_path": "node-v24.21.0-darwin-arm64/bin/node",
+      "executable_sha256": "e4b5a3af0e05c75de2eae013904145f40fe7fc2a6e6f17510128bf45cca4e79b",
+      "license_sha256": "5888dbb9a1d2b18f2c3e6c5f6af1b39de658372b402a0577b002777f14c62ace",
+      "verification": "Independently downloaded archive matches official SHASUMS256.txt; executable hash and exact bundled LICENSE checked.",
+      "qualification": "Runtime redistribution input; Fruitctl platform qualification is separate."
+    },
+    {
+      "platform": "linux-x64",
+      "source_url": "https://nodejs.org/download/release/v24.21.0/node-v24.21.0-linux-x64.tar.gz",
+      "sha256": "6e1db87ef58b8819e5d5402eff1536491b18edd8eb7bee5ef7897876e88dc5ff",
+      "bytes": 58088022,
+      "executable_path": "node-v24.21.0-linux-x64/bin/node",
+      "executable_sha256": "7fde7b8afa198da66257f42ee2001d874c7355631e6d1579a5fb5ef1f246df4c",
+      "license_sha256": "5888dbb9a1d2b18f2c3e6c5f6af1b39de658372b402a0577b002777f14c62ace",
+      "verification": "Independently downloaded archive matches official SHASUMS256.txt; executable hash and exact bundled LICENSE checked.",
+      "qualification": "Runtime redistribution input; Fruitctl platform qualification is separate."
+    },
+    {
+      "platform": "linux-arm64",
+      "source_url": "https://nodejs.org/download/release/v24.21.0/node-v24.21.0-linux-arm64.tar.gz",
+      "sha256": "724282c3b43aec998aa9527380465b45d229e021b58035f5f4f63095eabfe5d5",
+      "bytes": 57824078,
+      "executable_path": "node-v24.21.0-linux-arm64/bin/node",
+      "executable_sha256": "0f8949d1028f6d61506b2d5bc57e7e6fe893d7b1997509b7847294fc9c616584",
+      "license_sha256": "5888dbb9a1d2b18f2c3e6c5f6af1b39de658372b402a0577b002777f14c62ace",
+      "verification": "Independently downloaded archive matches official SHASUMS256.txt; executable hash and exact bundled LICENSE checked.",
+      "qualification": "Runtime redistribution input; Fruitctl platform qualification is separate."
+    }
+  ],
+  "packaging_requirements": [
+    "Copy the unchanged official bin/node for the declared platform and record its executable SHA-256.",
+    "Include the full exact Node aggregate LICENSE and this provenance inventory.",
+    "Include the matching official Node source archive beside every Fruitctl runtime release, either as a separate source asset or inside its complete corresponding-source package.",
+    "Do not describe x64 Darwin or unlisted platforms as qualified."
+  ]
+}

@@ -1,0 +1,24 @@
+#!/bin/sh
+# SPDX-License-Identifier: MIT
+set -eu
+fruitctl_script=$0
+case "$fruitctl_script" in
+  */*) ;;
+  *) fruitctl_script=$(command -v -- "$fruitctl_script");;
+esac
+fruitctl_links=0
+while [ -L "$fruitctl_script" ]; do
+  fruitctl_links=$((fruitctl_links + 1))
+  [ "$fruitctl_links" -le 40 ] || { printf '%s\n' 'Fruitctl: launcher symlink loop' >&2; exit 1; }
+  fruitctl_parent=$(CDPATH='' cd -- "$(dirname -- "$fruitctl_script")" && pwd)
+  fruitctl_link=$(readlink "$fruitctl_script")
+  case "$fruitctl_link" in
+    /*) fruitctl_script=$fruitctl_link;;
+    *) fruitctl_script=$fruitctl_parent/$fruitctl_link;;
+  esac
+done
+fruitctl_bin_dir=$(CDPATH='' cd -- "$(dirname -- "$fruitctl_script")" && pwd)
+if [ -x "$fruitctl_bin_dir/node" ]; then
+  exec "$fruitctl_bin_dir/node" "$fruitctl_bin_dir/fruitctl.mjs" "$@"
+fi
+exec node "$fruitctl_bin_dir/fruitctl.mjs" "$@"

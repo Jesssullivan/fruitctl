@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "product": "fruitctl",
+  "repository": "https://github.com/xoxd-ai/fruitctl",
+  "documentation": "https://fruitctl.clients.xoxd.ai/",
+  "publicSupport": "best-effort",
+  "sharedSkill": {
+    "path": "skills/fruitctl",
+    "entrypoint": "skills/fruitctl/SKILL.md",
+    "invocation": "$fruitctl",
+    "compactContract": "skills/fruitctl/references/contract.toon",
+    "wireProtocol": "MCP JSON"
+  },
+  "adapterRegistry": "integrations/agents.json",
+  "tools": ["vnc_command", "action_queue", "task_complete", "task_failed"],
+  "qualificationRequired": ["exact-release", "frontend-version", "controller-target-platform", "capture-mode", "observation-input-observation", "session-lifecycle"],
+  "frontends": [
+    {"id": "claude", "runtimeStatus": "experimental", "qualificationReceipts": []},
+    {"id": "codex", "runtimeStatus": "experimental", "qualificationReceipts": []},
+    {"id": "pi", "runtimeStatus": "experimental", "qualificationReceipts": []},
+    {"id": "junie", "runtimeStatus": "experimental", "qualificationReceipts": [], "surfaces": ["cli", "jetbrains-ide"]},
+    {"id": "opencode", "runtimeStatus": "experimental", "qualificationReceipts": []},
+    {"id": "vscode", "runtimeStatus": "experimental", "qualificationReceipts": []},
+    {"id": "kimi", "runtimeStatus": "experimental", "qualificationReceipts": []}
+  ]
+}

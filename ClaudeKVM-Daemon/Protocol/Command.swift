@@ -23,6 +23,15 @@ struct PCRequest: Decodable {
         let amount: Int?
         let ms: Int?
 
+        // Private broker -> native adoption of an owned external observation.
+        // These fields are not part of the public MCP action schema.
+        let nativeWidth: Int?
+        let nativeHeight: Int?
+        let scaledWidth: Int?
+        let scaledHeight: Int?
+        let connectionGeneration: Int?
+        let allocation: Int?
+
         // Configure — timing (ms) + display
         let reset: Bool?
         let maxDimension: Int?
@@ -49,6 +58,7 @@ struct PCRequest: Decodable {
         enum CodingKeys: String, CodingKey {
             case x, y, toX, toY, dx, dy
             case button, key, keys, text, direction, amount, ms
+            case nativeWidth, nativeHeight, scaledWidth, scaledHeight, connectionGeneration, allocation
             case reset
             case maxDimension = "max_dimension"
             case clickHoldMs = "click_hold_ms"

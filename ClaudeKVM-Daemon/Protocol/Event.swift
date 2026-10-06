@@ -35,6 +35,10 @@ struct PCResponse: Encodable {
         var scaledHeight: Int?
         var timing: [String: Double]?
         var elements: [TextElement]?
+        var nativeWidth: Int?
+        var nativeHeight: Int?
+        var connectionGeneration: Int?
+        var allocation: Int?
     }
 
     struct ErrorPayload: Encodable {
@@ -51,13 +55,17 @@ struct PCResponse: Encodable {
         scaledWidth: Int? = nil,
         scaledHeight: Int? = nil,
         timing: [String: Double]? = nil,
-        elements: [TextElement]? = nil
+        elements: [TextElement]? = nil,
+        frameContext: VNCInputContext? = nil
     ) -> PCResponse {
         PCResponse(
             result: ResultPayload(
                 detail: detail, image: image, x: x, y: y,
                 scaledWidth: scaledWidth, scaledHeight: scaledHeight,
-                timing: timing, elements: elements
+                timing: timing, elements: elements,
+                nativeWidth: frameContext?.width, nativeHeight: frameContext?.height,
+                connectionGeneration: frameContext?.connectionGeneration,
+                allocation: frameContext?.allocation
             ),
             error: nil, id: id
         )

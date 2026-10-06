@@ -1,0 +1,96 @@
+{
+  "schema_version": 1,
+  "inputs": {
+    "GPL-2.0-or-later.txt": {
+      "source_url": "https://raw.githubusercontent.com/LibVNC/libvncserver/9b54b1ec32731bd23158ca014dc18014db4194c3/COPYING",
+      "sha256": "4d23c8c814e5baf007d854f01d8502e77dc56a41144934e003fb32c4e052d20f",
+      "bytes": 18043
+    },
+    "GPL-3.0-or-later.txt": {
+      "source_url": "https://raw.githubusercontent.com/spdx/license-list-data/d46e94e2c78ceede1cfc63cfa0396472d2798d4c/text/GPL-3.0-or-later.txt",
+      "sha256": "fb981668c18a279e285fc4d83fba1e836cc84dd4daa73c9697d3cfd2d8aca6e0",
+      "bytes": 34674
+    },
+    "OpenSSL-3.5.9-Apache-2.0.txt": {
+      "source_url": "https://raw.githubusercontent.com/openssl/openssl/45e844fa2a14ec92d146bd8f5778ac130b6625fb/LICENSE.txt",
+      "sha256": "7d5450cb2d142651b8afa315b5f238efc805dad827d91ba367d8516bc9d49e7a",
+      "bytes": 10175
+    },
+    "Swift-Argument-Parser-Apache-2.0.txt": {
+      "source_url": "https://raw.githubusercontent.com/apple/swift-argument-parser/c8ed701b513cf5177118a175d85fbbbcd707ab41/LICENSE.txt",
+      "sha256": "770af8291f708538d8ff885a0bbc4e045cd700531741c4f99528d435c14d7f55",
+      "bytes": 11751
+    },
+    "LibVNC-0.9.15-AUTHORS.txt": {
+      "source_url": "https://raw.githubusercontent.com/LibVNC/libvncserver/9b54b1ec32731bd23158ca014dc18014db4194c3/AUTHORS",
+      "sha256": "ccf0eacbb640adb3a0e770aa78157e12589fa230a9b3683aa71acac1e1285f48",
+      "bytes": 3169
+    },
+    "libvncserver-0.9.15": {
+      "source_url": "https://codeload.github.com/LibVNC/libvncserver/tar.gz/9b54b1ec32731bd23158ca014dc18014db4194c3",
+      "sha256": "662c311e0d4a8fc71bae6cf4759308948e4681c2e23987583ff2121cb1f1aedf",
+      "bytes": 600746
+    },
+    "openssl-3.5.9": {
+      "source_url": "https://github.com/openssl/openssl/releases/download/openssl-3.5.9/openssl-3.5.9.tar.gz",
+      "sha256": "603f5602e2eef00d77fbd429d34dcd5822bb301757a1bc9cdb24c670f1eb859a",
+      "bytes": 53279637
+    },
+    "swift-argument-parser": {
+      "source_url": "https://codeload.github.com/apple/swift-argument-parser/tar.gz/c8ed701b513cf5177118a175d85fbbbcd707ab41",
+      "sha256": "796678a8b7687b0c253015a984d4dee8c476ad640a2bcab01fd80cbb4e08097f",
+      "bytes": 650823
+    },
+    "009008e2f4d5a54dd71f422070df3af7b3dbc931": {
+      "source_url": "https://github.com/LibVNC/libvncserver/commit/009008e2f4d5a54dd71f422070df3af7b3dbc931.patch",
+      "sha256": "1cb375077450322166d0a7de9b51a12c9cecc3aa777411faae22eeadf7464953",
+      "bytes": 2711
+    },
+    "5b270544b85233668b98161323297d418a8f5fd1": {
+      "source_url": "https://github.com/LibVNC/libvncserver/commit/5b270544b85233668b98161323297d418a8f5fd1.patch",
+      "sha256": "17e714561cddddf7c9565018cb12594b410b991c3795813653c744dba816ff07",
+      "bytes": 2438
+    },
+    "540332be3e0acc566fa64da6f1b4680c72c724dd": {
+      "source_url": "https://github.com/LibVNC/libvncserver/commit/540332be3e0acc566fa64da6f1b4680c72c724dd.patch",
+      "sha256": "73ee4d356a3397f2d63d63a5c5201dc2126614e68d4348f7edcd6c85e63bde12",
+      "bytes": 2038
+    },
+    "Node-24.21.0-LICENSE.txt": {
+      "source_url": "https://raw.githubusercontent.com/nodejs/node/955266bfdd854cd280dffd47548673914484e4c0/LICENSE",
+      "sha256": "5888dbb9a1d2b18f2c3e6c5f6af1b39de658372b402a0577b002777f14c62ace",
+      "bytes": 157609
+    },
+    "node-24.21.0-source": {
+      "source_url": "https://nodejs.org/download/release/v24.21.0/node-v24.21.0.tar.xz",
+      "sha256": "a6f54defb6fd7c84f41dba13d61e78e9b4e0961712cf61f29715c05f5ced94fc",
+      "bytes": 57357488,
+      "verification": "Independently downloaded source archive matches official SHASUMS256.txt; exact source LICENSE checked."
+    },
+    "node-24.21.0-darwin-arm64": {
+      "source_url": "https://nodejs.org/download/release/v24.21.0/node-v24.21.0-darwin-arm64.tar.gz",
+      "sha256": "bed7eea5325e1108f32ce5228ddd6a5f0f08a499ee42aa7442aea583702f6057",
+      "bytes": 52909993
+    },
+    "node-24.21.0-linux-x64": {
+      "source_url": "https://nodejs.org/download/release/v24.21.0/node-v24.21.0-linux-x64.tar.gz",
+      "sha256": "6e1db87ef58b8819e5d5402eff1536491b18edd8eb7bee5ef7897876e88dc5ff",
+      "bytes": 58088022
+    },
+    "node-24.21.0-linux-arm64": {
+      "source_url": "https://nodejs.org/download/release/v24.21.0/node-v24.21.0-linux-arm64.tar.gz",
+      "sha256": "724282c3b43aec998aa9527380465b45d229e021b58035f5f4f63095eabfe5d5",
+      "bytes": 57824078
+    },
+    "Node-24.21.0-SHASUMS256.txt": {
+      "source_url": "https://nodejs.org/download/release/v24.21.0/SHASUMS256.txt",
+      "sha256": "f410428039e2c922a14058df067a4482691c9304a5c01a75847f9f3f2d3307f6",
+      "bytes": 3171
+    },
+    "Node-24.21.0-SHASUMS256.txt.asc": {
+      "source_url": "https://nodejs.org/download/release/v24.21.0/SHASUMS256.txt.asc",
+      "sha256": "dd0fe71660e64f4dc01342664835509c84679d8a87ab4d76cc2f15fdda82ea3e",
+      "bytes": 3449
+    }
+  }
+}

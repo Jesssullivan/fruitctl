@@ -1,0 +1,73 @@
+name: Public documentation
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      deploy:
+        description: Deploy the reviewed main-branch docs artifact to the allocated Cloudflare Pages project
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fruitctl-docs-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  docs:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Validate public sources
+        run: node scripts/build-docs.mjs --check
+      - name: Build static documentation
+        run: node scripts/build-docs.mjs
+      - name: Retain reviewed docs artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: fruitctl-docs-${{ github.sha }}
+          path: build-docs/
+          include-hidden-files: true
+          if-no-files-found: error
+      - name: Resolve deployment readiness
+        id: deploy
+        if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || inputs.deploy == true)
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_PAGES_PROJECT: ${{ vars.CLOUDFLARE_PAGES_PROJECT }}
+        run: |
+          if [ -n "$CLOUDFLARE_API_TOKEN" ] && [ -n "$CLOUDFLARE_ACCOUNT_ID" ] && [ -n "$CLOUDFLARE_PAGES_PROJECT" ]; then
+            if ! [[ "$CLOUDFLARE_PAGES_PROJECT" =~ ^[a-z0-9][a-z0-9-]{0,57}[a-z0-9]$ ]]; then
+              echo "Invalid allocated Cloudflare Pages project name" >&2
+              exit 1
+            fi
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+            echo "project=$CLOUDFLARE_PAGES_PROJECT" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "### Build only: public hosting pending" >> "$GITHUB_STEP_SUMMARY"
+            echo "Docs artifact retained. Allocate the Pages project, configure its exact name and scoped deployment credential, and attach the canonical domain through the reviewed owner route." >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Upload reviewed static artifact
+        if: steps.deploy.outputs.ready == 'true'
+        uses: cloudflare/wrangler-action@v4
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy build-docs --project-name=${{ steps.deploy.outputs.project }} --branch=main --commit-hash=${{ github.sha }}
+      - name: Describe hosting boundary
+        if: always()
+        run: |
+          echo "### Canonical route" >> "$GITHUB_STEP_SUMMARY"
+          echo 'Canonical: https://fruitctl.clients.xoxd.ai/. Allocated Pages host: xoxd-ai-fruitctl.pages.dev. A Pages upload does not prove DNS, TLS, or anonymous acceptance on the canonical origin. Route state lives in docs/site/deployment.json and its owner receipt.' >> "$GITHUB_STEP_SUMMARY"

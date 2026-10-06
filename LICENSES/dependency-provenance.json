@@ -1,0 +1,245 @@
+{
+  "schema_version": 1,
+  "product": "Fruitctl",
+  "canonical_repository": "https://github.com/xoxd-ai/fruitctl",
+  "native_distribution_license_expression": "GPL-3.0-or-later",
+  "independent_proxy_license_expression": "MIT",
+  "license_mapping": "Root LICENSE preserves MIT authored-source attribution. Component licenses remain intact; GPL-3.0-or-later describes the linked VNC controller. Independent FruitctlHost, proxy, installer and documentation retain MIT.",
+  "components": [
+    {
+      "id": "claude-kvm-origin",
+      "name": "Claude KVM upstream authored source",
+      "upstream_repository": "https://github.com/ARAS-Workspace/claude-kvm",
+      "license_expression": "MIT",
+      "notice_paths": [
+        "LICENSE"
+      ],
+      "copyright": "Copyright (c) 2026 Rıza Emre ARAS <r.emrearas@proton.me>",
+      "relationship": "Preserved origin of JS proxy and Swift source; linked native distribution follows the native distribution license.",
+      "upstream_revisions": {
+        "proxy_main": "0b4669eef2139681c710e13790b798b8ae2ce7e8",
+        "native_daemon_tool": "51a8cb0c4b20a6ace38e9a719cc9d5e436dbe2dc"
+      }
+    },
+    {
+      "id": "libvncclient",
+      "name": "LibVNCClient",
+      "version": "0.9.15",
+      "upstream_repository": "https://github.com/LibVNC/libvncserver",
+      "upstream_revision": "9b54b1ec32731bd23158ca014dc18014db4194c3",
+      "upstream_tag": "LibVNCServer-0.9.15",
+      "license_expression": "GPL-2.0-or-later",
+      "linkage": "static",
+      "source_archive": {
+        "source_url": "https://codeload.github.com/LibVNC/libvncserver/tar.gz/9b54b1ec32731bd23158ca014dc18014db4194c3",
+        "sha256": "662c311e0d4a8fc71bae6cf4759308948e4681c2e23987583ff2121cb1f1aedf",
+        "bytes": 600746
+      },
+      "license_files": [
+        {
+          "path": "LICENSES/GPL-2.0-or-later.txt",
+          "source_url": "https://raw.githubusercontent.com/LibVNC/libvncserver/9b54b1ec32731bd23158ca014dc18014db4194c3/COPYING",
+          "sha256": "4d23c8c814e5baf007d854f01d8502e77dc56a41144934e003fb32c4e052d20f",
+          "bytes": 18043
+        },
+        {
+          "path": "LICENSES/LibVNC-0.9.15-AUTHORS.txt",
+          "source_url": "https://raw.githubusercontent.com/LibVNC/libvncserver/9b54b1ec32731bd23158ca014dc18014db4194c3/AUTHORS",
+          "sha256": "ccf0eacbb640adb3a0e770aa78157e12589fa230a9b3683aa71acac1e1285f48",
+          "bytes": 3169
+        }
+      ],
+      "required_upstream_patches": [
+        {
+          "commit": "009008e2f4d5a54dd71f422070df3af7b3dbc931",
+          "advisory": "GHSA-87q7-v983-qwcj",
+          "cve": "CVE-2026-32853",
+          "touched_paths": [
+            "src/libvncclient/ultra.c"
+          ],
+          "source_url": "https://github.com/LibVNC/libvncserver/commit/009008e2f4d5a54dd71f422070df3af7b3dbc931.patch",
+          "sha256": "1cb375077450322166d0a7de9b51a12c9cecc3aa777411faae22eeadf7464953",
+          "bytes": 2711,
+          "status": "required_before_native_qualification",
+          "license_expression": "GPL-2.0-or-later",
+          "advisory_url": "https://github.com/LibVNC/libvncserver/security/advisories/GHSA-87q7-v983-qwcj"
+        },
+        {
+          "commit": "5b270544b85233668b98161323297d418a8f5fd1",
+          "advisory": "GHSA-jcc5-8wj4-7c58",
+          "cve": "CVE-2026-44988",
+          "touched_paths": [
+            "include/rfb/rfbclient.h",
+            "src/libvncclient/tight.c"
+          ],
+          "source_url": "https://github.com/LibVNC/libvncserver/commit/5b270544b85233668b98161323297d418a8f5fd1.patch",
+          "sha256": "17e714561cddddf7c9565018cb12594b410b991c3795813653c744dba816ff07",
+          "bytes": 2438,
+          "status": "required_before_native_qualification",
+          "license_expression": "GPL-2.0-or-later",
+          "advisory_url": "https://github.com/LibVNC/libvncserver/security/advisories/GHSA-jcc5-8wj4-7c58"
+        },
+        {
+          "commit": "540332be3e0acc566fa64da6f1b4680c72c724dd",
+          "advisory": "GHSA-v9pm-47h4-jcq8",
+          "cve": "CVE-2026-50538",
+          "touched_paths": [
+            "src/libvncclient/tight.c"
+          ],
+          "source_url": "https://github.com/LibVNC/libvncserver/commit/540332be3e0acc566fa64da6f1b4680c72c724dd.patch",
+          "sha256": "73ee4d356a3397f2d63d63a5c5201dc2126614e68d4348f7edcd6c85e63bde12",
+          "bytes": 2038,
+          "status": "required_before_native_qualification",
+          "license_expression": "GPL-2.0-or-later",
+          "advisory_url": "https://github.com/LibVNC/libvncserver/security/advisories/GHSA-v9pm-47h4-jcq8"
+        }
+      ],
+      "qualification": "Source input and upstream patch bytes verified; no native build qualification claimed by this inventory.",
+      "excluded_advisories": [
+        {
+          "id": "GHSA-xjp8-4qqv-5x4x",
+          "reason": "Server HTTP proxy implementation is not linked into the client-only baseline."
+        }
+      ]
+    },
+    {
+      "id": "openssl",
+      "name": "OpenSSL",
+      "version": "3.5.9",
+      "upstream_repository": "https://github.com/openssl/openssl",
+      "upstream_revision": "45e844fa2a14ec92d146bd8f5778ac130b6625fb",
+      "upstream_tag": "openssl-3.5.9",
+      "license_expression": "Apache-2.0",
+      "linkage": "static",
+      "source_archive": {
+        "source_url": "https://github.com/openssl/openssl/releases/download/openssl-3.5.9/openssl-3.5.9.tar.gz",
+        "sha256": "603f5602e2eef00d77fbd429d34dcd5822bb301757a1bc9cdb24c670f1eb859a",
+        "bytes": 53279637
+      },
+      "license_files": [
+        {
+          "path": "LICENSES/OpenSSL-3.5.9-Apache-2.0.txt",
+          "source_url": "https://raw.githubusercontent.com/openssl/openssl/45e844fa2a14ec92d146bd8f5778ac130b6625fb/LICENSE.txt",
+          "sha256": "7d5450cb2d142651b8afa315b5f238efc805dad827d91ba367d8516bc9d49e7a",
+          "bytes": 10175
+        }
+      ],
+      "qualification": "Pinned replacement source baseline; correspondence to historical qualified OpenSSL static archives is not asserted."
+    },
+    {
+      "id": "swift-argument-parser",
+      "name": "Swift Argument Parser",
+      "upstream_repository": "https://github.com/apple/swift-argument-parser",
+      "upstream_revision": "c8ed701b513cf5177118a175d85fbbbcd707ab41",
+      "license_expression": "Apache-2.0 WITH Swift-exception",
+      "linkage": "static",
+      "source_archive": {
+        "source_url": "https://codeload.github.com/apple/swift-argument-parser/tar.gz/c8ed701b513cf5177118a175d85fbbbcd707ab41",
+        "sha256": "796678a8b7687b0c253015a984d4dee8c476ad640a2bcab01fd80cbb4e08097f",
+        "bytes": 650823
+      },
+      "license_files": [
+        {
+          "path": "LICENSES/Swift-Argument-Parser-Apache-2.0.txt",
+          "source_url": "https://raw.githubusercontent.com/apple/swift-argument-parser/c8ed701b513cf5177118a175d85fbbbcd707ab41/LICENSE.txt",
+          "sha256": "770af8291f708538d8ff885a0bbc4e045cd700531741c4f99528d435c14d7f55",
+          "bytes": 11751
+        }
+      ],
+      "qualification": "Revision matches project.yml; source archive and full license with runtime exception retained."
+    },
+    {
+      "id": "nodejs-runtime",
+      "name": "Node.js runtime",
+      "version": "24.21.0",
+      "upstream_repository": "https://github.com/nodejs/node",
+      "upstream_revision": "955266bfdd854cd280dffd47548673914484e4c0",
+      "upstream_tag": "v24.21.0",
+      "license_expression": "LicenseRef-Nodejs-24.21.0",
+      "authored_code_license_expression": "MIT",
+      "relationship": "Separate executable aggregated with runtime packages; not linked into the native Fruitctl executable.",
+      "inventory": "LICENSES/node-runtime-provenance.json",
+      "source_archive": {
+        "source_url": "https://nodejs.org/download/release/v24.21.0/node-v24.21.0.tar.xz",
+        "sha256": "a6f54defb6fd7c84f41dba13d61e78e9b4e0961712cf61f29715c05f5ced94fc",
+        "bytes": 57357488,
+        "verification": "Independently downloaded source archive matches official SHASUMS256.txt; exact source LICENSE checked."
+      },
+      "license_files": [
+        {
+          "path": "LICENSES/Node-24.21.0-LICENSE.txt",
+          "source_url": "https://raw.githubusercontent.com/nodejs/node/955266bfdd854cd280dffd47548673914484e4c0/LICENSE",
+          "sha256": "5888dbb9a1d2b18f2c3e6c5f6af1b39de658372b402a0577b002777f14c62ace",
+          "bytes": 157609
+        }
+      ],
+      "qualification": "Official runtime inputs independently hashed; Fruitctl runtime distribution acceptance is separate."
+    },
+    {
+      "id": "fruitctl-host",
+      "name": "FruitctlHost",
+      "source_paths": [
+        "FruitctlHost/"
+      ],
+      "license_expression": "MIT",
+      "notice_paths": [
+        "LICENSE"
+      ],
+      "relationship": "Independent application target using Apple system frameworks; no LibVNCClient, OpenSSL or Swift Argument Parser linkage.",
+      "build_mapping": "project.yml target FruitctlHost",
+      "qualification": "Component/license mapping only; capture, signing and runtime acceptance are separate."
+    }
+  ],
+  "npm_inventory": {
+    "path": "LICENSES/npm-dependencies.json",
+    "source": "package-lock.json",
+    "dependency_entries_sha256": "f194b548030a0da11d8b9edeb6292226ac33524d78ab18f2e97f3f40835d555a",
+    "package_count": 97,
+    "runtime_package_count": 93,
+    "development_package_count": 4
+  },
+  "legacy_prebuilt_libvncclient": {
+    "path": "vendor/libvnc/prebuilt/libvncclient.a",
+    "sha256": "37fbd624623dcc602e306d719e72474734fa0509a8f42375f9e51ccf8e0d93a5",
+    "version_marker": "0.9.15",
+    "source_correspondence": "unestablished",
+    "replacement": "Rebuild from the pinned source and declared patches for new Fruitctl native releases."
+  },
+  "corresponding_source": {
+    "delivery": "Matching source archive in the same immutable GitHub Release as each native binary.",
+    "required_components": [
+      "libvncclient",
+      "openssl",
+      "swift-argument-parser"
+    ],
+    "required_contents": [
+      "Exact Fruitctl source revision and native module sources",
+      "Exact dependency source trees including notices and applied patches",
+      "Compilation and installation scripts with declared options and toolchain versions",
+      "Machine-readable build input and output hashes linking source to each binary",
+      "LICENSE, LICENSES/dependency-provenance.json, THIRD_PARTY_NOTICES.md and all applicable license files"
+    ],
+    "source_manifest_fields": [
+      "fruitctl_revision",
+      "native_distribution_license_expression",
+      "components",
+      "patches",
+      "build_configuration",
+      "binary_sha256",
+      "source_archive_sha256"
+    ],
+    "legacy_asset_policy": "Keep historical signed assets and receipts byte intact; do not describe this new source baseline as their corresponding source without matching build evidence."
+  },
+  "runtime_inventory": {
+    "path": "LICENSES/node-runtime-provenance.json",
+    "platforms": [
+      "darwin-arm64",
+      "linux-x64",
+      "linux-arm64"
+    ],
+    "node_version": "24.21.0",
+    "source_delivery": "Matching official Node source archive and unchanged aggregate notices accompany Fruitctl runtime releases under project publication policy."
+  },
+  "native_distribution_scope": "Linked claude-kvm-daemon VNC controller; does not describe independent FruitctlHost or Node executables.",
+  "independent_host_license_expression": "MIT"
+}
