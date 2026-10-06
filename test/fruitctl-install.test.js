@@ -387,3 +387,21 @@ test('duplicate archive paths and a runtime name outside the bootstrap contract 
   release.offline.manifestSha256 = sha256(await fs.readFile(release.offline.manifestPath));
   await assert.rejects(install({ ...f, offline: release.offline }), /Invalid pinned runtime asset name/);
 });
+
+test('a config becoming managed during download stays linked even when its contents are unchanged', async t => {
+  const f = await fixture(t), release = await releaseFixture(f);
+  const config = path.join(f.projectDir, '.mcp.json'), managed = path.join(f.root, 'managed-during-download.json');
+  const original = '{"mcpServers":{"other":{"command":"retain"}}}';
+  await fs.writeFile(config, original);
+  const manifestBytes = await fs.readFile(release.offline.manifestPath);
+  const manifestUrl = `https://github.com/xoxd-ai/fruitctl/releases/download/${f.version}/fruitctl-release.json`;
+  const fetchImpl = async url => {
+    if (url.startsWith('https://api.github.com/')) return Response.json({ tag_name: f.version, assets: [{ name: 'fruitctl-release.json', digest: `sha256:${sha256(manifestBytes)}`, browser_download_url: manifestUrl }] });
+    if (url === manifestUrl) return new Response(manifestBytes);
+    await fs.rename(config, managed); await fs.symlink(managed, config);
+    return new Response(await fs.readFile(release.offline.archivePath));
+  };
+  await assert.rejects(install(f, { fetchImpl }), /managed|changed during release download/);
+  assert.equal(await fs.readlink(config), managed);
+  assert.equal(await fs.readFile(managed, 'utf8'), original);
+});

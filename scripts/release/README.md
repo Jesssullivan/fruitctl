@@ -59,7 +59,8 @@ The Apple rail uses `apple_distribution.py` phases in order:
    staples the actual accepted ticket and verifies the final signature.
 
 The source packager accepts a matching staple receipt when signing changed
-the app's executable bytes. The historical pinned signing rail remains intact.
+the app's executable bytes, or `--tool-sign-receipt` for the receipt-bound private
+controller copy. The historical pinned signing rail remains intact.
 Signing and notarization do not grant privacy permissions or prove capture
 exclusion, input mapping, product SLOs or frontend compatibility.
 

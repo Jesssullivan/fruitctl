@@ -5,7 +5,8 @@
 The fixture binds an ephemeral loopback port, uses RFB 3.8 None authentication
 and passes a synthetic credential to the native daemon on descriptor 3. It
 checks real LibVNCClient decoding, PNG encoding and input messages. Optional
-Node arguments repeat the same checks through the actual stdio MCP entrypoint.
+Node arguments repeat the same checks through the actual stdio MCP entrypoint
+and shared broker. A legacy direct MCP route can also be selected explicitly.
 These receipts qualify this synthetic fixture only, not macOS Screen Sharing,
 TCC, overlay exclusion, a signed distribution or live end-to-end latency.
 """
@@ -19,6 +20,7 @@ from pathlib import Path
 import queue
 import socket
 import statistics
+import stat
 import struct
 import subprocess
 import sys
@@ -355,17 +357,21 @@ class NativeSession(JsonProcess):
             if read_fd is not None:
                 os.close(read_fd)
             os.close(write_fd)
-        deadline = time.monotonic() + 12
-        while True:
-            message = self.messages.get(timeout=max(0.01, deadline - time.monotonic()))
-            if isinstance(message, Exception):
-                raise message
-            require(time.monotonic() < deadline, "native ready timed out")
-            self.notifications.append(message)
-            if message.get("method") == "ready":
-                require(message["params"] == {"scaledWidth": WIDTH, "scaledHeight": HEIGHT},
-                        "unexpected native ready geometry")
-                break
+        try:
+            deadline = time.monotonic() + 12
+            while True:
+                message = self.messages.get(timeout=max(0.01, deadline - time.monotonic()))
+                if isinstance(message, Exception):
+                    raise message
+                require(time.monotonic() < deadline, "native ready timed out")
+                self.notifications.append(message)
+                if message.get("method") == "ready":
+                    require(message["params"] == {"scaledWidth": WIDTH, "scaledHeight": HEIGHT},
+                            "unexpected native ready geometry")
+                    break
+        except Exception:
+            self.close()
+            raise
 
     def action(self, action, **params):
         response = self.rpc(action, params or None)
@@ -376,29 +382,45 @@ class NativeSession(JsonProcess):
 
 
 class McpSession(JsonProcess):
-    def __init__(self, daemon, port, node, source_dir):
+    def __init__(self, daemon, port, node, source_dir, socket_path=None):
         env = dict(os.environ)
-        env.update(VNC_HOST="127.0.0.1", VNC_PORT=str(port),
-                   VNC_PASSWORD=SYNTHETIC_CREDENTIAL.decode(),
-                   CLAUDE_KVM_DAEMON_PATH=str(daemon),
-                   CLAUDE_KVM_DAEMON_PARAMETERS="--no-reconnect --connect-timeout 2")
-        super().__init__([str(node), str(source_dir / "index.js")], env=env)
-        response = self.rpc("initialize", {"protocolVersion": "2025-03-26", "capabilities": {},
-                                           "clientInfo": {"name": "fruitctl-offline-fixture", "version": "1"}})
-        require(not response.get("error"), "MCP initialize failed")
-        self.send({"jsonrpc": "2.0", "method": "notifications/initialized"})
-        tools = self.rpc("tools/list")
-        require(not tools.get("error") and {tool["name"] for tool in tools["result"]["tools"]}
-                == {"vnc_command", "action_queue", "task_complete", "task_failed"},
-                "MCP tool compatibility failed")
+        for key in ("VNC_HOST", "VNC_PORT", "VNC_USERNAME", "VNC_PASSWORD",
+                    "CLAUDE_KVM_DAEMON_PATH", "CLAUDE_KVM_DAEMON_PARAMETERS"):
+            env.pop(key, None)
+        if socket_path:
+            command = [str(node), str(source_dir / "bin/fruitctl.mjs"), "mcp",
+                       "--target", "fixture", "--socket", str(socket_path)]
+        else:
+            env.update(VNC_HOST="127.0.0.1", VNC_PORT=str(port),
+                       VNC_PASSWORD=SYNTHETIC_CREDENTIAL.decode(),
+                       CLAUDE_KVM_DAEMON_PATH=str(daemon),
+                       CLAUDE_KVM_DAEMON_PARAMETERS="--no-reconnect --connect-timeout 2")
+            command = [str(node), str(source_dir / "index.js")]
+        super().__init__(command, env=env)
+        try:
+            response = self.rpc("initialize", {"protocolVersion": "2025-03-26", "capabilities": {},
+                                               "clientInfo": {"name": "fruitctl-offline-fixture", "version": "1"}})
+            require(not response.get("error"), "MCP initialize failed")
+            self.send({"jsonrpc": "2.0", "method": "notifications/initialized"})
+            tools = self.rpc("tools/list")
+            require(not tools.get("error") and {tool["name"] for tool in tools["result"]["tools"]}
+                    == {"vnc_command", "action_queue", "task_complete", "task_failed"},
+                    "MCP tool compatibility failed")
+        except Exception:
+            self.close()
+            raise
 
     def send(self, message):
         super().send({"jsonrpc": "2.0", **message})
 
-    def action(self, action, **params):
-        response = self.rpc("tools/call", {"name": "vnc_command", "arguments": {"action": action, **params}})
+    def call_tool(self, name, arguments):
+        response = self.rpc("tools/call", {"name": name, "arguments": arguments})
         require(not response.get("error"), "MCP JSON-RPC call failed")
-        result = response.get("result", {})
+        require(isinstance(response.get("result"), dict), "invalid MCP tool response")
+        return response["result"]
+
+    def action(self, action, **params):
+        result = self.call_tool("vnc_command", {"action": action, **params})
         images = [part for part in result.get("content", []) if part.get("type") == "image"]
         require(len(images) <= 1, "MCP returned multiple capture images")
         if images:
@@ -406,6 +428,53 @@ class McpSession(JsonProcess):
         return {"error": result.get("content") if result.get("isError") else None,
                 "image": images[0]["data"] if images else None,
                 "metadata": result.get("structuredContent", {})}
+
+
+class BrokerMcpSession(McpSession):
+    """Actual CLI MCP -> actual CLI shared broker -> actual native daemon."""
+
+    def __init__(self, daemon, port, node, source_dir, directory):
+        directory.mkdir(mode=0o700)
+        self.credential_path = directory / "credential"
+        socket_path = directory / "s"
+        require(len(str(socket_path).encode()) <= 100, "fixture output path is too long for a Darwin Unix socket")
+        credential_fd = os.open(self.credential_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(credential_fd, "wb") as credential:
+            credential.write(SYNTHETIC_CREDENTIAL)
+        config_path = directory / "config.json"
+        config_path.write_text(json.dumps({"schema": "fruitctl.config.v1", "targets": {"fixture": {
+            "vnc": {"host": "127.0.0.1", "port": port}, "daemonPath": str(daemon),
+            "credentialFile": str(self.credential_path)}}}) + "\n")
+        config_path.chmod(0o600)
+        self.broker = JsonProcess([str(node), str(source_dir / "bin/fruitctl.mjs"), "broker",
+                                   "--config", str(config_path), "--socket", str(socket_path)])
+        self.broker_exit_code = None
+        self.directory = directory
+        try:
+            deadline = time.monotonic() + 5
+            while not socket_path.exists():
+                require(self.broker.process.poll() is None, "owned shared broker failed to start")
+                require(time.monotonic() < deadline, "owned shared broker startup timed out")
+                time.sleep(0.01)
+            require(stat.S_ISSOCK(socket_path.stat().st_mode), "broker did not create a socket")
+            require(socket_path.stat().st_mode & 0o077 == 0, "broker socket is not private")
+            super().__init__(daemon, port, node, source_dir, socket_path)
+        except Exception:
+            self._stop_broker()
+            raise
+
+    def _stop_broker(self):
+        if self.broker.process.poll() is None:
+            self.broker.process.terminate()  # Exact recorded fixture child.
+        self.broker_exit_code = self.broker.close()
+        (self.directory / "broker.stderr.txt").write_bytes(self.broker.stderr)
+        self.credential_path.unlink(missing_ok=True)  # Only our synthetic provider.
+
+    def close(self):
+        try:
+            return super().close()
+        finally:
+            self._stop_broker()
 
 
 def inspect_capture(response, fixture, previous_sequence=0, expected_pointer=None):
@@ -443,8 +512,14 @@ def run_scenario(kind, mode, count, args):
     report = {"transport": kind, "scenario": mode, "loopbackPort": fixture.port,
               "status": "failed", "captures": [], "claimedScope": "synthetic-loopback-RFB-only"}
     try:
-        session = (NativeSession(args.daemon, fixture.port) if kind == "native" else
-                   McpSession(args.daemon, fixture.port, args.node, args.source_dir))
+        if kind == "native":
+            session = NativeSession(args.daemon, fixture.port)
+        elif args.mcp_route == "shared-broker":
+            session = BrokerMcpSession(args.daemon, fixture.port, args.node, args.source_dir,
+                                       args.output_dir / ("b-" + mode))
+        else:
+            session = McpSession(args.daemon, fixture.port, args.node, args.source_dir)
+        report["route"] = "native-PC" if kind == "native" else args.mcp_route
         sequence, _, binding = inspect_capture(session.action("screenshot"), fixture)
         if mode == "full":
             latencies = []
@@ -485,6 +560,34 @@ def run_scenario(kind, mode, count, args):
                 "max": round(max(latencies), 3), "scope": "loopback fixture; not a live product SLO"}
             report["coordinateRoundtrips"] = count
             report["buttonAndKeyReleaseRoundtrip"] = "passed"
+            if kind == "mcp":
+                queue_point = (11, 13)
+                queued = session.call_tool("action_queue", {"actions": [{"action": "mouse_move",
+                    "x": queue_point[0], "y": queue_point[1]}, {"action": "wait", "ms": 50}]})
+                require(not queued.get("isError") and queued.get("structuredContent") == {"completed": 2},
+                        "MCP action_queue did not acknowledge both actions")
+                inspect_capture(session.action("screenshot"), fixture, sequence, queue_point)
+                summary = "Offline fixture complete"
+                completed = session.call_tool("task_complete", {"summary": summary})
+                require(not completed.get("isError") and completed.get("content") == [{"type": "text", "text": summary}],
+                        "MCP task_complete did not acknowledge ownership release")
+                require(fixture.finished.wait(3), "task_complete acknowledged before owned native connection closed")
+                # The failed-task ownership-release path is tested while active
+                # in its own scenario; this also checks harmless repeat release.
+                failed_task = session.call_tool("task_failed", {"reason": "Offline fixture deliberate task failure"})
+                require(failed_task.get("isError") is True, "MCP task_failed lost its compatible error marker")
+                report["mcpTools"] = {"vnc_command": "passed", "action_queue": "passed",
+                                      "task_complete": "passed; active ownership released",
+                                      "task_failed": "passed; repeated release"}
+        elif mode == "task-failed":
+            require(kind == "mcp", "task-failed scenario requires MCP")
+            reason = "Offline fixture deliberate active task failure"
+            failed_task = session.call_tool("task_failed", {"reason": reason})
+            require(failed_task.get("isError") is True and
+                    failed_task.get("content") == [{"type": "text", "text": reason}],
+                    "MCP task_failed response mismatch")
+            require(fixture.finished.wait(3), "task_failed acknowledged before owned native connection closed")
+            report["taskFailedOwnershipRelease"] = "passed while active"
         else:
             fixture.set_mode(mode)
             start = time.monotonic()
@@ -504,6 +607,11 @@ def run_scenario(kind, mode, count, args):
     finally:
         if session:
             report["processExitCode"] = session.close()
+            if kind == "mcp" and args.mcp_route == "shared-broker":
+                report["brokerExitCode"] = session.broker_exit_code
+            if report["status"] == "passed" and (report["processExitCode"] != 0 or report.get("brokerExitCode", 0) != 0):
+                report["status"] = "failed"
+                report["failure"] = "owned process cleanup was not acknowledged with zero exit"
             (args.output_dir / (kind + "-" + mode + ".stderr.txt")).write_bytes(session.stderr)
         fixture.close()
         snapshot = fixture.snapshot()
@@ -511,6 +619,7 @@ def run_scenario(kind, mode, count, args):
         report["inputEvents"] = snapshot["events"]
         report["fixtureErrors"] = snapshot["errors"]
         (args.output_dir / (kind + "-" + mode + ".json")).write_text(json.dumps(report, indent=2) + "\n")
+    require(report["status"] == "passed", report.get("failure", "fixture failed"))
     return report
 
 
@@ -521,6 +630,8 @@ def main():
     parser.add_argument("--captures", type=int, default=100)
     parser.add_argument("--node", type=Path, help="optional existing Darwin Node runtime")
     parser.add_argument("--source-dir", type=Path, help="matching staged source with node_modules for real MCP")
+    parser.add_argument("--mcp-route", choices=("shared-broker", "legacy-direct"), default="shared-broker")
+    parser.add_argument("--runtime-archive", type=Path, help="optional exact runtime archive to hash into the receipt")
     args = parser.parse_args()
     require(1 <= args.captures <= 1000, "captures must be 1...1000")
     require(bool(args.node) == bool(args.source_dir), "--node and --source-dir are required together")
@@ -543,16 +654,24 @@ def main():
                             "SSH bridge", "real VNC authentication", "live product latency/SLO"]}
     if args.node:
         receipt["nodeSha256"] = sha256_file(args.node)
+        receipt["nodeVersion"] = subprocess.check_output([str(args.node), "--version"], timeout=5).decode().strip()
+        receipt["mcpRoute"] = args.mcp_route
+        if args.runtime_archive:
+            receipt["runtimeArchiveSha256"] = sha256_file(args.runtime_archive.resolve(strict=True))
         receipt["mcpSourceSha256"] = {str(path.relative_to(args.source_dir)): sha256_file(path)
-            for path in [args.source_dir / "index.js", args.source_dir / "lib/mcp/native.js",
-                         args.source_dir / "lib/mcp/server.js", args.source_dir / "lib/mcp/protocol.js",
-                         args.source_dir / "tools/index.js", args.source_dir / "tools/credential-transport.js",
-                         args.source_dir / "package-lock.json"]}
+            for path in [args.source_dir / "index.js", args.source_dir / "bin/fruitctl.mjs",
+                         args.source_dir / "package.json", args.source_dir / "package-lock.json",
+                         *sorted((args.source_dir / "lib").rglob("*.js")),
+                         *sorted((args.source_dir / "lib").rglob("*.mjs")),
+                         *sorted((args.source_dir / "tools").rglob("*.js"))]}
     else:
         receipt["mcp"] = "not run; pass --node and --source-dir to include actual MCP transport"
     try:
         for kind in (["native", "mcp"] if args.node else ["native"]):
-            for mode in ("full", "partial", "truncated"):
+            modes = ["full", "partial", "truncated"]
+            if kind == "mcp":
+                modes.append("task-failed")
+            for mode in modes:
                 print("Running %s %s fixture" % (kind, mode), flush=True)
                 receipt["scenarios"].append(run_scenario(kind, mode, args.captures, args))
         receipt["status"] = "passed"

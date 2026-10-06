@@ -78,6 +78,7 @@ def main():
     parser.add_argument("--source-inventory", required=True, help="Reviewed public file/hash inventory; never blindly package a working directory")
     parser.add_argument("--binary", action="append", required=True, help="Final native binary path; repeat for host/controller")
     parser.add_argument("--staple-receipt", action="append", default=[], help="Actual stapled-app receipt bound to this native build, if signing changed output bytes")
+    parser.add_argument("--tool-sign-receipt", action="append", default=[], help="Actual signed private controller-copy receipt bound to this tested build")
     args = parser.parse_args()
     build = Path(args.build_dir)
     output = Path(args.output)
@@ -106,6 +107,15 @@ def main():
     require(required_public.issubset(public["files"]), "reviewed source inventory omits licenses, native/install scripts or locks")
     swift = next(component for component in provenance["components"] if component["id"] == "swift-argument-parser")
     binary_hashes = {}
+    signed_tools = {}
+    for value in args.tool_sign_receipt:
+        signed = json.loads(Path(value).read_text())
+        require(signed.get("kind") == "fruitctl-apple-tool-sign" and signed.get("status") == "passed"
+                and signed.get("buildReceiptSha256") == builder.digest(build / "build-receipt.json"),
+                "tool signing receipt differs from the tested build")
+        require(receipt.get("artifacts", {}).get(signed["appName"]) == signed["unsignedArtifact"],
+                "tool signing receipt does not identify the exact unsigned build artifact")
+        signed_tools[signed["appName"]] = signed
     stapled = {}
     for value in args.staple_receipt:
         signed = json.loads(Path(value).read_text())
@@ -116,14 +126,18 @@ def main():
     products = build / "derived/Build/Products/Release"
     for value in args.binary:
         path = Path(value)
-        require(path.is_absolute() and path.resolve(strict=True) == path and path.is_file()
-                and path.is_relative_to(products), "binary must be an actual output of the tested build")
-        relative = path.relative_to(products)
-        artifact = receipt.get("artifacts", {}).get(relative.parts[0])
-        require(isinstance(artifact, dict), "binary is absent from build artifacts")
-        expected = artifact if len(relative.parts) == 1 else artifact.get("files", {}).get(Path(*relative.parts[1:]).as_posix())
-        if relative.parts[0] in stapled:
-            expected = stapled[relative.parts[0]]["files"].get(Path(*relative.parts[1:]).as_posix())
+        require(path.is_absolute() and path.resolve(strict=True) == path and path.is_file(), "canonical native binary required")
+        if path.name in signed_tools:
+            signed = signed_tools[path.name]
+            expected = {"sha256": signed["artifactSha256"], "bytes": signed["artifactBytes"]}
+        else:
+            require(path.is_relative_to(products), "binary must be an actual build output or its receipt-bound signed private copy")
+            relative = path.relative_to(products)
+            artifact = receipt.get("artifacts", {}).get(relative.parts[0])
+            require(isinstance(artifact, dict), "binary is absent from build artifacts")
+            expected = artifact if len(relative.parts) == 1 else artifact.get("files", {}).get(Path(*relative.parts[1:]).as_posix())
+            if relative.parts[0] in stapled:
+                expected = stapled[relative.parts[0]]["files"].get(Path(*relative.parts[1:]).as_posix())
         require(expected == {"sha256": builder.digest(path), "bytes": path.stat().st_size}, "binary differs from tested output")
         require(path.name not in binary_hashes, "duplicate binary names")
         binary_hashes[path.name] = {"sha256": builder.digest(path), "bytes": path.stat().st_size}
