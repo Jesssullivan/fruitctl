@@ -12,6 +12,22 @@
     "wireProtocol": "MCP JSON"
   },
   "adapterRegistry": "integrations/agents.json",
+  "releaseInventory": {
+    "path": "docs/site/versions.json",
+    "publishedUrl": "https://fruitctl.clients.xoxd.ai/versions.json"
+  },
+  "releaseQualification": {
+    "model": "per-scope",
+    "runtimePreview": "Verified runtime archives and installation bootstrap do not establish desktop or frontend acceptance.",
+    "requiresSeparateEvidence": [
+      "real-agent-frontend-rendering-and-desktop-journey",
+      "signed-native-controller-distribution",
+      "physical-overlay-exclusion-and-input-mapping",
+      "real-linux-to-darwin-ssh-journey",
+      "measured-service-objectives"
+    ],
+    "archiveVerificationPromotesFrontends": false
+  },
   "tools": ["vnc_command", "action_queue", "task_complete", "task_failed"],
   "qualificationRequired": ["exact-release", "frontend-version", "controller-target-platform", "capture-mode", "observation-input-observation", "session-lifecycle"],
   "frontends": [

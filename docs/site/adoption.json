@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "releaseStatus": "pending",
+  "releaseStatus": "runtime-preview-available",
   "runtimeBaseline": "node-24",
   "nativeBuildBaseline": {
     "os": "macos",
@@ -14,5 +14,11 @@
   "targetSelection": "operator-configured-profile",
   "uncertainInput": "stop-without-automatic-replay",
   "indicatorPolicy": "qualified-capture-exclusion-only",
-  "support": "public-best-effort"
+  "support": "public-best-effort",
+  "currentPreview": {
+    "tag": "v0.1.0-alpha.1",
+    "sourceRevision": "7064d349890a9b18717b62a142452363629681ee",
+    "releaseScope": "runtime-preview",
+    "qualification": "scoped"
+  }
 }

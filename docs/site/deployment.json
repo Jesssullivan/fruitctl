@@ -4,20 +4,84 @@
   "projectIntent": "xoxd-ai-fruitctl",
   "productionBranch": "main",
   "audience": "public",
-  "status": "pending",
+  "status": "live",
   "allocatedProject": "xoxd-ai-fruitctl",
   "allocatedPagesHostname": "xoxd-ai-fruitctl.pages.dev",
-  "customDomainStatus": "pending",
+  "customDomainStatus": "active",
   "allocationReceipt": {
     "projectId": "3c68aed8-4aba-4d92-ae20-767fdd06a7ef",
     "projectCreatedOn": "2026-10-05T23:51:58.628619Z",
     "customDomainId": "542ab787-7c63-4bfd-80ac-5fb0d3d2b822",
     "customDomainCreatedOn": "2026-10-05T23:52:03.284732Z",
-    "customDomainVerification": "pending",
-    "customDomainVerificationReason": "CNAME record not set",
-    "dnsApplied": false
+    "customDomainVerification": "active",
+    "dnsApplied": true,
+    "customDomainCheckedAt": "2026-10-06T02:29:56.079206Z"
   },
   "zoneOwner": "xoxd-ai/tinyland-infra",
   "zoneStack": "tofu/stacks/xoxd-ai-edge",
-  "receipt": null
+  "receipt": {
+    "checkedAt": "2026-10-06T02:30:41.566580Z",
+    "origin": "https://fruitctl.clients.xoxd.ai",
+    "sourceRevision": "16f437fcf30cd2f0524fc9f2f47e4236d123d9c5",
+    "deploymentId": "da1ca650-8bd6-4aef-a3e0-ae919a7c8911",
+    "buildManifestSha256": "534fcfe7486a7e2af85f43ffa09b0a2457908ac499328a5f081fcda5da762625",
+    "dns": {
+      "zoneOwner": "xoxd-ai/tinyland-infra",
+      "ownerSourceRevision": "d66937bf6276b9f6dc359d68284e34c38e581673",
+      "recordId": "9f9a90eb3bfc87069228b5c2c5e6b4d0",
+      "type": "CNAME",
+      "name": "fruitctl.clients.xoxd.ai",
+      "target": "xoxd-ai-fruitctl.pages.dev",
+      "proxied": true,
+      "ownerReadbackAt": "2026-10-06T02:23:13.316751Z",
+      "publicResolution": "dns-over-https",
+      "resolver": "https://cloudflare-dns.com/dns-query"
+    },
+    "anonymousAcceptance": {
+      "authentication": "none",
+      "userAgent": "Fruitctl-Docs-Verification/0.1 (+https://github.com/xoxd-ai/fruitctl)",
+      "servedFileCount": 22,
+      "allHttp200": true,
+      "exactSha256MatchCount": 13,
+      "allSha256Match": false,
+      "htmlTransformation": "Cloudflare JavaScript Detections injection observed on nine HTML pages; no other content changes observed",
+      "nextBuildPolicy": "Cache-Control: no-transform preserves origin bytes; complete canonical exact-hash acceptance is pending deployment of this header"
+    },
+    "tlsAcceptance": {
+      "checkedAt": "2026-10-06T02:30:41.566471Z",
+      "chainVerified": true,
+      "hostnameVerified": true,
+      "serverName": "fruitctl.clients.xoxd.ai",
+      "protocol": "TLSv1.3",
+      "certificateSha256": "c9a817332e85b8f12053f02eccbfdfc74cf25602e26e588af502fb4e2111f8d4",
+      "notAfter": "Jan  4 02:25:35 2027 GMT"
+    },
+    "resolutionNote": "Public DNS-over-HTTPS and canonical hostname TLS were verified. Some local system resolvers had not yet converged at this check."
+  },
+  "pagesDeployment": {
+    "id": "da1ca650-8bd6-4aef-a3e0-ae919a7c8911",
+    "url": "https://da1ca650.xoxd-ai-fruitctl.pages.dev",
+    "productionOrigin": "https://xoxd-ai-fruitctl.pages.dev",
+    "sourceRevision": "16f437fcf30cd2f0524fc9f2f47e4236d123d9c5",
+    "sourceContentSha256": "1a8e5e18da1cee0f4a20aa4e379a8a5c14d3d87fbde5a0ed2eb2a6eda2813da4",
+    "buildManifestSha256": "534fcfe7486a7e2af85f43ffa09b0a2457908ac499328a5f081fcda5da762625",
+    "createdAt": "2026-10-06T01:57:05.88546Z",
+    "providerStage": "success",
+    "anonymousAcceptance": {
+      "checkedAt": "2026-10-06T01:59:25.831261Z",
+      "authentication": "none",
+      "userAgent": "Fruitctl-Docs-Verification/0.1 (+https://github.com/xoxd-ai/fruitctl)",
+      "servedFileCount": 22,
+      "allSha256Match": true
+    },
+    "tlsAcceptance": {
+      "checkedAt": "2026-10-06T02:00:48.620087Z",
+      "chainVerified": true,
+      "hostnameVerified": true,
+      "protocol": "TLSv1.3"
+    },
+    "deploymentMethod": "scoped-pages-direct-upload-fallback",
+    "tool": "wrangler@4.147.0",
+    "workflowNotExecuted": "GitHub Actions job startup unavailable; run 37401566199 had no steps"
+  }
 }

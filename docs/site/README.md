@@ -7,12 +7,14 @@ uses Node.js 24 and no framework or third-party dependency; output is
 
 The generated site contains the reviewed Markdown pages, `agents.md`,
 `llms.txt`, `install-prompt.md`, `adoption.json`, `adoption.toon`, and
-`versions.json`, and `deployment.json`. `versions.json` is a curated list of public qualification
+`versions.json`, `deployment.json`, and the public release schemas.
+`versions.json` is a curated list of public qualification
 records, not a list inferred from package versions. The canonical agent/tool/skill
 truth is `integrations/adoption.json` and `integrations/agents.json`; the site
 exports those inputs with immutable source links and a small release-policy
-overlay. An empty release list is deliberate
-until a verified release exists. The build records source revision and content
+overlay. Scoped immutable runtime previews carry their passed and pending
+scopes; the builder counts fully qualified product releases separately.
+The build records source revision and content
 hashes so a deployment can be related to the reviewed artifact.
 
 ## Hosting contract
@@ -25,23 +27,29 @@ hashes so a deployment can be related to the reviewed artifact.
 - Zone CNAME: the Tinyland owner overlay's `xoxd-ai-edge` stack.
 - Public audience: no login on the canonical documentation origin.
 
-The workflow always builds and validates. Deployment occurs only on `main` or a
+The workflow builds and validates when GitHub can start its job. Deployment occurs only on `main` or a
 requested manual release when both Cloudflare secrets and the exact allocated
 project variable exist. Missing configuration
 produces an explicit “build only; hosting pending” summary. The workflow does not
 create DNS records, allocate a Pages project, or imply a hostname is live.
 
 Cloudflare allocated this project and accepted `fruitctl.clients.xoxd.ai` on
-2026-10-05. The association is pending with “CNAME record not set”; no deployment
-has been uploaded. The infrastructure
-owner's reviewed route change must use the actual allocated CNAME target
-`xoxd-ai-fruitctl.pages.dev`. A CNAME without a Pages custom-domain association
-can return a 522 error. Check the exact custom hostname's TLS and anonymous
-served content after owner apply; a successful upload is not that final route
-proof.
+2026-10-05. The first reviewed production deployment succeeded on 2026-10-06
+through a scoped Direct Upload fallback because GitHub Actions job startup was
+unavailable; run `37401566199` had no steps. All 22 served files, including the build
+manifest, matched their local SHA-256 hashes without authentication; TLS chain
+and hostname checks passed. The infrastructure owner's exact one-record CNAME
+apply completed at 02:23 UTC, and Pages reports the canonical custom domain
+active. Canonical anonymous delivery, public DNS-over-HTTPS and hostname TLS
+were verified at 02:30 UTC: all 22 files returned HTTP 200 and all 13 non-HTML
+files matched exactly. Cloudflare added its JavaScript Detections script to
+the nine HTML responses. The builder now emits `Cache-Control: no-transform`,
+which [Cloudflare documents](https://developers.cloudflare.com/cloudflare-challenges/challenge-types/javascript-detections/)
+as preventing that injection. Complete canonical HTML hash acceptance requires
+deployment of these headers; no zone security setting was changed.
 
-`deployment.json` records the real allocation separately from the pending served
-route. Update its status only with a real deployment and served-route receipt.
+`deployment.json` records allocation, Pages upload and canonical served-route
+receipts separately. Update each claim only with its observed receipt.
 There is no
 Sites project or VNC network service on this route.
 

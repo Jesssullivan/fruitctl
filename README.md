@@ -17,11 +17,17 @@ verified release, configures a named target, and checks a fresh observation
 before input. If the release does not support your controller and agent, it
 reports the missing prerequisite instead of claiming installation succeeded.
 
-The canonical public documentation route is
-`https://fruitctl.clients.xoxd.ai/`. Hosting and the first public Fruitctl release
-are pending until their deployment and release receipts exist. Repository docs
-work independently of that route. See the [compatibility matrix](docs/compatibility.md)
-for the current native baseline and the Linux SSH bridge boundary.
+The immutable [v0.1.0-alpha.1 runtime preview](https://github.com/xoxd-ai/fruitctl/releases/tag/v0.1.0-alpha.1)
+ships bundled Node.js 24.21.0, the installer, shared skill and MCP/broker code.
+Runtime packaging, rootless adapter installation and synthetic MCP image tests
+have passed their scoped checks. An existing Darwin native controller is still
+required; real frontend journeys, signed native distribution, physical overlay
+exclusion, SSH adoption and measured service objectives remain pending.
+
+The canonical public documentation is live at
+[fruitctl.clients.xoxd.ai](https://fruitctl.clients.xoxd.ai/), with verified
+anonymous delivery and hostname TLS. See the
+[compatibility matrix](docs/compatibility.md) for the precise preview scope.
 
 ## Control path
 
@@ -44,6 +50,7 @@ native build targets Apple Silicon and macOS 15 or later. Native release builds
 require the qualified inputs in [project.yml](project.yml).
 
 - [Product documentation](docs/index.md)
+- [Agent adapters and IntelliJ/Junie setup](docs/agents.md)
 - [Architecture and capture contract](docs/architecture.md)
 - [Product scope](docs/product.md) and [service objectives](docs/slo.md)
 - [Test entrypoints](test/README.md) and [MCP tool schemas](tools/index.js)

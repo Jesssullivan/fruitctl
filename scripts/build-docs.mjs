@@ -163,11 +163,32 @@ for (const frontend of canonicalAdoption.frontends) {
   if (!agents.agents[frontend.id]) throw new Error(`No canonical adapter for ${frontend.id}`);
 }
 for (const release of versions.releases) {
-  if (!/^[0-9a-f]{40}$/.test(release.sourceRevision || '') || release.qualification !== 'passed' || release.immutable !== true) {
-    throw new Error('Curated public versions require passed qualification, immutable release, and full revision');
+  const fullyQualified = release.releaseScope === 'product' && release.qualification === 'passed';
+  const scopedPreview = release.releaseScope === 'runtime-preview' && release.qualification === 'scoped' &&
+    release.prerelease === true && Array.isArray(release.verifiedScopes) && release.verifiedScopes.length > 0 &&
+    Array.isArray(release.pendingScopes) && release.pendingScopes.length > 0;
+  if (!/^[0-9a-f]{40}$/.test(release.sourceRevision || '') || release.immutable !== true ||
+      !/^v[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.-]+)?$/.test(release.tag || '') ||
+      (!fullyQualified && !scopedPreview)) {
+    throw new Error('Curated versions require an immutable pinned release and explicit product or scoped-preview qualification');
+  }
+  if (!Array.isArray(release.assets) || !release.assets.length) throw new Error('Curated versions require observed release assets');
+  if (scopedPreview && (!release.bootstrap ||
+      release.bootstrap.url !== `https://raw.githubusercontent.com/xoxd-ai/fruitctl/${release.sourceRevision}/scripts/install.sh` ||
+      !/^[a-f0-9]{64}$/.test(release.bootstrap.sha256 || ''))) {
+    throw new Error('Runtime previews require a source-pinned bootstrap URL and SHA-256');
+  }
+  for (const asset of release.assets) {
+    if (!/^[a-f0-9]{64}$/.test(asset.sha256 || '') || !/^[A-Za-z0-9][A-Za-z0-9._-]+$/.test(asset.name || '') ||
+        asset.url !== `${repository}/releases/download/${release.tag}/${asset.name}`) {
+      throw new Error('Release assets require exact tagged URLs and SHA-256 digests');
+    }
   }
 }
-if (adoption.releaseStatus === 'available' && !versions.releases.length) throw new Error('No verified public release is available');
+const fullyQualifiedReleaseCount = versions.releases.filter((release) => release.releaseScope === 'product' && release.qualification === 'passed').length;
+const runtimePreviewCount = versions.releases.filter((release) => release.releaseScope === 'runtime-preview').length;
+if (adoption.releaseStatus === 'available' && !fullyQualifiedReleaseCount) throw new Error('No fully qualified product release is available');
+if (adoption.releaseStatus === 'runtime-preview-available' && !runtimePreviewCount) throw new Error('No scoped runtime preview is available');
 
 const artifacts = new Map();
 const navigation = pageNames.map((name) => `<a href="${name === 'index' ? '/' : `/${name}/`}">${labels[name]}</a>`).join('\n');
@@ -186,21 +207,27 @@ artifacts.set('site.css', await source('docs/site/site.css'));
 artifacts.set('install-prompt.md', installPrompt);
 artifacts.set('agents.md', `# Fruitctl adoption\n\nCanonical repository: ${repository}\nCanonical documentation: ${origin}/\n\nUse adoption.json and versions.json to resolve a verified immutable release. Pin\nfull source SHAs and verify binary SHA-256 hashes. Preserve unrelated MCP/skill\nconfiguration. Use operator-selected profiles and controller-local credentials.\nCapture a complete fresh frame before input; stop without replay on uncertainty.\nQualify the installed adapter and capture mode. Enable the indicator only with\nrecorded exclusion proof. Public support is best effort.\n\nRead /install-prompt.md, /install/, /agents/, /compatibility/, /architecture/, and /slo/.\nSource revision: ${revision}; source status: ${sourceStatus}.\nRelease status: ${adoption.releaseStatus}; hosting status: ${deployment.status}.\n`);
 artifacts.set('llms.txt', `# Fruitctl\n\n> Agent VNC desktop control. Resolve verified releases before installation.\n\n## Documentation\n${pageNames.map((name) => `- [${labels[name]}](${origin}${name === 'index' ? '/' : `/${name}/`})`).join('\n')}\n\n## Machine adoption\n- [Agent instructions](${origin}/agents.md)\n- [Install prompt](${origin}/install-prompt.md)\n- [Adoption JSON](${origin}/adoption.json)\n- [Adoption TOON](${origin}/adoption.toon)\n- [Curated versions](${origin}/versions.json)\n- [Public source](${repository})\n`);
+const releaseManifestSchemaText = await source('release/release-manifest.schema.json');
+const nativeInputManifestSchemaText = await source('release/native-input-manifest.schema.json');
 const buildSource = { revision, status: sourceStatus, contentSha256: sha256(JSON.stringify([...sources].sort())) };
 artifacts.set('integrations/adoption.json', canonicalAdoptionText);
 artifacts.set('integrations/agents.json', agentsText);
+artifacts.set('schemas/release-manifest.schema.json', releaseManifestSchemaText);
+artifacts.set('schemas/native-input-manifest.schema.json', nativeInputManifestSchemaText);
 artifacts.set('adoption.json', `${JSON.stringify({
   ...adoption,
   canonicalAdoption: `https://raw.githubusercontent.com/xoxd-ai/fruitctl/${revision}/integrations/adoption.json`,
   adapterRegistry: `https://raw.githubusercontent.com/xoxd-ai/fruitctl/${revision}/integrations/agents.json`,
   source: buildSource,
   hostingStatus: deployment.status,
+  fullyQualifiedReleaseCount,
+  runtimePreviewCount,
   releases: versions.releases,
 }, null, 2)}\n`);
 artifacts.set('versions.json', `${JSON.stringify(versions, null, 2)}\n`);
 artifacts.set('deployment.json', `${JSON.stringify(deployment, null, 2)}\n`);
-artifacts.set('adoption.toon', `product: fruitctl\nrepository: ${JSON.stringify(repository)}\ndocumentation: ${JSON.stringify(origin)}\nreleaseStatus: ${adoption.releaseStatus}\nhostingStatus: ${deployment.status}\nruntimeBaseline: ${adoption.runtimeBaseline}\nsource:\n  revision: ${JSON.stringify(revision)}\n  status: ${sourceStatus}\n  contentSha256: ${JSON.stringify(buildSource.contentSha256)}\ncredentials: ${adoption.credentials}\ntargetSelection: ${adoption.targetSelection}\nuncertainInput: ${adoption.uncertainInput}\nindicatorPolicy: ${adoption.indicatorPolicy}\nsupport: ${adoption.support}\nfrontends[${canonicalAdoption.frontends.length}]{id,runtimeStatus}:\n${canonicalAdoption.frontends.map((frontend) => `  ${frontend.id},${frontend.runtimeStatus}`).join('\n')}\nqualifiedReleaseCount: ${versions.releases.length}\nreleaseManifest: ${JSON.stringify(`${origin}/versions.json`)}\n`);
-artifacts.set('_headers', `/*\n  X-Content-Type-Options: nosniff\n  Referrer-Policy: no-referrer\n  Content-Security-Policy: default-src 'self'; script-src 'none'; style-src 'self'; img-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'\n  Permissions-Policy: camera=(), microphone=(), geolocation=()\n\n/adoption.json\n  Cache-Control: no-cache\n\n/versions.json\n  Cache-Control: no-cache\n`);
+artifacts.set('adoption.toon', `product: fruitctl\nrepository: ${JSON.stringify(repository)}\ndocumentation: ${JSON.stringify(origin)}\nreleaseStatus: ${adoption.releaseStatus}\nhostingStatus: ${deployment.status}\nruntimeBaseline: ${adoption.runtimeBaseline}\nsource:\n  revision: ${JSON.stringify(revision)}\n  status: ${sourceStatus}\n  contentSha256: ${JSON.stringify(buildSource.contentSha256)}\ncredentials: ${adoption.credentials}\ntargetSelection: ${adoption.targetSelection}\nuncertainInput: ${adoption.uncertainInput}\nindicatorPolicy: ${adoption.indicatorPolicy}\nsupport: ${adoption.support}\nfrontends[${canonicalAdoption.frontends.length}]{id,runtimeStatus}:\n${canonicalAdoption.frontends.map((frontend) => `  ${frontend.id},${frontend.runtimeStatus}`).join('\n')}\nfullyQualifiedReleaseCount: ${fullyQualifiedReleaseCount}\nruntimePreviewCount: ${runtimePreviewCount}\nreleaseManifest: ${JSON.stringify(`${origin}/versions.json`)}\n`);
+artifacts.set('_headers', `/*\n  X-Content-Type-Options: nosniff\n  Referrer-Policy: no-referrer\n  Content-Security-Policy: default-src 'self'; script-src 'none'; style-src 'self'; img-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'\n  Permissions-Policy: camera=(), microphone=(), geolocation=()\n  Cache-Control: public, max-age=0, must-revalidate, no-transform\n\n/adoption.json\n  Cache-Control: no-cache, no-transform\n\n/versions.json\n  Cache-Control: no-cache, no-transform\n`);
 artifacts.set('robots.txt', `User-agent: *\nAllow: /\nSitemap: ${origin}/sitemap.xml\n`);
 artifacts.set('sitemap.xml', `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">${pageNames.map((name) => `<url><loc>${origin}${name === 'index' ? '/' : `/${name}/`}</loc></url>`).join('')}</urlset>\n`);
 const receipts = [...artifacts].map(([file, value]) => ({ file, sha256: sha256(value) }));
