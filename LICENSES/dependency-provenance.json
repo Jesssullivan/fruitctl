@@ -193,7 +193,7 @@
   "npm_inventory": {
     "path": "LICENSES/npm-dependencies.json",
     "source": "package-lock.json",
-    "dependency_entries_sha256": "f194b548030a0da11d8b9edeb6292226ac33524d78ab18f2e97f3f40835d555a",
+    "dependency_entries_sha256": "0449cf48ce36e3231553b65f64a126ad3e4d9fbc61df9272b19bdb65f3c9da05",
     "package_count": 97,
     "runtime_package_count": 93,
     "development_package_count": 4

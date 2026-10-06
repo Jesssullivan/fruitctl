@@ -42,16 +42,19 @@ struct HostCapturedImage {
 /// Each screenshot gets a fresh filter; native VNC capture is a separate path.
 @MainActor
 final class HostCapture {
-    let enabled: Bool
+    private let preferences: HostCapturePreferences
+    var enabled: Bool { preferences.isEnabled }
     let displayID: CGDirectDisplayID
 
-    init(enabled: Bool, displayID: CGDirectDisplayID) {
-        self.enabled = enabled; self.displayID = displayID
+    init(preferences: HostCapturePreferences, displayID: CGDirectDisplayID) {
+        self.preferences = preferences; self.displayID = displayID
     }
 
     func snapshot(maximumDimension: Int) async throws -> HostCapturedImage {
         guard enabled else { throw HostCaptureError.notEnabled }
-        guard CGPreflightScreenCaptureAccess() else { throw HostCaptureError.permissionRequired }
+        guard preferences.permitsCapture(permissionGranted: CGPreflightScreenCaptureAccess()) else {
+            throw HostCaptureError.permissionRequired
+        }
         let content: SCShareableContent
         do {
             content = try await SCShareableContent.excludingDesktopWindows(false,

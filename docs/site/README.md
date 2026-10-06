@@ -40,13 +40,20 @@ unavailable; run `37401566199` had no steps. All 22 served files, including the 
 manifest, matched their local SHA-256 hashes without authentication; TLS chain
 and hostname checks passed. The infrastructure owner's exact one-record CNAME
 apply completed at 02:23 UTC, and Pages reports the canonical custom domain
-active. Canonical anonymous delivery, public DNS-over-HTTPS and hostname TLS
-were verified at 02:30 UTC: all 22 files returned HTTP 200 and all 13 non-HTML
-files matched exactly. Cloudflare added its JavaScript Detections script to
-the nine HTML responses. The builder now emits `Cache-Control: no-transform`,
+active. The first canonical check at 02:30 UTC returned HTTP 200 for all 22
+files; all 13 non-HTML files matched exactly, while Cloudflare added its
+JavaScript Detections script to the nine HTML responses.
+
+The second reviewed deployment, `34a7776a-3661-44b5-87b2-3ea7386bf0dd`, serves
+source revision `ca6f19cd4430b0ca809bf07169e8a96362853465`. Canonical anonymous
+delivery at 02:38 UTC verified all 24 served files, including the two public
+schemas, every HTML page and the build manifest, against exact SHA-256 hashes.
+Canonical TLS chain and hostname checks passed. The server emitted
+`Cache-Control: no-transform`,
 which [Cloudflare documents](https://developers.cloudflare.com/cloudflare-challenges/challenge-types/javascript-detections/)
-as preventing that injection. Complete canonical HTML hash acceptance requires
-deployment of these headers; no zone security setting was changed.
+as preventing that injection. No HTML insertion remained, and no zone security
+setting was changed. Acceptance used public DNS-over-HTTPS; local resolver
+convergence is a separate host observation.
 
 `deployment.json` records allocation, Pages upload and canonical served-route
 receipts separately. Update each claim only with its observed receipt.

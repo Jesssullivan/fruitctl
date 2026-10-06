@@ -3,7 +3,7 @@ import CoreGraphics
 import Darwin
 
 struct HostOptions {
-    var captureEnabled = false
+    var captureChoice: Bool?
     var displayID: CGDirectDisplayID?
     var requestPermission = false
     var mode: Mode = .application
@@ -21,7 +21,9 @@ struct HostOptions {
             case "--doctor":
                 guard options.mode == .application else { throw HostLeaseError.invalidParameters }
                 options.mode = .doctor
-            case "--enable-capture": options.captureEnabled = true
+            case "--enable-capture", "--disable-capture":
+                guard options.captureChoice == nil else { throw HostLeaseError.invalidParameters }
+                options.captureChoice = arguments[index] == "--enable-capture"
             case "--request-screen-capture": options.requestPermission = true
             case "--display-id":
                 index += 1
@@ -33,8 +35,8 @@ struct HostOptions {
             }
             index += 1
         }
-        guard options.mode == .application || (!options.captureEnabled && !options.requestPermission),
-              !options.requestPermission || options.captureEnabled else {
+        guard options.mode == .application || (options.captureChoice == nil && !options.requestPermission),
+              !options.requestPermission || options.captureChoice == true else {
             throw HostLeaseError.invalidParameters
         }
         return options
@@ -47,6 +49,7 @@ final class HostApplicationController: NSObject, NSApplicationDelegate {
     private let clock = HostClock()
     private let renderer = HostRenderer()
     private let capture: HostCapture
+    private let capturePreferences: HostCapturePreferences
     private let instanceID = UUID().uuidString
     private var lease = HostLeaseState()
     private var availability = HostAvailabilityState()
@@ -62,11 +65,14 @@ final class HostApplicationController: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem?
     private var stopMenuItem: NSMenuItem?
     private var allowMenuItem: NSMenuItem?
+    private var enableCaptureMenuItem: NSMenuItem?
+    private var disableCaptureMenuItem: NSMenuItem?
 
     init(options: HostOptions) {
         self.options = options
-        capture = HostCapture(enabled: options.captureEnabled,
-                              displayID: options.displayID ?? CGMainDisplayID())
+        let preferences = HostCapturePreferences(startupChoice: options.captureChoice)
+        capturePreferences = preferences
+        capture = HostCapture(preferences: preferences, displayID: options.displayID ?? CGMainDisplayID())
         super.init()
     }
 
@@ -139,15 +145,25 @@ final class HostApplicationController: NSObject, NSApplicationDelegate {
         let quit = NSMenuItem(title: "Quit Fruitctl Host", action: #selector(quitHost(_:)),
                               keyEquivalent: "")
         quit.target = self
-        menu.addItem(stop); menu.addItem(allow); menu.addItem(.separator()); menu.addItem(quit)
+        let enable = NSMenuItem(title: "Enable capture", action: #selector(enableCapture(_:)),
+                                keyEquivalent: "")
+        enable.target = self
+        let disable = NSMenuItem(title: "Disable capture", action: #selector(disableCapture(_:)),
+                                 keyEquivalent: "")
+        disable.target = self
+        menu.addItem(stop); menu.addItem(allow); menu.addItem(.separator())
+        menu.addItem(enable); menu.addItem(disable); menu.addItem(.separator()); menu.addItem(quit)
         item.menu = menu
         statusItem = item; stopMenuItem = stop; allowMenuItem = allow
+        enableCaptureMenuItem = enable; disableCaptureMenuItem = disable
         updateHumanControl()
     }
 
     private func updateHumanControl() {
         stopMenuItem?.isEnabled = availability.humanAllowed
         allowMenuItem?.isEnabled = !availability.humanAllowed
+        enableCaptureMenuItem?.isEnabled = !capturePreferences.isEnabled
+        disableCaptureMenuItem?.isEnabled = capturePreferences.isEnabled
         statusItem?.button?.title = availability.humanAllowed ? "Fruitctl" : "Fruitctl · Stopped"
     }
 
@@ -168,6 +184,20 @@ final class HostApplicationController: NSObject, NSApplicationDelegate {
     @objc private func quitHost(_ sender: Any?) {
         stopAgentControl(sender)
         NSApplication.shared.terminate(nil)
+    }
+
+    @objc private func enableCapture(_ sender: Any?) {
+        // Persist before asking: macOS Quit & Reopen drops custom launch args.
+        capturePreferences.setEnabled(true)
+        invalidateActivity()
+        updateHumanControl()
+        if !CGPreflightScreenCaptureAccess() { _ = CGRequestScreenCaptureAccess() }
+    }
+
+    @objc private func disableCapture(_ sender: Any?) {
+        capturePreferences.setEnabled(false)
+        invalidateActivity()
+        updateHumanControl()
     }
 
     private func observeDisplayAndSession() {
@@ -421,11 +451,13 @@ struct FruitctlHostMain {
             case .help:
                 print("""
                 FruitctlHost — optional macOS human activity indicator and owned SCK capture
-                Usage: FruitctlHost [--enable-capture] [--request-screen-capture] [--display-id ID]
+                Usage: FruitctlHost [--enable-capture | --disable-capture] [--request-screen-capture] [--display-id ID]
                        FruitctlHost --stdio
                        FruitctlHost --doctor
                 --stdio attaches to an already running same-user Aqua app; it never launches UI.
-                Capture is disabled by default. Permission requests require the explicit
+                Capture starts disabled on fresh installs; explicit operator opt-in persists.
+                The local menu can enable/disable capture; IPC cannot change the opt-in.
+                Permission requests require the explicit
                 --enable-capture --request-screen-capture attended application flags.
                 Raw VNC exclusion is unsupported. Input stays on the controlling Darwin seat.
                 """)

@@ -132,7 +132,7 @@ packages.
 | `path-key` | 3.1.1 | runtime | MIT | [notice](LICENSES/npm/path-key@3.1.1/license) |
 | `path-to-regexp` | 8.4.2 | runtime | MIT | [notice](LICENSES/npm/path-to-regexp@8.4.2/LICENSE) |
 | `pkce-challenge` | 5.0.1 | runtime | MIT | [notice](LICENSES/npm/pkce-challenge@5.0.1/LICENSE) |
-| `proxy-addr` | 2.0.7 | runtime | MIT | [notice](LICENSES/npm/proxy-addr@2.0.7/LICENSE) |
+| `proxy-addr` | 2.0.8 | runtime | MIT | [notice](LICENSES/npm/proxy-addr@2.0.8/LICENSE) |
 | `qs` | 6.16.0 | runtime | BSD-3-Clause | [notice](LICENSES/npm/qs@6.16.0/LICENSE.md) |
 | `range-parser` | 1.2.1 | runtime | MIT | [notice](LICENSES/npm/range-parser@1.2.1/LICENSE) |
 | `raw-body` | 3.0.2 | runtime | MIT | [notice](LICENSES/npm/raw-body@3.0.2/LICENSE) |

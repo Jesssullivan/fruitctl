@@ -20,11 +20,12 @@
   "zoneOwner": "xoxd-ai/tinyland-infra",
   "zoneStack": "tofu/stacks/xoxd-ai-edge",
   "receipt": {
-    "checkedAt": "2026-10-06T02:30:41.566580Z",
+    "checkedAt": "2026-10-06T02:38:06.499988Z",
     "origin": "https://fruitctl.clients.xoxd.ai",
-    "sourceRevision": "16f437fcf30cd2f0524fc9f2f47e4236d123d9c5",
-    "deploymentId": "da1ca650-8bd6-4aef-a3e0-ae919a7c8911",
-    "buildManifestSha256": "534fcfe7486a7e2af85f43ffa09b0a2457908ac499328a5f081fcda5da762625",
+    "sourceRevision": "ca6f19cd4430b0ca809bf07169e8a96362853465",
+    "sourceContentSha256": "0c648ddefcfa93edc33b84a58d5809399b3681619e3e31bb88c0154bbb8b18fb",
+    "deploymentId": "34a7776a-3661-44b5-87b2-3ea7386bf0dd",
+    "buildManifestSha256": "dc3dc629d769816fda22b5ff19f0e968dd210b49e0dcd9debe483e79480fdd3f",
     "dns": {
       "zoneOwner": "xoxd-ai/tinyland-infra",
       "ownerSourceRevision": "d66937bf6276b9f6dc359d68284e34c38e581673",
@@ -40,15 +41,15 @@
     "anonymousAcceptance": {
       "authentication": "none",
       "userAgent": "Fruitctl-Docs-Verification/0.1 (+https://github.com/xoxd-ai/fruitctl)",
-      "servedFileCount": 22,
+      "servedFileCount": 24,
       "allHttp200": true,
-      "exactSha256MatchCount": 13,
-      "allSha256Match": false,
-      "htmlTransformation": "Cloudflare JavaScript Detections injection observed on nine HTML pages; no other content changes observed",
-      "nextBuildPolicy": "Cache-Control: no-transform preserves origin bytes; complete canonical exact-hash acceptance is pending deployment of this header"
+      "exactSha256MatchCount": 24,
+      "allSha256Match": true,
+      "htmlTransformation": "none observed; all HTML bytes match the reviewed build",
+      "receiptSha256": "647a7599c74a8a3f1e5cdc0444228c86109ff997958867e8c5881d93f01f918f"
     },
     "tlsAcceptance": {
-      "checkedAt": "2026-10-06T02:30:41.566471Z",
+      "checkedAt": "2026-10-06T02:38:06.499887Z",
       "chainVerified": true,
       "hostnameVerified": true,
       "serverName": "fruitctl.clients.xoxd.ai",
@@ -56,32 +57,141 @@
       "certificateSha256": "c9a817332e85b8f12053f02eccbfdfc74cf25602e26e588af502fb4e2111f8d4",
       "notAfter": "Jan  4 02:25:35 2027 GMT"
     },
-    "resolutionNote": "Public DNS-over-HTTPS and canonical hostname TLS were verified. Some local system resolvers had not yet converged at this check."
+    "responseHeaders": [
+      {
+        "route": "/",
+        "status": "HTTP/2 200 ",
+        "cacheControl": "public, max-age=0, must-revalidate, no-transform",
+        "contentSecurityPolicy": "default-src 'self'; script-src 'none'; style-src 'self'; img-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'",
+        "contentType": "text/html; charset=utf-8"
+      },
+      {
+        "route": "/adoption.json",
+        "status": "HTTP/2 200 ",
+        "cacheControl": "public, max-age=0, must-revalidate, no-transform, no-cache, no-transform",
+        "contentSecurityPolicy": "default-src 'self'; script-src 'none'; style-src 'self'; img-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'",
+        "contentType": "application/json"
+      },
+      {
+        "route": "/versions.json",
+        "status": "HTTP/2 200 ",
+        "cacheControl": "public, max-age=0, must-revalidate, no-transform, no-cache, no-transform",
+        "contentSecurityPolicy": "default-src 'self'; script-src 'none'; style-src 'self'; img-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'",
+        "contentType": "application/json"
+      }
+    ],
+    "adoptionAcceptance": {
+      "docsSourceRevision": "ca6f19cd4430b0ca809bf07169e8a96362853465",
+      "runtimeSourceRevision": "7064d349890a9b18717b62a142452363629681ee",
+      "immutableRuntimeTag": "v0.1.0-alpha.1",
+      "bootstrapScriptSha256": "6e05a7a62f57491cfbda1f8d9212291f6237f04f4ac396bc04d183b88747cd58",
+      "fullyQualifiedReleaseCount": 0,
+      "runtimePreviewCount": 1,
+      "curatedReleaseAssets": 7,
+      "schemasExported": [
+        "release-manifest.schema.json",
+        "native-input-manifest.schema.json"
+      ],
+      "jsonToonPromptBindingsVerified": true
+    },
+    "resolutionNote": "Acceptance used public DNS-over-HTTPS and verified canonical hostname TLS; local system resolver convergence is a separate host observation."
   },
   "pagesDeployment": {
-    "id": "da1ca650-8bd6-4aef-a3e0-ae919a7c8911",
-    "url": "https://da1ca650.xoxd-ai-fruitctl.pages.dev",
-    "productionOrigin": "https://xoxd-ai-fruitctl.pages.dev",
-    "sourceRevision": "16f437fcf30cd2f0524fc9f2f47e4236d123d9c5",
-    "sourceContentSha256": "1a8e5e18da1cee0f4a20aa4e379a8a5c14d3d87fbde5a0ed2eb2a6eda2813da4",
-    "buildManifestSha256": "534fcfe7486a7e2af85f43ffa09b0a2457908ac499328a5f081fcda5da762625",
-    "createdAt": "2026-10-06T01:57:05.88546Z",
+    "id": "34a7776a-3661-44b5-87b2-3ea7386bf0dd",
+    "url": "https://34a7776a.xoxd-ai-fruitctl.pages.dev",
+    "productionOrigin": "https://fruitctl.clients.xoxd.ai",
+    "sourceRevision": "ca6f19cd4430b0ca809bf07169e8a96362853465",
+    "sourceContentSha256": "0c648ddefcfa93edc33b84a58d5809399b3681619e3e31bb88c0154bbb8b18fb",
+    "buildManifestSha256": "dc3dc629d769816fda22b5ff19f0e968dd210b49e0dcd9debe483e79480fdd3f",
+    "createdAt": "2026-10-06T02:37:47.588382Z",
     "providerStage": "success",
     "anonymousAcceptance": {
-      "checkedAt": "2026-10-06T01:59:25.831261Z",
+      "checkedAt": "2026-10-06T02:38:06.499988Z",
       "authentication": "none",
       "userAgent": "Fruitctl-Docs-Verification/0.1 (+https://github.com/xoxd-ai/fruitctl)",
-      "servedFileCount": 22,
-      "allSha256Match": true
+      "servedFileCount": 24,
+      "allSha256Match": true,
+      "receiptSha256": "647a7599c74a8a3f1e5cdc0444228c86109ff997958867e8c5881d93f01f918f"
     },
     "tlsAcceptance": {
-      "checkedAt": "2026-10-06T02:00:48.620087Z",
+      "checkedAt": "2026-10-06T02:38:06.499887Z",
       "chainVerified": true,
       "hostnameVerified": true,
-      "protocol": "TLSv1.3"
+      "serverName": "fruitctl.clients.xoxd.ai",
+      "protocol": "TLSv1.3",
+      "certificateSha256": "c9a817332e85b8f12053f02eccbfdfc74cf25602e26e588af502fb4e2111f8d4",
+      "notAfter": "Jan  4 02:25:35 2027 GMT"
     },
     "deploymentMethod": "scoped-pages-direct-upload-fallback",
-    "tool": "wrangler@4.147.0",
-    "workflowNotExecuted": "GitHub Actions job startup unavailable; run 37401566199 had no steps"
-  }
+    "tool": "wrangler@4.147.0"
+  },
+  "deliveryHistory": [
+    {
+      "pagesDeployment": {
+        "id": "da1ca650-8bd6-4aef-a3e0-ae919a7c8911",
+        "url": "https://da1ca650.xoxd-ai-fruitctl.pages.dev",
+        "productionOrigin": "https://xoxd-ai-fruitctl.pages.dev",
+        "sourceRevision": "16f437fcf30cd2f0524fc9f2f47e4236d123d9c5",
+        "sourceContentSha256": "1a8e5e18da1cee0f4a20aa4e379a8a5c14d3d87fbde5a0ed2eb2a6eda2813da4",
+        "buildManifestSha256": "534fcfe7486a7e2af85f43ffa09b0a2457908ac499328a5f081fcda5da762625",
+        "createdAt": "2026-10-06T01:57:05.88546Z",
+        "providerStage": "success",
+        "anonymousAcceptance": {
+          "checkedAt": "2026-10-06T01:59:25.831261Z",
+          "authentication": "none",
+          "userAgent": "Fruitctl-Docs-Verification/0.1 (+https://github.com/xoxd-ai/fruitctl)",
+          "servedFileCount": 22,
+          "allSha256Match": true
+        },
+        "tlsAcceptance": {
+          "checkedAt": "2026-10-06T02:00:48.620087Z",
+          "chainVerified": true,
+          "hostnameVerified": true,
+          "protocol": "TLSv1.3"
+        },
+        "deploymentMethod": "scoped-pages-direct-upload-fallback",
+        "tool": "wrangler@4.147.0",
+        "workflowNotExecuted": "GitHub Actions job startup unavailable; run 37401566199 had no steps"
+      },
+      "canonicalReceipt": {
+        "checkedAt": "2026-10-06T02:30:41.566580Z",
+        "origin": "https://fruitctl.clients.xoxd.ai",
+        "sourceRevision": "16f437fcf30cd2f0524fc9f2f47e4236d123d9c5",
+        "deploymentId": "da1ca650-8bd6-4aef-a3e0-ae919a7c8911",
+        "buildManifestSha256": "534fcfe7486a7e2af85f43ffa09b0a2457908ac499328a5f081fcda5da762625",
+        "dns": {
+          "zoneOwner": "xoxd-ai/tinyland-infra",
+          "ownerSourceRevision": "d66937bf6276b9f6dc359d68284e34c38e581673",
+          "recordId": "9f9a90eb3bfc87069228b5c2c5e6b4d0",
+          "type": "CNAME",
+          "name": "fruitctl.clients.xoxd.ai",
+          "target": "xoxd-ai-fruitctl.pages.dev",
+          "proxied": true,
+          "ownerReadbackAt": "2026-10-06T02:23:13.316751Z",
+          "publicResolution": "dns-over-https",
+          "resolver": "https://cloudflare-dns.com/dns-query"
+        },
+        "anonymousAcceptance": {
+          "authentication": "none",
+          "userAgent": "Fruitctl-Docs-Verification/0.1 (+https://github.com/xoxd-ai/fruitctl)",
+          "servedFileCount": 22,
+          "allHttp200": true,
+          "exactSha256MatchCount": 13,
+          "allSha256Match": false,
+          "htmlTransformation": "Cloudflare JavaScript Detections injection observed on nine HTML pages; no other content changes observed",
+          "nextBuildPolicy": "Cache-Control: no-transform preserves origin bytes; complete canonical exact-hash acceptance is pending deployment of this header"
+        },
+        "tlsAcceptance": {
+          "checkedAt": "2026-10-06T02:30:41.566471Z",
+          "chainVerified": true,
+          "hostnameVerified": true,
+          "serverName": "fruitctl.clients.xoxd.ai",
+          "protocol": "TLSv1.3",
+          "certificateSha256": "c9a817332e85b8f12053f02eccbfdfc74cf25602e26e588af502fb4e2111f8d4",
+          "notAfter": "Jan  4 02:25:35 2027 GMT"
+        },
+        "resolutionNote": "Public DNS-over-HTTPS and canonical hostname TLS were verified. Some local system resolvers had not yet converged at this check."
+      }
+    }
+  ]
 }

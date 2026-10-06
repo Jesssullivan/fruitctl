@@ -208,6 +208,7 @@ targets:
       - FruitctlHost/HostLease.swift
       - FruitctlHost/HostProtocol.swift
       - FruitctlHost/HostClock.swift
+      - FruitctlHost/HostCapturePreferences.swift
       - Tests/FruitctlHostTests.swift
     settings:
       base:
