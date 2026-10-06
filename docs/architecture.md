@@ -84,6 +84,14 @@ policy may let a standard user configure that service with
 than granting recording access. Accessibility and event-posting policies are
 separate permissions, not substitutes for Screen Capture approval.
 
+Managed alert suppression is another separate policy. Apple's
+[Restrictions schema](https://raw.githubusercontent.com/apple/device-management/release/mdm/profiles/com.apple.applicationaccess.yaml)
+defines `forceBypassScreenCaptureAlert` from macOS 15.1; it suppresses presentation
+of a capture alert and is unavailable through manual profile installation or
+User Enrollment. It does not supply the Screen Capture grant described above.
+The ordinary Host capture path still requires the target user's attended
+permission choice; managed policy belongs to the device-management owner.
+
 Apple's [Persistent Content Capture entitlement](https://developer.apple.com/documentation/bundleresources/entitlements/com.apple.developer.persistent-content-capture)
 is available from macOS 14.4 for VNC applications. It requires Apple permission
 and the approved capability in the app's Xcode profile. This is a reviewed
@@ -94,6 +102,10 @@ The target-side indicator draws an edge-feathered deep purple pulse with the
 centered message: “Machine under FuzzyBot spell, courtesy xoxd.ai)”. It accepts
 no pointer or keyboard input and respects a reduced-motion setting. Human stop
 remains available through an accessible local control.
+The intended animation has a 72 BPM pulse cycle. Qualification records physical
+pulse rate and timing uncertainty; reduced-motion static indication is a
+separate case. A renderer timer or a ready acknowledgement alone cannot prove
+what the person sees.
 
 The indicator must remain absent from every frame delivered to the agent while
 remaining visible to a person at the machine. Window sharing flags alone are
