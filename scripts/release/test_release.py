@@ -21,6 +21,113 @@ apple_spec = importlib.util.spec_from_file_location("apple_distribution", ROOT /
 apple = importlib.util.module_from_spec(apple_spec); apple_spec.loader.exec_module(apple)
 source_spec = importlib.util.spec_from_file_location("source_packager", ROOT / "scripts/release/package_source.py")
 source = importlib.util.module_from_spec(source_spec); source_spec.loader.exec_module(source)
+runtime_spec = importlib.util.spec_from_file_location("runtime_inputs", ROOT / "scripts/release/runtime_inputs.py")
+runtime = importlib.util.module_from_spec(runtime_spec); runtime_spec.loader.exec_module(runtime)
+notice_spec = importlib.util.spec_from_file_location("notice_producer", ROOT / "LICENSES/refresh-npm-notices.py")
+notice_producer = importlib.util.module_from_spec(notice_spec); notice_spec.loader.exec_module(notice_producer)
+
+
+class NpmInventoryTests(unittest.TestCase):
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.root = Path(self.directory.name)
+        (self.root / "LICENSES").mkdir()
+        self.entries = {
+            "node_modules/runtime-fixture": {"version": "1.0.0", "resolved": "https://example.invalid/runtime.tgz",
+                                             "integrity": "sha512-runtime-fixture", "license": "MIT"},
+            "node_modules/dev-fixture": {"version": "2.0.0", "resolved": "https://example.invalid/dev.tgz",
+                                         "integrity": "sha512-dev-fixture", "license": "MIT", "dev": True},
+        }
+        self.digest = runtime.sha(json.dumps(self.entries, sort_keys=True, separators=(",", ":")).encode())
+        self.packages = [self.notice((name, value)) for name, value in self.entries.items()]
+        self.inventory = {"dependency_entries_sha256": self.digest, "package_count": len(self.entries),
+                          "packages": self.packages}
+        self.provenance = {
+            "components": [{"name": "preserved-native-fixture", "revision": "unchanged"}],
+            "legacy_prebuilt_libvncclient": {"source_correspondence": "unestablished"},
+            "npm_inventory": {"path": "LICENSES/npm-dependencies.json", "source": "package-lock.json",
+                              "dependency_entries_sha256": self.digest, "package_count": 2,
+                              "runtime_package_count": 1, "development_package_count": 1},
+        }
+        self.write("package-lock.json", {"packages": {"": {"name": "fixture"}, **self.entries}})
+        self.write("LICENSES/npm-dependencies.json", self.inventory)
+        self.write("LICENSES/dependency-provenance.json", self.provenance)
+
+    def write(self, name, value):
+        (self.root / name).write_text(json.dumps(value))
+
+    @staticmethod
+    def notice(entry):
+        name, package = entry
+        return {"lock_path": name, "name": name.removeprefix("node_modules/"), "version": package["version"],
+                "scope": "development" if package.get("dev", False) else "runtime",
+                "license_expression": package["license"], "source_archive_url": package["resolved"],
+                "source_archive_integrity": package["integrity"], "notices": []}
+
+    def test_matching_inventory_returns_only_production_inputs(self):
+        packages, digest = runtime.locked_dependencies(self.root)
+        self.assertEqual(set(packages), {"node_modules/runtime-fixture"})
+        self.assertEqual(digest, self.digest)
+
+    def test_repository_inventory_matches_actual_lock_and_exact_sdk_dependency(self):
+        lock = json.loads((ROOT / "package-lock.json").read_text())
+        entries = {name: value for name, value in lock["packages"].items() if name}
+        packages, digest = runtime.locked_dependencies(ROOT)
+        self.assertEqual(set(packages), {name for name, value in entries.items() if not value.get("dev", False)})
+        self.assertEqual(digest, runtime.sha(json.dumps(entries, sort_keys=True, separators=(",", ":")).encode()))
+        manifest = json.loads((ROOT / "package.json").read_text())
+        self.assertEqual(packages["node_modules/@modelcontextprotocol/sdk"]["version"],
+                         manifest["dependencies"]["@modelcontextprotocol/sdk"])
+
+    def test_stale_provenance_digest_counts_and_identity_are_refused(self):
+        mutations = {"dependency_entries_sha256": "0" * 64, "package_count": 3,
+                     "runtime_package_count": 2, "development_package_count": 0,
+                     "path": "LICENSES/other.json", "source": "other-lock.json"}
+        for key, value in mutations.items():
+            with self.subTest(key=key):
+                changed = copy.deepcopy(self.provenance)
+                changed["npm_inventory"][key] = value
+                self.write("LICENSES/dependency-provenance.json", changed)
+                with self.assertRaisesRegex(ValueError, "npm provenance inventory differs"):
+                    runtime.locked_dependencies(self.root)
+
+    def test_wrong_declared_inventory_count_is_refused(self):
+        changed = copy.deepcopy(self.inventory); changed["package_count"] = 3
+        self.write("LICENSES/npm-dependencies.json", changed)
+        with self.assertRaisesRegex(ValueError, "npm notice inventory package count differs"):
+            runtime.locked_dependencies(self.root)
+
+    def test_duplicate_inventory_record_is_refused_without_losing_coverage(self):
+        changed = copy.deepcopy(self.inventory); changed["packages"].append(copy.deepcopy(self.packages[0]))
+        self.write("LICENSES/npm-dependencies.json", changed)
+        with self.assertRaisesRegex(ValueError, "duplicate npm notice inventory lock paths"):
+            runtime.locked_dependencies(self.root)
+
+    def test_producer_refreshes_provenance_and_preserves_other_components(self):
+        # Change a runtime input while both old receipts are still consistent
+        # with each other. The producer must refresh both for the new lock.
+        changed = copy.deepcopy(self.entries)
+        changed["node_modules/runtime-fixture"]["version"] = "1.1.0"
+        changed["node_modules/second-runtime-fixture"] = {
+            "version": "3.0.0", "resolved": "https://example.invalid/second-runtime.tgz",
+            "integrity": "sha512-second-runtime-fixture", "license": "MIT",
+        }
+        self.write("package-lock.json", {"packages": {"": {"name": "fixture"}, **changed}})
+        with self.assertRaisesRegex(ValueError, "npm notice inventory differs"):
+            runtime.locked_dependencies(self.root)
+        with patch.object(notice_producer, "ROOT", self.root), patch.object(notice_producer, "fetch_notices", self.notice):
+            notice_producer.main()
+        packages, digest = runtime.locked_dependencies(self.root)
+        self.assertEqual(packages["node_modules/runtime-fixture"]["version"], "1.1.0")
+        self.assertEqual(set(packages), {"node_modules/runtime-fixture", "node_modules/second-runtime-fixture"})
+        self.assertNotEqual(digest, self.digest)
+        refreshed = json.loads((self.root / "LICENSES/dependency-provenance.json").read_text())
+        self.assertEqual({key: value for key, value in refreshed.items() if key != "npm_inventory"},
+                         {key: value for key, value in self.provenance.items() if key != "npm_inventory"})
+        self.assertEqual((refreshed["npm_inventory"]["package_count"],
+                          refreshed["npm_inventory"]["runtime_package_count"],
+                          refreshed["npm_inventory"]["development_package_count"]), (3, 2, 1))
 
 
 class NativeBuildPrivacyTests(unittest.TestCase):

@@ -85,7 +85,7 @@ async function fixture(t, mode = 'slow-exit') {
     } } };
 }
 
-async function ownedBroker(t, mode, { holdMs = 0 } = {}) {
+async function ownedBroker(t, mode, { holdMs = 0, failReleaseAfterAck = false } = {}) {
   const owned = await fixture(t, mode);
   const natives = [];
   const releaseOptions = [];
@@ -106,7 +106,15 @@ async function ownedBroker(t, mode, { holdMs = 0 } = {}) {
           }
           return native.execute(actions, options);
         },
-        release(options) { releaseOptions.push(options); return native.release(options); },
+        release(options) {
+          releaseOptions.push(options);
+          if (failReleaseAfterAck) {
+            return native.execute([{ action: 'shutdown' }], options).then(() => {
+              throw new Error('Synthetic executor release deadline exceeded');
+            });
+          }
+          return native.release(options);
+        },
         close(options) { return native.close(options); },
       };
     } });
@@ -165,6 +173,34 @@ for (const trigger of ['abort', 'deadline', 'wire-cancel']) {
       lateExitConfirmed: true, successorStarts: 0, cleanupSticky: true }));
   });
 }
+
+test('executor-originated release failure aborts its shared retirement before the outer deadline', ownedLinux, async t => {
+  const owned = await ownedBroker(t, 'slow-exit', { failReleaseAfterAck: true });
+  const startedAt = performance.now();
+  await assert.rejects(owned.a.release({ timeoutMs: 1000 }), /unconfirmed/);
+  const terminalMs = performance.now() - startedAt;
+  const failure = owned.lane.cleanupFailure;
+  assert.ok(failure);
+  assert.equal(owned.a.closed, false, 'the executor failure must settle through the broker before the client deadline');
+  assert.equal(owned.releaseOptions.length, 1);
+  assert.equal(owned.releaseOptions[0].signal.aborted, true, 'executor failure must revoke shared retirement without waiting for another timer');
+  assert.equal(owned.releaseOptions[0].signal.reason, failure);
+  assert.equal(owned.natives[0].shutdownAcknowledged, true);
+  assert.ok((await fs.stat(`/proc/${owned.pid}`)).isDirectory(), 'unconfirmed acknowledgement must not claim owned exit');
+  await assert.rejects(owned.b.execute([{ action: 'key_tap', key: 'tab' }]), /unconfirmed/);
+  await owned.natives[0].closed;
+  await assert.rejects(fs.stat(`/proc/${owned.pid}`), { code: 'ENOENT' });
+  await assert.rejects(owned.b.execute([{ action: 'health' }]), /unconfirmed/);
+  assert.equal(owned.lane.cleanupFailure, failure, 'later owned exit cannot clear executor-originated failure');
+  assert.deepEqual(owned.dispatched, ['health']);
+  assert.equal(owned.natives.length, 1);
+  assert.deepEqual((await owned.events()).filter(event => event.event.startsWith('request:')).map(event => event.event),
+    ['request:health', 'request:shutdown']);
+  t.diagnostic(JSON.stringify({ trigger: 'executor-originated', pid: owned.pid,
+    terminalMs, requestedBudgetMs: 1000,
+    signalAborted: true, failureBoundAsSignalReason: true, lateExitConfirmed: true,
+    successorStarts: 0, cleanupSticky: true }));
+});
 
 test('explicit release deadline includes an uncooperative active queue and revokes queued input', ownedLinux, async t => {
   const owned = await ownedBroker(t, 'slow-exit', { holdMs: 200 });

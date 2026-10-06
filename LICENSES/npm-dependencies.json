@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "source": "package-lock.json",
-  "dependency_entries_sha256": "f8cef78fefbf024e836d7993e5d61d807c8fb92d4e0135558648a2605dd30f63",
+  "dependency_entries_sha256": "82cff2604e2f913190d613df4f7acb66a4b84c46556dc3bc2ed787398bcae058",
   "package_count": 95,
   "generation": "python3 LICENSES/refresh-npm-notices.py",
   "verification": "Downloaded package archives match locked npm integrity; notice bytes retained exactly.",
@@ -25,17 +25,17 @@
     },
     {
       "name": "@modelcontextprotocol/sdk",
-      "version": "1.26.0",
+      "version": "1.32.1",
       "lock_path": "node_modules/@modelcontextprotocol/sdk",
       "scope": "runtime",
       "license_expression": "MIT",
-      "source_archive_url": "https://registry.npmjs.org/@modelcontextprotocol/sdk/-/sdk-1.26.0.tgz",
-      "source_archive_integrity": "sha512-Y5RmPncpiDtTXDbLKswIJzTqu2hyBKxTNsgKqKclDbhIgg1wgtf1fRuvxgTnRfcnxtvvgbIEcqUOzZrJ6iSReg==",
-      "source_archive_sha256": "d932597ad68dabf54fc3899cb5afb74939443e36af65d50ea709c9bd0ea1e9a8",
+      "source_archive_url": "https://registry.npmjs.org/@modelcontextprotocol/sdk/-/sdk-1.32.1.tgz",
+      "source_archive_integrity": "sha512-2DdE+SJDtzLEEWzY1ZjY7Q+VcPhcV1KisD3zI4u0XZyktsjHum1mwbMI+JaulUBi2OZk+KJAi2uPXzxichPkdw==",
+      "source_archive_sha256": "63a3962282ff29d2ce532945c2edefd9b7c7195b8ec20c027e120e4498b0cb19",
       "notices": [
         {
           "upstream_path": "package/LICENSE",
-          "path": "LICENSES/npm/_modelcontextprotocol_sdk@1.26.0/LICENSE",
+          "path": "LICENSES/npm/_modelcontextprotocol_sdk@1.32.1/LICENSE",
           "sha256": "5e13dbbc1d120fc2a03cecde7c91424ae2d7de11b63d58ded2f4431e261ee50d"
         }
       ]

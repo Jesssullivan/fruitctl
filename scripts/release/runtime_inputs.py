@@ -31,8 +31,24 @@ def locked_dependencies(root):
     entries = {name: value for name, value in lock["packages"].items() if name}
     digest = sha(json.dumps(entries, sort_keys=True, separators=(",", ":")).encode())
     require(notices["dependency_entries_sha256"] == digest, "npm notice inventory differs from current dependency lock")
+    require(type(notices.get("package_count")) is int and notices["package_count"] == len(entries),
+            "npm notice inventory package count differs from current dependency lock")
     inventory = {entry["lock_path"]: entry for entry in notices["packages"]}
+    require(len(inventory) == len(notices["packages"]), "duplicate npm notice inventory lock paths")
     require(set(inventory) == set(entries), "npm notice inventory does not cover exactly the locked packages")
+    provenance = json.loads((root / "LICENSES/dependency-provenance.json").read_text()).get("npm_inventory")
+    expected = {
+        "path": "LICENSES/npm-dependencies.json",
+        "source": "package-lock.json",
+        "dependency_entries_sha256": digest,
+        "package_count": len(entries),
+        "runtime_package_count": sum(not value.get("dev", False) for value in entries.values()),
+        "development_package_count": sum(bool(value.get("dev", False)) for value in entries.values()),
+    }
+    require(isinstance(provenance, dict) and all(provenance.get(key) == value for key, value in expected.items())
+            and all(type(provenance.get(key)) is int for key in
+                    ("package_count", "runtime_package_count", "development_package_count")),
+            "npm provenance inventory differs from current dependency lock")
     result = {}
     for name, value in entries.items():
         notice = inventory[name]
