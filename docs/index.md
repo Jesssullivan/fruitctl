@@ -18,10 +18,10 @@ artifacts.
 The canonical source is [xoxd-ai/fruitctl](https://github.com/xoxd-ai/fruitctl).
 The public documentation is live at
 [fruitctl.clients.xoxd.ai](https://fruitctl.clients.xoxd.ai/). Anonymous canonical
-delivery, public DNS and hostname TLS have been checked. The first canonical
-delivery preserved machine-readable files exactly; its HTML contained an edge
-detection script. The build now requests `no-transform` response headers, and
-full HTML hash acceptance requires a deployment with those headers.
+delivery, public DNS and hostname TLS have been checked. All 24 served files of
+documentation revision `ca6f19cd4430b0ca809bf07169e8a96362853465`, including HTML
+and the build manifest, matched the reviewed build at 02:38 UTC on 2026-10-06.
+The site serves `no-transform` response headers to preserve those bytes.
 
 ## Adoption contract
 
