@@ -329,6 +329,38 @@ final class VNCReconnectTests: XCTestCase {
         bridge.disconnect(); XCTAssertEqual(bridge.framebufferWidth, 0)
     }
 
+    func testSessionCancellationBetweenClientLookupAndAdmissionDropsRefresh() async throws {
+        let native = FakeNative(); native.completeDuringInitialize = false
+        let poll = ManualScheduler(), deadline = ManualScheduler(), refresh = ManualScheduler()
+        let queued = expectation(description: "refresh ready for admission"), gate = RecordedEvents()
+        refresh.onSchedule = { queued.fulfill() }
+        var config = VNCConfiguration(); config.refreshIncompleteFrame = true
+        var cancellingBridge: VNCBridge?
+        let bridge = VNCBridge(config: config, operations: native.operations, schedule: poll.schedule,
+                               scheduleFrameDeadline: deadline.schedule, scheduleFrameRefresh: refresh.schedule,
+                               monotonicNow: {
+            // This clock read is after activeClient lookup and before admission.
+            if gate.values == ["armed"] {
+                gate.append("cancelled")
+                cancellingBridge?.disconnect()
+            }
+            return 0
+        })
+        cancellingBridge = bridge
+        try await bridge.connect()
+        let waiting = Task { try await bridge.waitForFramebuffer() }
+        await fulfillment(of: [queued], timeout: 3)
+        gate.append("armed")
+        refresh.runNext()
+        XCTAssertEqual(bridge.framebufferWidth, 0) // flush deferred cleanup
+        do { try await waiting.value; XCTFail("cancelled session admitted capture") }
+        catch VNCError.notConnected {} catch { XCTFail("unexpected error") }
+        XCTAssertEqual(gate.values, ["armed", "cancelled"])
+        XCTAssertEqual(native.observedFullUpdates, 0)
+        XCTAssertEqual(native.counts.duplicate, 0)
+        cancellingBridge = nil
+    }
+
     func testRefreshNeverRunsAlongsideOccupiedDecoderAndDropsAfterDeadline() async throws {
         let native = FakeNative(polls: [true]); native.completeDuringInitialize = false
         let poll = ManualScheduler(), deadline = ManualScheduler(), refresh = ManualScheduler()
@@ -346,8 +378,11 @@ final class VNCReconnectTests: XCTestCase {
             entered.fulfill()
             XCTAssertEqual(release.wait(timeout: .now() + 5), .success)
         }
-        let polling = Task.detached { poll.runNext() }
+        let pollJob = poll.take(), refreshJob = refresh.take()
+        XCTAssertTrue(pollJob.queue === refreshJob.queue, "decoder and refresh must share one native owner")
+        let polling = Task.detached { pollJob.queue.sync { pollJob.work.perform() } }
         await fulfillment(of: [entered], timeout: 3)
+        let refreshing = Task.detached { refreshJob.queue.sync { refreshJob.work.perform() } }
         let ending = Task {
             defer { finished.fulfill() }
             do { try await waiting.value; XCTFail("incomplete blocked decoder accepted") }
@@ -356,8 +391,8 @@ final class VNCReconnectTests: XCTestCase {
         deadline.runNext()
         await fulfillment(of: [finished], timeout: 2)
         XCTAssertEqual(native.observedFullUpdates, 0)
-        release.signal(); await polling.value; await ending.value
-        refresh.runNext(); XCTAssertEqual(native.observedFullUpdates, 0)
+        release.signal(); await polling.value; await refreshing.value; await ending.value
+        XCTAssertEqual(native.observedFullUpdates, 0)
         XCTAssertEqual(deadline.delays, [])
         bridge.disconnect(); XCTAssertEqual(bridge.framebufferWidth, 0)
     }

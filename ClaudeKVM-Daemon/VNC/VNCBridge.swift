@@ -525,20 +525,28 @@ final class VNCBridge: @unchecked Sendable {
         }
         guard let (id, allocation) = request else { return }
         let work = DispatchWorkItem { [weak self] in
-            guard let self, let client = self.activeClient,
+            guard let self, let session = self.clientSession, let client = self.activeClient,
                   client.pointee.frameBuffer != nil else { return }
             let now = self.monotonicNow()
-            let admitted = self.frameReadiness.withLock { state -> Bool in
-                guard state.allocation == allocation, state.refreshPending == id else { return false }
-                state.refreshPending = nil
-                guard state.available, !state.complete, !state.refreshIssued,
-                      state.waiters.values.contains(where: {
-                          !$0.cancelled && $0.continuation != nil && now < $0.expiresAt
-                      }) else { return false }
-                // Dispatch is the cancellation linearization point. A later
-                // cancellation cannot undo bytes already admitted for sending.
-                state.refreshIssued = true
-                return true
+            let admitted = self.desiredSession.withLock { desired -> Bool in
+                // Disconnect is independently callable while cleanup waits for
+                // this queue. Bind its cancellation to the dispatch decision.
+                guard desired == session else { return false }
+                return self.frameReadiness.withLock { state -> Bool in
+                    guard state.allocation == allocation, state.refreshPending == id else { return false }
+                    state.refreshPending = nil
+                    // Lock acquisition may consume the remaining lease. Sample
+                    // again at admission, without moving the budget backward.
+                    let admittedAt = max(now, self.monotonicNow())
+                    guard state.available, !state.complete, !state.refreshIssued,
+                          state.waiters.values.contains(where: {
+                              !$0.cancelled && $0.continuation != nil && admittedAt < $0.expiresAt
+                          }) else { return false }
+                    // Dispatch is the cancellation linearization point. A later
+                    // cancellation cannot undo bytes already admitted for sending.
+                    state.refreshIssued = true
+                    return true
+                }
             }
             if admitted { _ = self.operations.fullUpdate(client) }
         }
