@@ -215,7 +215,10 @@ final class HostApplicationController: NSObject, NSApplicationDelegate, NSMenuDe
     func menuWillOpen(_ menu: NSMenu) { updateHumanControl() }
 
     @objc private func stopAgentControl(_ sender: Any?) {
+        let invokedAt = clock.milliseconds()
         availability.apply(.humanStopped)
+        lease.stopFromHuman(instanceID: instanceID, processID: getpid(), displayID: capture.displayID,
+                            displayGeneration: generation, now: invokedAt)
         invalidateActivity(reason: .humanStopped)
         updateHumanControl()
     }
@@ -439,6 +442,12 @@ final class HostApplicationController: NSObject, NSApplicationDelegate, NSMenuDe
             switch request.action {
             case "health":
                 var status = readiness(now: now)
+                // These process-relative diagnostics survive a disconnected
+                // controller, but cannot authorize activity or clear Stop.
+                status["observed_monotonic_ms"] = .integer(Int64(clamping: now))
+                status["last_human_stop_event"] = lease.lastHumanStopEvent.map {
+                    .object($0.metadata)
+                } ?? .null
                 status["screen_capture_permission"] = .boolean(healthPermissionGranted ?? false)
                 let referenceStatus = idleReference.status
                 status["idle_reference_armed_id"] = referenceStatus.armedID.map { .string($0) } ?? .null

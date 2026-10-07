@@ -63,11 +63,54 @@ struct HostActivityLease: Equatable {
     var expiresAtMilliseconds: UInt64
 }
 
+/// One process-local observation of a local Stop invocation, retained after
+/// its lease is revoked. This is diagnostic evidence, never a readiness or
+/// physical-clear acknowledgment. It deliberately omits the lease challenge
+/// and connection identifier.
+struct HostHumanStopEvent: Equatable {
+    struct Activity: Equatable {
+        let sessionID: String
+        let displayGeneration: UInt64
+        let sequence: UInt64
+        let remainingMilliseconds: UInt64
+
+        var metadata: [String: HostValue] {
+            ["session_id": .string(sessionID),
+             "displayGeneration": .integer(Int64(clamping: displayGeneration)),
+             "sequence": .integer(Int64(clamping: sequence)),
+             "lease_remaining_ms": .integer(Int64(clamping: remainingMilliseconds))]
+        }
+    }
+
+    let eventID: UUID
+    let eventNumber: Int64
+    let instanceID: String
+    let processID: Int32
+    let displayID: UInt32
+    let displayGeneration: UInt64
+    let invokedAtMilliseconds: UInt64
+    let activity: Activity?
+
+    var metadata: [String: HostValue] {
+        ["schema": .string("fruitctl.human-stop.v1"),
+         "event_id": .string(eventID.uuidString), "event_number": .integer(eventNumber),
+         "instance_id": .string(instanceID), "process_id": .integer(Int64(processID)),
+         "display_id": .integer(Int64(displayID)),
+         "displayGeneration": .integer(Int64(clamping: displayGeneration)),
+         "clock_basis": .string("host_instance_milliseconds"),
+         "invoked_monotonic_ms": .integer(Int64(clamping: invokedAtMilliseconds)),
+         "active_lease_at_stop": .boolean(activity != nil),
+         "active_lease": activity.map { .object($0.metadata) } ?? .null]
+    }
+}
+
 /// Value-only state machine. The AppKit controller calls it on the main actor;
 /// tests use an explicit clock and never start capture, sockets, or desktop UI.
 struct HostLeaseState {
     enum UIHeartbeatDecision { case awaitingInitialCapture, recordVisibleHeartbeat, invalidate }
     private(set) var active: HostActivityLease?
+    private(set) var lastHumanStopEvent: HostHumanStopEvent?
+    private var humanStopEventCount: Int64 = 0
 
     /// Initial capture yields the main actor before panels may be shown. The
     /// timer must not cancel that bounded acquisition just because the panels
@@ -150,6 +193,29 @@ struct HostLeaseState {
     }
 
     mutating func invalidate() { active = nil }
+
+    /// Only the local AppKit Stop handler calls this transition. Revoke before
+    /// constructing diagnostics; ordinary release/invalidation cannot create
+    /// a human event. Expired or mismatched-generation leases are not evidence
+    /// of an active Stop, even if the timer has not cleared them yet.
+    mutating func stopFromHuman(instanceID: String, processID: Int32, displayID: UInt32,
+                                displayGeneration: UInt64, now: UInt64) {
+        let prior = active
+        active = nil
+        let activity: HostHumanStopEvent.Activity?
+        if let prior, now < prior.expiresAtMilliseconds,
+           prior.displayGeneration == displayGeneration {
+            activity = HostHumanStopEvent.Activity(sessionID: prior.sessionID,
+                displayGeneration: prior.displayGeneration, sequence: prior.sequence,
+                remainingMilliseconds: prior.expiresAtMilliseconds - now)
+        } else { activity = nil }
+        // A bounded diagnostic count never wraps. The UUID remains unique
+        // even at saturation; there is no unbounded event history or disk log.
+        if humanStopEventCount < Int64.max { humanStopEventCount += 1 }
+        lastHumanStopEvent = HostHumanStopEvent(eventID: UUID(), eventNumber: humanStopEventCount,
+            instanceID: instanceID, processID: processID, displayID: displayID,
+            displayGeneration: displayGeneration, invokedAtMilliseconds: now, activity: activity)
+    }
 
     static func heartbeatAge(now: UInt64, uiHeartbeatAt: UInt64?) -> UInt64? {
         guard let heartbeat = uiHeartbeatAt, now >= heartbeat else { return nil }

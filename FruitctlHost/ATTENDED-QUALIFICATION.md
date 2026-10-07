@@ -1,14 +1,15 @@
 # Prospective Host qualification
 
 Status: optional mode unqualified. Earlier attended attempts captured frames but
-failed strict scene acceptance: the most recent retained run had 181/210 marker
-results and 606 gray-background failures. Those complete PNGs, failed proofs and
-human observations remain immutable private evidence. A new reference can
-explain a failure; it cannot turn that record into a pass.
+failed strict scene acceptance, including displaced marker geometry and gray
+contamination of a marker sample. Complete PNGs, failed proofs and human
+observations remain immutable private evidence. A new diagnostic cannot turn
+that record into a pass.
 
 This protocol authorizes no GUI launch, lease, capture, consent change, process
-signal or service change. Obtain an explicit bounded attended authorization for
-an exact reviewed, tested, signed artifact before any execution. Source/offline
+signal or service change. Confirm applicable bounded attended authorization for
+an exact reviewed, tested, signed artifact before execution. Existing applicable
+authorization persists; do not repeatedly ask for the same grant. Source/offline
 tests and signing/notarization are independent of live acceptance. The Host is
 absent from public release/install payloads until required gates pass.
 
@@ -41,7 +42,64 @@ capture as the first cold acquisition. A baseline export itself warms capture.
 The cold first-begin ≤500 ms gate therefore requires a separately planned first
 activity on an unwarmed process; do not infer its pass from idle-reference timing.
 
-## Export one naturally idle reference
+## Versioned fixture and offline scene diagnostics
+
+Generate a new self-contained fixture for each prospective episode. It creates
+a fresh 128-bit run ID and refuses to overwrite an existing output:
+
+```sh
+node test/qualification/generate.mjs "$QUALIFICATION_OUTPUT/scene.html"
+```
+
+Prepare that generated page within the authorized workflow. Set browser zoom to
+100%, choose **Start full-screen markers**, and park the visible pointer at 50%
+across and 82% down. The pointer remains included in capture. The page enters
+actual document fullscreen before drawing; losing fullscreen or changing native
+geometry ends the changing scene. A reused page keeps its old run ID, so generate
+a new file instead of relabeling an old tab as the current episode.
+
+The `fruitctl.scene.v1` format uses seven fixed-position, native-pixel markers.
+Every marker binds format, marker ID, run ID, dimensions and changing sequence
+with CRC32. Freeze the expected display dimensions and run ID independently of
+the captured image. The decoder does not search for displaced markers or derive
+accepted geometry from a captured toolbar. Analyze complete original PNGs in
+capture order, supplying the generated ID and prepared native dimensions:
+
+```sh
+node test/qualification/oracle.mjs "$RUN_ID" "$NATIVE_WIDTH" "$NATIVE_HEIGHT" \
+  "$QUALIFICATION_OUTPUT/frame-01.png" "$QUALIFICATION_OUTPUT/frame-02.png"
+```
+
+The offline decoder verifies PNG chunk CRCs and completeness, accepts only
+non-interlaced 8-bit RGB/RGBA, and reads encoded RGB samples without color-profile
+conversion. Its deliberately narrow policy also refuses PLTE and chunk names
+with the reserved bit set, even where a general PNG decoder could accept them.
+Input is bounded to 128 MiB and 4096 chunks before expensive decoding; file reads
+require a stable regular file and check its size before allocation. Unsupported
+PNG formats fail explicitly. It rejects stale format or
+run IDs, nonadvancing/mixed sequences, displaced geometry, contaminated marker
+samples, unexpected background pixels and chromatic/transparent residuals.
+All original pixels remain untouched; a 3×3 sample cannot average away a cursor.
+
+Two outcomes stay separate. `strictRasterEqual` requires exact fixture bytes
+with zero residual pixels. `sceneValid` allows the format's predeclared 96×96
+blank pointer zone to contain one opaque grayscale residual with bounds no
+larger than 64×80 and at most 4096 out-of-tolerance pixels. Grayscale requires
+equal encoded RGB channels; palette brightness tolerance is ±16, which never
+counts as exact raster equality. The report counts and
+locates those pixels and explicitly leaves their attribution unknown. Chromatic
+residuals fail even inside this zone; marker overlap always fails. This fixed
+allowance needs independent review before a new live trial. It was not learned
+from a failed frame and cannot waive or relabel the historical strict oracle.
+Neither outcome alone proves indicator exclusion, physical heartbeat, local Stop,
+consent, input mapping or product qualification.
+
+## Optional diagnostic: export one naturally idle reference
+
+Ordinary bounded capture and local Stop do not require Arm or an idle-reference
+export. Skip this section unless the episode explicitly includes that diagnostic;
+a missing Arm/reference cannot block ordinary capture readiness. A reference is
+useful for investigating residuals, and is not a workaround for a failed scene.
 
 Prepare the owned synthetic fixture, pointer position and permission episode
 before the local menu action. Confirm no competing input owner. While the Host
@@ -93,8 +151,10 @@ and scheduling/network overhead. The previous 300 second release's25ms polling
 overshoot remains recorded; the planning margin is prospective.
 
 1. Start independent physical recording/logging before the accepted begin.
-   Seven changing numbered markers cover corners, center and two interiors.
-   Freeze fixture/decoder/color expectations and exact output geometry first.
+   Seven changing CRC-bound markers cover corners, center and two interiors.
+   Freeze fixture version/run ID, decoder/color expectations, fixed pointer zone
+   and exact output geometry first. Arm/export is optional and remains a separate
+   diagnostic, not a prerequisite for this ordinary capture episode.
 2. Begin once, binding instance/session/challenge/sequence/display generation.
    Record controlling-seat monotonic RTT and cold/warm preparation. A rejected
    cold begin remains rejected; no fallback or silent warm retry.
@@ -117,6 +177,14 @@ overshoot remains recorded; the planning margin is prospective.
    Require `human_stop_latched:true`, lease 0 and all readiness false. Over a fresh
    read-only attachment, begin/renew/capture/export remain refused; wake and
    reconnect cannot clear Stop. A scheduled release or late Stop is not this gate.
+   Compare `health.last_human_stop_event.event_id` with initial health: require a
+   fresh event bound to the same instance, PID, display ID/generation and session,
+   with `active_lease_at_stop:true`, matching final accepted lease sequence and
+   positive `active_lease.lease_remaining_ms`. Bracket `invoked_monotonic_ms` with
+   `observed_monotonic_ms` readings from that same Host instance; never compare
+   clocks across launches. An event retained after Allow is not a new Stop.
+   The invocation diagnostic does not prove physical-clear timing; physical
+   evidence must establish that independently.
 6. Finish with the owned attachment's clean release/close and final health,
    title-free panel metadata and physical clear evidence. Do not signal another
    session or restart Screen Sharing to pass cleanup. Main-thread hang is a
