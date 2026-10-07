@@ -44,6 +44,13 @@ Before installing, have these prerequisites ready:
 - A writable project configuration, or the owning Home Manager configuration
   surface for store-managed files. Existing settings must remain intact.
 
+For a custom model, Junie uses `baseUrl` as the complete API endpoint.
+For `OpenAICompletion`, use the provider's full chat-completions URL,
+typically ending in `/v1/chat/completions`. Keep model selection,
+authentication and provider configuration under their existing owner;
+Fruitctl does not configure them. See [Junie custom
+models](https://junie.jetbrains.com/docs/custom-llm-models.html).
+
 The bootstrap installs the runtime and configuration. It does not install Junie
 or IntelliJ, create the target profile or credentials, start the broker/relay,
 enable Screen Sharing, or grant macOS consent. The public preview excludes the
@@ -135,6 +142,12 @@ conversation remain pending, as does separate IntelliJ acceptance. Historical
 alpha.2 seven-adapter and alpha.3 Claude/API checks do not qualify the alpha.4
 Junie frontend.
 
+One alpha.4 run through native Junie CLI 3623.1 with a monitored MCP entry
+initialized Fruitctl and
+listed all four tools, then received HTTP 502 from its model provider before
+any tool call. This is MCP discovery evidence only; actual frontend tool use
+and image interpretation remain unqualified.
+
 ## Versions, skills and project instructions
 
 Official documentation was reviewed on 2026-10-07. The standalone plugin guide
@@ -182,6 +195,14 @@ Configuration registration is only the first stage:
    execution host, capture mode and observed results. CLI, standalone plugin
    and AI Chat require separate records. Keep credentials and private screen
    data out of public evidence.
+
+A successful Fruitctl doctor or MCP listing does not establish model-provider
+health. If Junie reports `Failed to build ...`, inspect the underlying exception
+chain in its local log. An HTTP provider failure can propagate through task
+artifacts with that message; address the provider cause before repairing
+templates or changing Fruitctl configuration. Preserve provider, model and
+authentication settings, keep credentials and raw logs private, and do not
+replay a control action whose outcome is uncertain.
 
 If an IDE cannot discover the skill, supply its reviewed instructions in that
 session and record skill discovery as incomplete. A passed configuration check
