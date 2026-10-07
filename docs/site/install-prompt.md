@@ -1,25 +1,57 @@
-# Copy this prompt into your agent
+# Copy the rendered prompt into your agent
+
+This source file is an authored template. The documentation build renders its
+tokens from the exact curated currentPreview metadata; the served
+`https://fruitctl.clients.xoxd.ai/install-prompt.md` is the rendered prompt.
+When reading the raw template, resolve its tokens from a full-SHA-pinned
+`docs/site/adoption.json` and matching `docs/site/versions.json` before use.
 
 Install Fruitctl from the canonical public producer
 `https://github.com/xoxd-ai/fruitctl` for my current agent. Read its pinned
 AGENTS.md, installation guide, compatibility matrix, and adoption manifest.
-The current immutable runtime preview is `v0.1.0-alpha.2`, source revision
-`6c8a5751b1ab92ee4093aa0091e88ef212021dab`. Verify the actual GitHub release is
+The current immutable runtime preview is `{{FRUITCTL_RELEASE_TAG}}`, source revision
+`{{FRUITCTL_SOURCE_REVISION}}`. Verify the actual GitHub release is
 published and immutable, verify its `fruitctl-release.json` asset digest and
 archive checksums, and use those exact pins. Never treat main or latest as
 immutable executable or skill bytes.
 Fetch the source-pinned bootstrap with user curl configuration disabled
 (`curl --disable`) or an equivalent verified HTTPS client.
 Before execution, verify `scripts/install.sh` has SHA-256
-`6e05a7a62f57491cfbda1f8d9212291f6237f04f4ac396bc04d183b88747cd58`.
+`{{FRUITCTL_BOOTSTRAP_SHA256}}`.
 
-This preview has scoped archive, native distribution, actual public adapter
-bootstrap and synthetic VNC/MCP evidence. Its macOS 15+ ARM64 runtime bundles the signed, Apple-notarized
+If the canonical documentation origin rejects the client, use the frozen GitHub
+raw source fallback below. Documentation revision `{{FRUITCTL_DOCS_REVISION}}`
+is distinct from the runtime producer revision above:
+
+- Install guide: `https://raw.githubusercontent.com/xoxd-ai/fruitctl/{{FRUITCTL_DOCS_REVISION}}/docs/install.md`
+- Curated release inventory: `https://raw.githubusercontent.com/xoxd-ai/fruitctl/{{FRUITCTL_DOCS_REVISION}}/docs/site/versions.json`
+- Canonical adoption contract: `https://raw.githubusercontent.com/xoxd-ai/fruitctl/{{FRUITCTL_DOCS_REVISION}}/integrations/adoption.json`
+- Release-policy overlay: `https://raw.githubusercontent.com/xoxd-ai/fruitctl/{{FRUITCTL_DOCS_REVISION}}/docs/site/adoption.json`
+
+These are committed source inputs, not rendered site artifacts. Resolve the
+preview from the policy overlay and matching inventory entry, then verify the
+actual published release and manifest asset digest through GitHub's release API.
+Do not change the client User-Agent to impersonate a browser or claim this
+fallback repairs canonical-origin policy.
+
+The matching release inventory entry records these verified scopes:
+
+{{FRUITCTL_VERIFIED_SCOPES}}
+
+Acceptance receipt platforms recorded in that same entry:
+
+{{FRUITCTL_RECEIPT_PLATFORMS}}
+
+The entry records these pending scopes:
+
+{{FRUITCTL_PENDING_SCOPES}}
+
+Preserve those exact scope and platform limits when reporting qualification.
+Its macOS 15+ ARM64 runtime bundles the signed, Apple-notarized
 controller as `bin/claude-kvm-daemon`; verify its recorded hash and Developer ID
 signature without changing its bytes. Linux needs the SSH bridge to a
-configured Darwin controller. Real frontend rendering and desktop journeys,
-physical overlay exclusion, SSH adoption and service objectives remain pending;
-do not turn a configuration receipt into a desktop qualification claim.
+configured Darwin controller. A configuration receipt does not qualify a desktop
+journey.
 
 Inspect my agent version, seat OS and architecture, and supported MCP/skill
 installation surface. Use the native Darwin controller on a supported Mac or

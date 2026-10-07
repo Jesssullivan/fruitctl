@@ -24,6 +24,30 @@ The canonical docs are live at
 [fruitctl.clients.xoxd.ai](https://fruitctl.clients.xoxd.ai/). If the listed preview lacks your runtime
 asset or desktop prerequisite, stop with that missing requirement.
 
+## When the documentation client is rejected
+
+An anonymous default Python HTTP client has observed HTTP 403 with Cloudflare
+error 1010 on the canonical origin. Use the source-pinned GitHub raw fallback
+listed in the generated `agents.md` or `llms.txt`; this does not establish a
+Cloudflare policy repair, and no browser User-Agent impersonation is needed.
+
+For an independently readable frozen example, documentation revision
+`e0f4d064b076e58b33856d877e0e1c9266f55177` provides the
+[install guide](https://raw.githubusercontent.com/xoxd-ai/fruitctl/e0f4d064b076e58b33856d877e0e1c9266f55177/docs/install.md),
+[curated versions](https://raw.githubusercontent.com/xoxd-ai/fruitctl/e0f4d064b076e58b33856d877e0e1c9266f55177/docs/site/versions.json),
+[canonical adoption contract](https://raw.githubusercontent.com/xoxd-ai/fruitctl/e0f4d064b076e58b33856d877e0e1c9266f55177/integrations/adoption.json),
+and [release-policy overlay](https://raw.githubusercontent.com/xoxd-ai/fruitctl/e0f4d064b076e58b33856d877e0e1c9266f55177/docs/site/adoption.json).
+That snapshot is documentation data. A release's `sourceRevision` separately
+pins its bootstrap and skill bytes; select its exact tag and verify publication
+and the `fruitctl-release.json` asset digest through GitHub's release API.
+
+Raw `docs/site/install-prompt.md` is an authored template with unresolved tokens.
+The served `/install-prompt.md` renders those tokens from the selected curated
+preview. When the site is unavailable, resolve the template from the same
+documentation revision's policy overlay and matching versions entry. The raw
+adoption contract and policy overlay are also separate inputs; the served
+`adoption.json` combines them with build/release metadata.
+
 ## Before installation
 
 - Controller: Apple Silicon macOS 15 or later for the bundled native build.

@@ -35,6 +35,7 @@ const revision = process.env.GITHUB_SHA || git('rev-parse', 'HEAD');
 if (!/^[0-9a-f]{40}$/.test(revision)) throw new Error('Source revision must be a full Git commit SHA');
 const sourceStatus = git('status', '--porcelain').length ? 'workspace' : 'committed';
 const sourceBase = `${repository}/blob/${revision}/`;
+const rawSourceBase = `https://raw.githubusercontent.com/xoxd-ai/fruitctl/${revision}/`;
 const escape = (value) => value.replaceAll('&', '&amp;').replaceAll('<', '&lt;')
   .replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&#39;');
 
@@ -144,7 +145,7 @@ const agentsText = await source('integrations/agents.json');
 const agents = JSON.parse(agentsText);
 const adoption = { ...canonicalAdoption, ...JSON.parse(await source('docs/site/adoption.json')) };
 const versions = JSON.parse(await source('docs/site/versions.json'));
-const installPrompt = await source('docs/site/install-prompt.md');
+const installPromptTemplate = await source('docs/site/install-prompt.md');
 if (deployment.canonicalOrigin !== origin || adoption.documentation.replace(/\/$/, '') !== origin || adoption.repository !== repository) {
   throw new Error('Documentation, deployment, and adoption authority must agree');
 }
@@ -190,6 +191,60 @@ const runtimePreviewCount = versions.releases.filter((release) => release.releas
 if (adoption.releaseStatus === 'available' && !fullyQualifiedReleaseCount) throw new Error('No fully qualified product release is available');
 if (adoption.releaseStatus === 'runtime-preview-available' && !runtimePreviewCount) throw new Error('No scoped runtime preview is available');
 
+const preview = adoption.currentPreview;
+if (!preview || !/^v[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.-]+)?$/.test(preview.tag || '') ||
+    !/^[0-9a-f]{40}$/.test(preview.sourceRevision || '') ||
+    preview.releaseScope !== 'runtime-preview' || preview.qualification !== 'scoped') {
+  throw new Error('Install prompt requires an explicit pinned currentPreview');
+}
+const previewMatches = versions.releases.filter(release => release.tag === preview.tag);
+if (previewMatches.length !== 1 || previewMatches[0].sourceRevision !== preview.sourceRevision ||
+    previewMatches[0].releaseScope !== preview.releaseScope || previewMatches[0].qualification !== preview.qualification) {
+  throw new Error('Install prompt currentPreview must match exactly one curated release');
+}
+const previewRelease = previewMatches[0];
+const promptScopes = (scopes) => {
+  if (!scopes.every(scope => typeof scope === 'string' && /^[a-z0-9][a-z0-9._-]*$/.test(scope))) {
+    throw new Error('Install prompt qualification scopes must be explicit identifiers');
+  }
+  return scopes.map(scope => `- \`${scope}\``).join('\n');
+};
+const receiptPlatforms = [
+  ['Controller synthetic acceptance', previewRelease.nativeController?.syntheticAcceptance?.platform],
+  ['Installer acceptance', previewRelease.installerAcceptance?.platform],
+  ['Public bootstrap', previewRelease.publicBootstrap?.platform],
+].filter(([, platform]) => platform !== undefined);
+if (receiptPlatforms.some(([, platform]) => typeof platform !== 'string' || !/^[a-z0-9]+(?:-[a-z0-9]+)+$/.test(platform))) {
+  throw new Error('Install prompt receipt platforms must be explicit platform identifiers');
+}
+const promptValues = {
+  FRUITCTL_RELEASE_TAG: preview.tag,
+  FRUITCTL_SOURCE_REVISION: preview.sourceRevision,
+  FRUITCTL_BOOTSTRAP_SHA256: previewRelease.bootstrap.sha256,
+  FRUITCTL_DOCS_REVISION: revision,
+  FRUITCTL_VERIFIED_SCOPES: promptScopes(previewRelease.verifiedScopes),
+  FRUITCTL_PENDING_SCOPES: promptScopes(previewRelease.pendingScopes),
+  FRUITCTL_RECEIPT_PLATFORMS: receiptPlatforms.length
+    ? receiptPlatforms.map(([label, platform]) => `- ${label}: \`${platform}\``).join('\n')
+    : 'No acceptance receipt platform is recorded in this release inventory entry.',
+};
+let installPrompt = installPromptTemplate;
+for (const [name, value] of Object.entries(promptValues)) {
+  const token = `{{${name}}}`;
+  if (!installPrompt.includes(token)) throw new Error(`Install prompt template is missing ${token}`);
+  installPrompt = installPrompt.replaceAll(token, value);
+}
+if (/\{\{FRUITCTL_[A-Z0-9_]+\}\}/.test(installPrompt)) throw new Error('Unresolved install prompt template token');
+
+const fallbackSources = [
+  ['Repository instructions', 'AGENTS.md'], ['Install guide', 'docs/install.md'],
+  ['Agent adapters', 'docs/agents.md'], ['Junie and IntelliJ', 'docs/junie.md'],
+  ['Compatibility', 'docs/compatibility.md'], ['Authored install prompt template', 'docs/site/install-prompt.md'],
+  ['Curated release inventory', 'docs/site/versions.json'], ['Canonical adoption contract', 'integrations/adoption.json'],
+  ['Site release-policy overlay', 'docs/site/adoption.json'], ['Adapter registry', 'integrations/agents.json'],
+];
+const sourceFallback = `## Source-pinned documentation fallback\n\nIf the canonical documentation origin rejects your client (for example HTTP 403\nwith Cloudflare error 1010), fetch these public GitHub raw files without changing\nyour client identity. They refer to committed documentation revision ${revision};\nlocal workspace edits are excluded. This is a delivery alternative, not evidence\nthat the canonical-origin policy was repaired.\n\n${fallbackSources.map(([label, file]) => `- [${label}](${rawSourceBase}${file})`).join('\n')}\n\nThese are authored source inputs. The raw install prompt contains template tokens;\nthe served /install-prompt.md renders the exact curated currentPreview tag,\nproducer source SHA and bootstrap digest. Resolve those tokens from the matching\nrelease-policy overlay and release inventory before using the raw template.\nThe canonical adoption contract and site overlay are separate inputs, rather\nthan the rendered /adoption.json payload. The documentation revision is separate\nfrom a release's producer sourceRevision. Verify published release identity and\nthe fruitctl-release.json asset digest through GitHub's release API; source docs\ndo not replace that artifact authority.\n`;
+
 const artifacts = new Map();
 const navigation = pageNames.map((name) => `<a href="${name === 'index' ? '/' : `/${name}/`}">${labels[name]}</a>`).join('\n');
 for (const [name, content] of pageSources) {
@@ -205,8 +260,8 @@ for (const [name, content] of pageSources) {
 }
 artifacts.set('site.css', await source('docs/site/site.css'));
 artifacts.set('install-prompt.md', installPrompt);
-artifacts.set('agents.md', `# Fruitctl adoption\n\nCanonical repository: ${repository}\nCanonical documentation: ${origin}/\n\nUse adoption.json and versions.json to resolve a verified immutable release. Pin\nfull source SHAs and verify binary SHA-256 hashes. Preserve unrelated MCP/skill\nconfiguration. Use operator-selected profiles and controller-local credentials.\nCapture a complete fresh frame before input; stop without replay on uncertainty.\nQualify the installed adapter and capture mode. Enable the indicator only with\nrecorded exclusion proof. Public support is best effort.\n\nRead /install-prompt.md, /install/, /agents/, /junie/, /compatibility/, /architecture/, and /slo/.\nSource revision: ${revision}; source status: ${sourceStatus}.\nRelease status: ${adoption.releaseStatus}; hosting status: ${deployment.status}.\n`);
-artifacts.set('llms.txt', `# Fruitctl\n\n> Agent VNC desktop control. Resolve verified releases before installation.\n\n## Documentation\n${pageNames.map((name) => `- [${labels[name]}](${origin}${name === 'index' ? '/' : `/${name}/`})`).join('\n')}\n\n## Machine adoption\n- [Agent instructions](${origin}/agents.md)\n- [Install prompt](${origin}/install-prompt.md)\n- [Adoption JSON](${origin}/adoption.json)\n- [Adoption TOON](${origin}/adoption.toon)\n- [Curated versions](${origin}/versions.json)\n- [Public source](${repository})\n`);
+artifacts.set('agents.md', `# Fruitctl adoption\n\nCanonical repository: ${repository}\nCanonical documentation: ${origin}/\n\nUse adoption.json and versions.json to resolve a verified immutable release. Pin\nfull source SHAs and verify binary SHA-256 hashes. Preserve unrelated MCP/skill\nconfiguration. Use operator-selected profiles and controller-local credentials.\nCapture a complete fresh frame before input; stop without replay on uncertainty.\nQualify the installed adapter and capture mode. Enable the indicator only with\nrecorded exclusion proof. Public support is best effort.\n\nRead /install-prompt.md, /install/, /agents/, /junie/, /compatibility/, /architecture/, and /slo/.\n\n${sourceFallback}\nSource revision: ${revision}; source status: ${sourceStatus}.\nRelease status: ${adoption.releaseStatus}; hosting status: ${deployment.status}.\n`);
+artifacts.set('llms.txt', `# Fruitctl\n\n> Agent VNC desktop control. Resolve verified releases before installation.\n\n## Documentation\n${pageNames.map((name) => `- [${labels[name]}](${origin}${name === 'index' ? '/' : `/${name}/`})`).join('\n')}\n\n## Machine adoption\n- [Agent instructions](${origin}/agents.md)\n- [Install prompt](${origin}/install-prompt.md)\n- [Adoption JSON](${origin}/adoption.json)\n- [Adoption TOON](${origin}/adoption.toon)\n- [Curated versions](${origin}/versions.json)\n- [Public source](${repository})\n\n${sourceFallback}`);
 const releaseManifestSchemaText = await source('release/release-manifest.schema.json');
 const nativeInputManifestSchemaText = await source('release/native-input-manifest.schema.json');
 const buildSource = { revision, status: sourceStatus, contentSha256: sha256(JSON.stringify([...sources].sort())) };
