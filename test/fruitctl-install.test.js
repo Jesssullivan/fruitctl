@@ -397,6 +397,76 @@ test('changed install destinations cannot detach receipts and backups from their
   });
 });
 
+test('same-agent project path aliases cannot create duplicate receipts or detach recovery', async t => {
+  for (const initial of ['physical', 'alias']) await t.test(initial, async t => {
+    const f = { ...await fixture(t), agent: 'junie' }, release = await releaseFixture(f);
+    const physical = await fs.realpath(f.projectDir), alias = path.join(f.root, 'project alias with spaces');
+    await fs.symlink(physical, alias, 'dir');
+    const recorded = { ...f, projectDir: initial === 'physical' ? physical : alias };
+    const alternate = { ...f, projectDir: initial === 'physical' ? alias : physical };
+    const configPath = resolveAdapter(recorded).configPath;
+    const original = '{\n "mcpServers":{"other":{"command":"operator"}},\n "keep":"original"\n}\n';
+    await fs.mkdir(path.dirname(configPath), { recursive: true });
+    await fs.writeFile(configPath, original, { mode: 0o640 });
+    const first = await install({ ...recorded, offline: release.offline });
+    const snapshot = async directory => {
+      const entries = [];
+      const visit = async (file, relative) => {
+        const stat = await fs.lstat(file);
+        if (stat.isSymbolicLink()) entries.push([relative, 'link', await fs.readlink(file)]);
+        else if (stat.isDirectory()) {
+          entries.push([relative, 'directory', stat.mode & 0o777]);
+          for (const name of (await fs.readdir(file)).sort()) await visit(path.join(file, name), path.join(relative, name));
+        } else entries.push([relative, 'file', stat.mode & 0o777, (await fs.readFile(file)).toString('base64')]);
+      };
+      await visit(directory, '.');
+      return entries;
+    };
+    const before = { home: await snapshot(f.home), project: await snapshot(physical) };
+    const rejectedPath = error => {
+      assert.match(error.message, /recorded project path/i);
+      assert.ok(error.message.includes(recorded.projectDir), 'the error must name the existing recorded path');
+      return true;
+    };
+    await assert.rejects(install({ ...alternate, offline: release.offline }), rejectedPath);
+    let downloads = 0;
+    const noDownload = { fetchImpl: () => { downloads++; throw new Error('must not download through an alias'); } };
+    await assert.rejects(install(alternate, noDownload), rejectedPath);
+    await assert.rejects(install({ ...alternate, dryRun: true }, noDownload), rejectedPath);
+    for (const operation of [doctor, rollback, uninstall]) await assert.rejects(operation(alternate), rejectedPath);
+    assert.equal(downloads, 0);
+    assert.deepEqual({ home: await snapshot(f.home), project: await snapshot(physical) }, before);
+    assert.deepEqual(await fs.readdir(path.dirname(first.receiptPath)), [path.basename(first.receiptPath)]);
+    assert.equal((await doctor(recorded)).status, 'configured');
+    assert.equal((await uninstall(recorded)).status, 'removed');
+    assert.equal(await fs.readFile(configPath, 'utf8'), original);
+    assert.equal((await fs.stat(configPath)).mode & 0o777, 0o640);
+    assert.equal((await doctor(alternate)).status, 'not-installed');
+    assert.equal((await uninstall(recorded)).status, 'not-installed');
+  });
+});
+
+test('project path alias guard preserves missing-project and different-agent behavior', async t => {
+  const f = { ...await fixture(t), agent: 'junie' }, release = await releaseFixture(f);
+  const missing = { ...f, projectDir: path.join(f.root, 'nonexistent project') };
+  assert.equal((await install({ ...missing, dryRun: true })).status, 'planned');
+  assert.equal((await doctor(missing)).status, 'not-installed');
+  assert.equal((await uninstall(missing)).status, 'not-installed');
+  assert.equal((await rollback(missing)).status, 'no-previous-install');
+  await assert.rejects(fs.lstat(missing.projectDir), { code: 'ENOENT' });
+  const first = await install({ ...f, offline: release.offline });
+  const alias = path.join(f.root, 'different agent project alias');
+  await fs.symlink(await fs.realpath(f.projectDir), alias, 'dir');
+  const other = { ...f, agent: 'pi', projectDir: alias };
+  assert.equal((await install({ ...other, offline: release.offline })).status, 'installed');
+  assert.equal((await doctor(f)).status, 'configured');
+  assert.equal((await doctor(other)).status, 'configured');
+  await uninstall(other);
+  assert.equal((await doctor(f)).status, 'configured');
+  assert.ok(await fs.lstat(first.launcherPath));
+  await uninstall(f);
+});
+
 test('managed and unowned custom Copilot configurations retain their owning surface', async t => {
   const f = { ...await fixture(t), agent: 'vscode', scope: 'user' };
   const copilotHome = path.join(f.root, 'copilot custom'), config = path.join(copilotHome, 'mcp-config.json');
