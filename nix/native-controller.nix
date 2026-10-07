@@ -94,7 +94,7 @@ stdenvNoCC.mkDerivation {
     containsHost = false;
   };
   meta = {
-    description = "Immutable signed Apple Silicon VNC controller from Fruitctl alpha.2";
+    description = "Immutable signed Apple Silicon VNC controller from Fruitctl alpha.3";
     homepage = "https://github.com/xoxd-ai/fruitctl";
     license = lib.licenses.gpl3Plus;
     platforms = [ "aarch64-darwin" ];

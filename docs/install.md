@@ -6,16 +6,19 @@ appropriate adapter, and qualify the connection. Supply host names and secrets
 through local configuration and the controller's credential provider, not this
 prompt or a checked-in MCP file.
 
-The [v0.1.0-alpha.2 runtime preview](https://github.com/xoxd-ai/fruitctl/releases/tag/v0.1.0-alpha.2)
+The [v0.1.0-alpha.3 runtime preview](https://github.com/xoxd-ai/fruitctl/releases/tag/v0.1.0-alpha.3)
 is immutable and source-pinned to
-`6c8a5751b1ab92ee4093aa0091e88ef212021dab`. It installs the bundled Node.js 24.21.0
+`e00fcc86bbac4247d5a0847d7e656369c52cc15f`. It installs the bundled Node.js 24.21.0
 runtime, skill and adapter. On Apple Silicon macOS 15+, that runtime also
-installs the unchanged signed, Apple-notarized VNC controller at
-`bin/claude-kvm-daemon` inside its versioned cache. Linux uses the SSH bridge
+installs the signed VNC controller at
+`bin/claude-kvm-daemon` inside its versioned cache. Its original controller-ZIP
+submission is Apple Accepted; that acceptance covers the controller, and the
+complete runtime archive is a separate asset. Linux uses the SSH bridge
 to a configured Darwin controller. Every route needs an operator-configured
 profile, controller-local credentials and owner-enabled target Screen Sharing.
-Archive integrity, offline native checks and synthetic VNC/MCP image exchanges
-have scoped evidence; this is not full desktop or frontend qualification.
+Archive integrity and the complete Darwin ARM64 runtime's synthetic VNC/MCP
+image exchanges have scoped evidence. Desktop and frontend qualification remain
+pending.
 
 The canonical docs are live at
 [fruitctl.clients.xoxd.ai](https://fruitctl.clients.xoxd.ai/). If the listed preview lacks your runtime
@@ -43,8 +46,8 @@ profile, and preserve any Home Manager-owned configuration through its owner:
 
 ```sh
 (
-  FRUITCTL_SOURCE_SHA='6c8a5751b1ab92ee4093aa0091e88ef212021dab'
-  FRUITCTL_RELEASE_TAG='v0.1.0-alpha.2'
+  FRUITCTL_SOURCE_SHA='e00fcc86bbac4247d5a0847d7e656369c52cc15f'
+  FRUITCTL_RELEASE_TAG='v0.1.0-alpha.3'
   FRUITCTL_SCRIPT=$(mktemp)
   trap 'rm -f "$FRUITCTL_SCRIPT"' EXIT
   curl --disable --fail --silent --show-error --location --proto '=https' --proto-redir '=https' \
@@ -67,7 +70,8 @@ bytes and uses the bundled Node runtime. Alpha2 passed actual anonymous public
 bootstrap for all seven user adapters and Claude project scope on Linux x64,
 including doctor, every runtime hash and mode, uninstall and exact unrelated
 configuration restoration. These checks qualify installed adapters, not a real
-frontend or desktop. Doctor checks
+frontend or desktop. That public bootstrap evidence applies to alpha.2. Public
+bootstrap validation for alpha.3 remains pending. Doctor checks
 installed hashes and modes, including the bundled controller. Rollback uses
 the previous verified runtime; uninstall preserves verified versioned caches
 and unrelated configuration. Explicit operator native-path overrides remain

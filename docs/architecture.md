@@ -87,6 +87,16 @@ mapping. Its signed development copies remain private until the exact capture
 mode passes exclusion, input mapping, lifecycle and permission qualification.
 Signing or notarization cannot enable this feature or supply macOS consent.
 
+Future Host rollout requires launching the app bundle through LaunchServices in
+the logged-in GUI session, checking the app returned by
+[NSWorkspace](https://developer.apple.com/documentation/appkit/nsworkspace/openapplication%28at%3Aconfiguration%3Acompletionhandler%3A%29),
+and verifying the privacy-responsible code and capture permission. In an attended
+trial, direct `Contents/MacOS` execution over SSH was attributed to the remote
+service; the Host's existing grant did not establish that invocation's access.
+Apple's [responsibility-tracking guidance](https://developer.apple.com/forums/thread/125438)
+explains the attribution boundary. Host capture and privacy qualification remain pending,
+and no automatic permission grant is provided.
+
 Permission provisioning is a separate, attended step. Apple's
 [PPPC schema](https://raw.githubusercontent.com/apple/device-management/release/mdm/profiles/com.apple.TCC.configuration-profile-policy.yaml)
 does not allow a profile to silently grant Screen Capture. A user-approved MDM
