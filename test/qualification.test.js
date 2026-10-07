@@ -168,7 +168,7 @@ test('CRC-valid high-bit chunk names cannot alias an IHDR or ancillary name', ()
 });
 
 function browserSandbox({ webkit = false } = {}) {
-  const html = generateHTML(expected.runId), script = html.match(/<script>([\s\S]*)<\/script>/)[1];
+  const html = generateHTML(expected.runId), script = html.match(/<script>([\s\S]*)<\/script>/i)[1];
   const canvas = { getContext: () => ({ fillRect() {}, fillStyle: '' }) }, status = {}, handlers = {}, scheduled = [], events = new Map(), timers = new Map();
   const button = { disabled: false, addEventListener(name, callback) { handlers[name] = callback; } };
   let requests = 0, nextTimer = 1;
