@@ -32,6 +32,9 @@ Before installing, have these prerequisites ready:
 - An existing Junie installation and its normal account or model-provider
   authentication. In IntelliJ, install/activate AI Assistant and select Junie
   in AI Chat, or install the separate Junie plugin for its standalone window.
+- A selected model/provider that accepts MCP image content for the
+  observation/action/observation journey. Tool registration and a text-only
+  invocation do not establish vision capability.
 - A named Fruitctl target profile on the Darwin controller, a private
   controller-local credential file, and owner-enabled target Screen Sharing.
   The complete configuration examples are in [Home Manager](home-manager.md).
@@ -50,14 +53,14 @@ optional Host application and purple indicator.
 
 Run this in the root of the project you intend to open in Junie. Replace
 `desktop` with your already-configured target profile. This uses the immutable
-alpha.3 runtime preview and checks the pinned bootstrap script before execution.
+alpha.4 runtime preview and checks the pinned bootstrap script before execution.
 The first invocation previews the operation; the second installs it.
 
 ```sh
 (
   FRUITCTL_TARGET_PROFILE='desktop'
-  FRUITCTL_SOURCE_SHA='e00fcc86bbac4247d5a0847d7e656369c52cc15f'
-  FRUITCTL_RELEASE_TAG='v0.1.0-alpha.3'
+  FRUITCTL_SOURCE_SHA='e0f4d064b076e58b33856d877e0e1c9266f55177'
+  FRUITCTL_RELEASE_TAG='v0.1.0-alpha.4'
   FRUITCTL_SCRIPT=$(mktemp)
   trap 'rm -f "$FRUITCTL_SCRIPT"' EXIT
   curl --disable --fail --silent --show-error --location --proto '=https' --proto-redir '=https' \
@@ -83,11 +86,10 @@ directory; it has no `--project-dir` option. The installed CLI supports that
 option when subsequently selecting another project.
 
 Use the receipt's recorded project path for subsequent lifecycle commands.
-Alpha.3's bootstrap uses the physical current directory, while the installed
-CLI preserves an explicit `--project-dir` spelling. Under symlinked paths,
-using another spelling can create a second receipt for the same project.
-Current source refuses that alternate path and names the recorded path; this
-guard requires a subsequent runtime release and does not migrate old receipts.
+The bootstrap uses the physical current directory. Alpha.4's installed CLI
+refuses an alternate spelling through a project symlink and names the recorded
+path, including during dry-run. Historical alpha.3 could create another receipt
+for that alias; alpha.4 does not migrate those older records automatically.
 
 Inspect the JSON result. `installed` records the versioned runtime, MCP entry
 and skill link. `declarative-required` means configuration was retained: apply
@@ -108,6 +110,30 @@ For AI Chat, copy the returned `ideSettingsSnippet` into the IDE's MCP settings
 using the [documented STDIO JSON surface](https://www.jetbrains.com/help/ai-assistant/mcp.html),
 then enable **Pass custom MCP servers**. The installer does not edit internal
 JetBrains XML. Adding this IDE entry is separate from the project JSON install.
+
+## Observed alpha.4 installation scope
+
+The anonymous Linux x64 stock Junie project bootstrap passed, followed by
+installed help, doctor and reinstall. A continuation initialized the MCP SDK
+against Junie's installed MCP launcher and called `listTools`, discovering all
+four tool schemas without executing a tool action. An alternate-project-alias
+dry-run was refused, and uninstall restored original unrelated configuration
+bytes and modes. The 3,671 Linux runtime payload files were preserved, with the
+generated identity marker accounted for separately. Reinstall retains
+append-only installer history and its directory; the preservation claim covers
+configuration and runtime payloads.
+
+On Darwin ARM64, alpha.4 separately passed an offline Junie project lifecycle
+through the bundled installer API and an installed SDK/shared-broker journey
+through the unchanged signed controller to a loopback RFB fixture. Four complete
+96×53 frames, one reconnect and releases through `task_complete` and
+`task_failed` passed as synthetic protocol evidence. The Darwin stock public
+bootstrap remains pending.
+
+Image rendering, desktop input, release and reconnect in an actual Junie
+conversation remain pending, as does separate IntelliJ acceptance. Historical
+alpha.2 seven-adapter and alpha.3 Claude/API checks do not qualify the alpha.4
+Junie frontend.
 
 ## Versions, skills and project instructions
 

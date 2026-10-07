@@ -43,16 +43,29 @@ milestones and the distinction between Lab targets and public best-effort suppor
 
 ## Current status
 
-The immutable [v0.1.0-alpha.3 runtime preview](https://github.com/xoxd-ai/fruitctl/releases/tag/v0.1.0-alpha.3)
-is available with bundled Node.js 24.21.0 and a signed VNC controller in its
-macOS 15+ ARM64 runtime. The controller retains its original Apple Accepted
-submission; that does not notarize the entire runtime archive. Archive and
-corresponding-source integrity, the Darwin ARM64 runtime's synthetic VNC/MCP
-exchange, and 14 Linux x64 user/project lifecycle cases through the bundled
-installer API across seven adapters have scoped evidence. The public Linux x64
-Claude project bootstrap and installed CLI diagnostics/uninstall also have
-scoped evidence. Linux connects through the SSH bridge to a configured Darwin controller. Host is an
-unqualified source prototype with no public executable or automatic setup.
-Real agent rendering and desktop journeys, physical overlay exclusion, the SSH
-journey and measured service objectives remain pending. A generated MCP entry
-alone proves no desktop action worked.
+The immutable [v0.1.0-alpha.4 runtime preview](https://github.com/xoxd-ai/fruitctl/releases/tag/v0.1.0-alpha.4)
+pins portable source `e0f4d064b076e58b33856d877e0e1c9266f55177` and bundles
+Node.js 24.21.0. Its macOS 15+ ARM64 runtime reuses the signed VNC controller
+from `e00fcc86bbac4247d5a0847d7e656369c52cc15f`, retaining that controller's
+original Apple Accepted submission. The entire runtime archive is a separate
+asset.
+
+On Linux x64, alpha.4 passed an anonymous stock Junie project bootstrap, help,
+doctor, reinstall, alternate-project-alias dry-run refusal and uninstall. A
+continuation initialized the MCP SDK against Junie's installed MCP launcher
+and discovered four tool schemas. Original unrelated configuration bytes/modes and
+3,671 Linux runtime payload files were preserved; the generated identity
+marker is separate and installer history remains append-only. No tool action
+or frontend image rendering ran.
+
+On Darwin ARM64, alpha.4 passed an offline Junie project lifecycle through the
+bundled installer API and an installed SDK/shared-broker journey through the
+unchanged signed controller to a loopback RFB fixture. The synthetic journey
+verified four complete 96×53 frames, one reconnect and two terminal releases.
+
+Alpha.2's seven-adapter bootstrap and alpha.3's Claude bootstrap, 14 bundled-API
+lifecycle cases and Darwin synthetic image exchange remain explicitly
+historical. Linux uses the configured SSH bridge to Darwin. Host is an unqualified source
+prototype with no public executable or automatic setup. Real frontend and
+desktop journeys, physical overlay exclusion, the SSH journey and measured
+service objectives remain pending.

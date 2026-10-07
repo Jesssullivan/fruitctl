@@ -6,19 +6,24 @@ appropriate adapter, and qualify the connection. Supply host names and secrets
 through local configuration and the controller's credential provider, not this
 prompt or a checked-in MCP file.
 
-The [v0.1.0-alpha.3 runtime preview](https://github.com/xoxd-ai/fruitctl/releases/tag/v0.1.0-alpha.3)
+The [v0.1.0-alpha.4 runtime preview](https://github.com/xoxd-ai/fruitctl/releases/tag/v0.1.0-alpha.4)
 is immutable and source-pinned to
-`e00fcc86bbac4247d5a0847d7e656369c52cc15f`. It installs the bundled Node.js 24.21.0
+`e0f4d064b076e58b33856d877e0e1c9266f55177`. It installs the bundled Node.js 24.21.0
 runtime, skill and adapter. On Apple Silicon macOS 15+, that runtime also
 installs the signed VNC controller at
 `bin/claude-kvm-daemon` inside its versioned cache. Its original controller-ZIP
-submission is Apple Accepted; that acceptance covers the controller, and the
-complete runtime archive is a separate asset. Linux uses the SSH bridge
-to a configured Darwin controller. Every route needs an operator-configured
+submission is Apple Accepted. The unchanged native controller's original source
+remains `e00fcc86bbac4247d5a0847d7e656369c52cc15f`; that acceptance covers
+the controller, and the complete runtime archive is a separate asset. Linux
+uses the SSH bridge to a configured Darwin controller. Every route needs an operator-configured
 profile, controller-local credentials and owner-enabled target Screen Sharing.
-Archive integrity and the complete Darwin ARM64 runtime's synthetic VNC/MCP
-image exchanges have scoped evidence. Desktop and frontend qualification remain
-pending.
+Alpha.4 passed an offline Darwin ARM64 Junie project lifecycle through the
+bundled installer API and an installed SDK/shared-broker journey through the
+unchanged signed controller to a loopback RFB fixture. That synthetic check
+verified four complete 96×53 frames, one reconnect and two terminal releases.
+Darwin's stock public bootstrap, desktop and frontend qualification remain
+pending. Earlier Darwin synthetic image exchanges remain historical
+alpha.2/alpha.3 evidence.
 
 The canonical docs are live at
 [fruitctl.clients.xoxd.ai](https://fruitctl.clients.xoxd.ai/). If the listed preview lacks your runtime
@@ -31,15 +36,13 @@ error 1010 on the canonical origin. Use the source-pinned GitHub raw fallback
 listed in the generated `agents.md` or `llms.txt`; this does not establish a
 Cloudflare policy repair, and no browser User-Agent impersonation is needed.
 
-For an independently readable frozen example, documentation revision
-`e0f4d064b076e58b33856d877e0e1c9266f55177` provides the
-[install guide](https://raw.githubusercontent.com/xoxd-ai/fruitctl/e0f4d064b076e58b33856d877e0e1c9266f55177/docs/install.md),
-[curated versions](https://raw.githubusercontent.com/xoxd-ai/fruitctl/e0f4d064b076e58b33856d877e0e1c9266f55177/docs/site/versions.json),
-[canonical adoption contract](https://raw.githubusercontent.com/xoxd-ai/fruitctl/e0f4d064b076e58b33856d877e0e1c9266f55177/integrations/adoption.json),
-and [release-policy overlay](https://raw.githubusercontent.com/xoxd-ai/fruitctl/e0f4d064b076e58b33856d877e0e1c9266f55177/docs/site/adoption.json).
-That snapshot is documentation data. A release's `sourceRevision` separately
-pins its bootstrap and skill bytes; select its exact tag and verify publication
-and the `fruitctl-release.json` asset digest through GitHub's release API.
+The rendered `agents.md` and `llms.txt` provide fallback links that bind the
+guide, curated release entry and adoption inputs to one full documentation
+commit SHA. Resolve the matching entry at that revision, select its exact tag
+and verify publication and the `fruitctl-release.json` asset digest through
+GitHub's release API. The release producer's `sourceRevision` separately pins
+its bootstrap and skill bytes; verify the entry's bootstrap SHA-256 before
+execution.
 
 Raw `docs/site/install-prompt.md` is an authored template with unresolved tokens.
 The served `/install-prompt.md` renders those tokens from the selected curated
@@ -70,8 +73,8 @@ profile, and preserve any Home Manager-owned configuration through its owner:
 
 ```sh
 (
-  FRUITCTL_SOURCE_SHA='e00fcc86bbac4247d5a0847d7e656369c52cc15f'
-  FRUITCTL_RELEASE_TAG='v0.1.0-alpha.3'
+  FRUITCTL_SOURCE_SHA='e0f4d064b076e58b33856d877e0e1c9266f55177'
+  FRUITCTL_RELEASE_TAG='v0.1.0-alpha.4'
   FRUITCTL_SCRIPT=$(mktemp)
   trap 'rm -f "$FRUITCTL_SCRIPT"' EXIT
   curl --disable --fail --silent --show-error --location --proto '=https' --proto-redir '=https' \
@@ -90,15 +93,21 @@ profile, and preserve any Home Manager-owned configuration through its owner:
 
 The source fetch ignores user `curlrc` options and checks the pinned script's
 SHA-256 before execution. The bootstrap verifies release
-bytes and uses the bundled Node runtime. Alpha2 passed actual anonymous public
-bootstrap for all seven user adapters and Claude project scope on Linux x64,
-including doctor, every runtime hash and mode, uninstall and exact unrelated
-configuration restoration. These checks qualify installed adapters, not a real
-frontend or desktop. That seven-user-adapter evidence applies to alpha.2. For alpha.3, one
-anonymous Linux x64 stock bootstrap installed Claude project scope. A subsequent
-installed CLI continuation passed help, doctor, uninstall and post-uninstall
-doctor, with exact unrelated configuration bytes and mode restoration. This
-qualifies that installed configuration route. Doctor checks
+bytes and uses the bundled Node runtime. Alpha.4 passed an anonymous Linux x64
+stock Junie project bootstrap, installed help, doctor and reinstall. A
+continuation initialized the MCP SDK against Junie's installed MCP launcher
+and called `listTools`, discovering four tool schemas without tool actions. An
+alternate-project-alias dry-run was refused. Uninstall restored original
+unrelated configuration bytes and modes and preserved 3,671 Linux runtime
+payload files, with the generated identity marker accounted for separately.
+Installer history and its directory remain as append-only installation
+records. Frontend image rendering and desktop acceptance remain pending.
+
+Historical alpha.2 checks cover all seven user adapters and Claude project
+scope through anonymous Linux x64 bootstrap. Historical alpha.3 checks cover
+one Claude project bootstrap and installed help, doctor, uninstall and
+post-uninstall doctor. Their runtime hash/mode and configuration restoration
+evidence applies to those releases. Doctor checks
 installed hashes and modes, including the bundled controller. Rollback uses
 the previous verified runtime; uninstall preserves verified versioned caches
 and unrelated configuration. Explicit operator native-path overrides remain
@@ -198,7 +207,7 @@ verified public release path once it is qualified.
 
 ## Home Manager
 
-The Lab Home Manager consumer pins the public producer's source revision and
+Your Home Manager consumer pins the public producer's source revision and
 signed release bytes. It may configure profiles and wrappers, but must not patch
 the producer's daemon or re-sign a released binary. Upgrade the producer release,
 checksum, source revision, and associated adoption evidence together.

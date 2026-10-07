@@ -4,6 +4,411 @@
   "qualificationStatus": "runtime-preview",
   "releases": [
     {
+      "tag": "v0.1.0-alpha.4",
+      "releaseScope": "runtime-preview",
+      "qualification": "scoped",
+      "sourceRevision": "e0f4d064b076e58b33856d877e0e1c9266f55177",
+      "immutable": true,
+      "prerelease": true,
+      "publishedAt": "2026-10-07T20:02:10Z",
+      "url": "https://github.com/xoxd-ai/fruitctl/releases/tag/v0.1.0-alpha.4",
+      "nodeVersion": "24.21.0",
+      "verifiedScopes": [
+        "public-asset-inventory-and-signed-tag-identity",
+        "structural-complete-runtime-archive-and-split-producer-provenance",
+        "offline-frozen-source-tests-242",
+        "anonymous-all-13-public-asset-bytes",
+        "anonymous-public-linux-x64-junie-project-bootstrap-and-installed-cli-lifecycle",
+        "installed-linux-x64-junie-entry-sdk-initialize-and-tools-discovery",
+        "offline-darwin-arm64-junie-project-bundled-installer-api-lifecycle",
+        "darwin-arm64-complete-signed-runtime-synthetic-rfb-mcp-image-exchange"
+      ],
+      "pendingScopes": [
+        "real-agent-frontend-rendering-and-desktop-journey",
+        "physical-overlay-exclusion-and-input-mapping",
+        "real-linux-to-darwin-ssh-journey",
+        "measured-service-objectives",
+        "linux-arm64-runtime-execution",
+        "darwin-arm64-stock-public-bootstrap"
+      ],
+      "prerequisites": [
+        "configured-darwin-controller-for-linux-ssh-bridge",
+        "operator-configured-target-profile-and-controller-local-credentials",
+        "owner-enabled-target-screen-sharing-and-required-human-os-approval"
+      ],
+      "assets": [
+        {
+          "name": "fruitctl-release.json",
+          "url": "https://github.com/xoxd-ai/fruitctl/releases/download/v0.1.0-alpha.4/fruitctl-release.json",
+          "sha256": "c374bda9838719c01ef6b345da488952429caa6bf8f5a665bbd605391c8e5e3b",
+          "size": 1769,
+          "kind": "manifest"
+        },
+        {
+          "name": "fruitctl-v0.1.0-alpha.3-corresponding-source.tar.gz",
+          "url": "https://github.com/xoxd-ai/fruitctl/releases/download/v0.1.0-alpha.4/fruitctl-v0.1.0-alpha.3-corresponding-source.tar.gz",
+          "sha256": "2de7f45740ac4d05b71e5be0b25ca04264c23cfa3bda2f2d20088bdd0ecd1300",
+          "size": 167799607,
+          "kind": "source"
+        },
+        {
+          "name": "fruitctl-v0.1.0-alpha.4-darwin-arm64.tar.gz",
+          "url": "https://github.com/xoxd-ai/fruitctl/releases/download/v0.1.0-alpha.4/fruitctl-v0.1.0-alpha.4-darwin-arm64.tar.gz",
+          "sha256": "c242952e4dd1bd1ad5dfeca783f507ac5d291397048509e007a2d80b028b18e2",
+          "size": 45371894,
+          "kind": "runtime",
+          "os": "darwin",
+          "arch": "arm64"
+        },
+        {
+          "name": "fruitctl-v0.1.0-alpha.4-darwin-arm64.tar.gz.receipt.json",
+          "url": "https://github.com/xoxd-ai/fruitctl/releases/download/v0.1.0-alpha.4/fruitctl-v0.1.0-alpha.4-darwin-arm64.tar.gz.receipt.json",
+          "sha256": "9a6fab8eec9d43883bd2bbc24763319e814b5da392b8a65ded180161a8584d15",
+          "size": 467396,
+          "kind": "packaging-receipt"
+        },
+        {
+          "name": "fruitctl-v0.1.0-alpha.4-linux-arm64.tar.gz",
+          "url": "https://github.com/xoxd-ai/fruitctl/releases/download/v0.1.0-alpha.4/fruitctl-v0.1.0-alpha.4-linux-arm64.tar.gz",
+          "sha256": "83b24b3b0cf37e241ea8b0aa557096a8a25f76b42db1ae0274aec8215a31a5a0",
+          "size": 47170355,
+          "kind": "runtime",
+          "os": "linux",
+          "arch": "arm64"
+        },
+        {
+          "name": "fruitctl-v0.1.0-alpha.4-linux-arm64.tar.gz.receipt.json",
+          "url": "https://github.com/xoxd-ai/fruitctl/releases/download/v0.1.0-alpha.4/fruitctl-v0.1.0-alpha.4-linux-arm64.tar.gz.receipt.json",
+          "sha256": "b5c59941bf5d4d7e9702d5d6385ae01df83d28a92ba3dbaa5b25eb26240611b6",
+          "size": 467295,
+          "kind": "packaging-receipt"
+        },
+        {
+          "name": "fruitctl-v0.1.0-alpha.4-linux-x64.tar.gz",
+          "url": "https://github.com/xoxd-ai/fruitctl/releases/download/v0.1.0-alpha.4/fruitctl-v0.1.0-alpha.4-linux-x64.tar.gz",
+          "sha256": "7abb0b5fc03fb52bdbfb4f29eca2a6d058e9f3057b2e96a74d7f16e694274e15",
+          "size": 47445996,
+          "kind": "runtime",
+          "os": "linux",
+          "arch": "x64"
+        },
+        {
+          "name": "fruitctl-v0.1.0-alpha.4-linux-x64.tar.gz.receipt.json",
+          "url": "https://github.com/xoxd-ai/fruitctl/releases/download/v0.1.0-alpha.4/fruitctl-v0.1.0-alpha.4-linux-x64.tar.gz.receipt.json",
+          "sha256": "94b41c4323005c64efbedc5891072ceaa07900aa893b10125008bf6882664da5",
+          "size": 467287,
+          "kind": "packaging-receipt"
+        },
+        {
+          "name": "node-v24.21.0.tar.xz",
+          "url": "https://github.com/xoxd-ai/fruitctl/releases/download/v0.1.0-alpha.4/node-v24.21.0.tar.xz",
+          "sha256": "a6f54defb6fd7c84f41dba13d61e78e9b4e0961712cf61f29715c05f5ced94fc",
+          "size": 57357488,
+          "kind": "source"
+        },
+        {
+          "name": "producer-binding.json",
+          "url": "https://github.com/xoxd-ai/fruitctl/releases/download/v0.1.0-alpha.4/producer-binding.json",
+          "sha256": "4ccd1f4fb5961633382bfe65b2dd000391349b3d3b6b7e31ab3e18fc680decf9",
+          "size": 8117,
+          "kind": "producer-binding"
+        },
+        {
+          "name": "runtime-source-inventory.json",
+          "url": "https://github.com/xoxd-ai/fruitctl/releases/download/v0.1.0-alpha.4/runtime-source-inventory.json",
+          "sha256": "373a829ee2a8f19f62f437de7245fc3d51090a3d839317aa8718d11075a92b28",
+          "size": 29612,
+          "kind": "source-inventory"
+        },
+        {
+          "name": "SHA256SUMS",
+          "url": "https://github.com/xoxd-ai/fruitctl/releases/download/v0.1.0-alpha.4/SHA256SUMS",
+          "sha256": "a9aec0f007023457467235831a3958309765ae968304c55331c4cf136a1ff9be",
+          "size": 619,
+          "kind": "checksums"
+        },
+        {
+          "name": "source-package-receipt.json",
+          "url": "https://github.com/xoxd-ai/fruitctl/releases/download/v0.1.0-alpha.4/source-package-receipt.json",
+          "sha256": "a5ecfab9c41bd7e943ee261dae34af123f4ef2cf6ebdf47caf848488109417b9",
+          "size": 11731,
+          "kind": "source-receipt"
+        }
+      ],
+      "bootstrap": {
+        "url": "https://raw.githubusercontent.com/xoxd-ai/fruitctl/e0f4d064b076e58b33856d877e0e1c9266f55177/scripts/install.sh",
+        "sha256": "6e05a7a62f57491cfbda1f8d9212291f6237f04f4ac396bc04d183b88747cd58"
+      },
+      "producerBinding": {
+        "name": "producer-binding.json",
+        "url": "https://github.com/xoxd-ai/fruitctl/releases/download/v0.1.0-alpha.4/producer-binding.json",
+        "sha256": "4ccd1f4fb5961633382bfe65b2dd000391349b3d3b6b7e31ab3e18fc680decf9",
+        "size": 8117
+      },
+      "runtimeSource": {
+        "fullSourceInventory": {
+          "bytes": 29612,
+          "name": "runtime-source-inventory.json",
+          "sha256": "373a829ee2a8f19f62f437de7245fc3d51090a3d839317aa8718d11075a92b28",
+          "url": "https://github.com/xoxd-ai/fruitctl/releases/download/v0.1.0-alpha.4/runtime-source-inventory.json"
+        },
+        "fullSourceInventoryFileCount": 273,
+        "immutableSourceUrl": "https://github.com/xoxd-ai/fruitctl/tree/e0f4d064b076e58b33856d877e0e1c9266f55177",
+        "licenseExpression": "MIT",
+        "revision": "e0f4d064b076e58b33856d877e0e1c9266f55177",
+        "workingTreeCleanAtSnapshot": true
+      },
+      "nativeController": {
+        "packaging": "bundled-in-darwin-arm64-runtime",
+        "path": "bin/claude-kvm-daemon",
+        "sha256": "a6c68de776034b0b2fdf6a7ce13e41aaa9b5699fb063c63963a4232d5b930fe4",
+        "size": 7187152,
+        "mode": "0755",
+        "producerSourceRevision": "e00fcc86bbac4247d5a0847d7e656369c52cc15f",
+        "originalBuildSnapshotBaseRevision": "41f836af7375c60d6478c098cbd61d88fd74cf34",
+        "testedNativeSourceTreeSha256": "a52cab90f4e8893b1074d096510922037a3c96dca50b1873e8ad67c582232dc6",
+        "correspondingSource": {
+          "bytes": 167799607,
+          "name": "fruitctl-v0.1.0-alpha.3-corresponding-source.tar.gz",
+          "sha256": "2de7f45740ac4d05b71e5be0b25ca04264c23cfa3bda2f2d20088bdd0ecd1300",
+          "url": "https://github.com/xoxd-ai/fruitctl/releases/download/v0.1.0-alpha.4/fruitctl-v0.1.0-alpha.3-corresponding-source.tar.gz"
+        },
+        "correspondingSourceReceipt": {
+          "bytes": 11731,
+          "name": "source-package-receipt.json",
+          "sha256": "a5ecfab9c41bd7e943ee261dae34af123f4ef2cf6ebdf47caf848488109417b9",
+          "url": "https://github.com/xoxd-ai/fruitctl/releases/download/v0.1.0-alpha.4/source-package-receipt.json"
+        },
+        "originalSourceArchiveAndReceiptBytesUnchanged": true,
+        "qualification": "original-signed-controller-and-alpha4-synthetic-runtime-only",
+        "syntheticAcceptance": {
+          "status": "passed",
+          "scope": "installed bundled SDK through MCP/shared broker and unchanged signed native controller to an owned loopback RFB fixture",
+          "platform": "darwin-arm64",
+          "nodeVersion": "24.21.0",
+          "sdkVersion": "1.32.1",
+          "protocolVersion": "2025-11-25",
+          "server": {
+            "name": "fruitctl",
+            "version": "0.1.0-alpha.4"
+          },
+          "tools": [
+            "vnc_command",
+            "action_queue",
+            "task_complete",
+            "task_failed"
+          ],
+          "geometry": [
+            96,
+            53
+          ],
+          "completePixelPNGs": 4,
+          "serverSequences": [
+            3,
+            4,
+            5,
+            8
+          ],
+          "rfbConnections": 2,
+          "successorReconnects": 1,
+          "terminalReleases": 2,
+          "terminalTools": [
+            "task_complete",
+            "task_failed"
+          ],
+          "queuedActionsVerified": 2,
+          "syntheticInputEvents": 6,
+          "distinctNativeProcesses": 2,
+          "releasedFirstNativeBeforeSuccessor": true,
+          "actualProtocolAndProcessClosureVerified": true,
+          "allSixOwnedProcessesAbsentOnFreshReadback": true,
+          "checkedAt": "2026-10-07T20:38:18.363365+00:00",
+          "archiveSha256": "c242952e4dd1bd1ad5dfeca783f507ac5d291397048509e007a2d80b028b18e2",
+          "receiptSha256": "26238d7cca621e8f0e30c4a1cf7407468a60d8e7c5feb69675b81d79920c2d02",
+          "independentReviewSha256": "a4e8bc909fe05ee1c80cd977d4e8bb33b656a1ef5d25e89928b58051501b674d",
+          "qualification": "synthetic-protocol-only"
+        },
+        "signature": {
+          "type": "Developer ID",
+          "identifier": "dev.tinyland.pzm-computer-use",
+          "teamIdentifier": "QP994XQKNH",
+          "verification": "passed",
+          "scope": "exact-controller-binary"
+        },
+        "notarization": {
+          "status": "Accepted",
+          "submissionId": "ef53fc15-e23e-4304-ba39-8cea0ba596f8",
+          "stapled": false,
+          "scope": "controller-submission-zip-only",
+          "wholeRuntimeNotarized": false
+        }
+      },
+      "sourceTests": {
+        "sourceRevision": "e0f4d064b076e58b33856d877e0e1c9266f55177",
+        "passed": 242,
+        "failed": 0,
+        "skipped": 0,
+        "evidence": "Root-reviewed exact-source tests and PR30 successful CI; build-time scope only"
+      },
+      "signedTag": {
+        "object_sha": "9b50dfe06e0db74f4fce86812a1125eb40770c4d",
+        "object_type": "tag",
+        "peeled_commit": "e0f4d064b076e58b33856d877e0e1c9266f55177",
+        "ref": "refs/tags/v0.1.0-alpha.4",
+        "verification": {
+          "reason": "valid",
+          "verified": true,
+          "verified_at": "2026-10-07T20:05:03Z"
+        }
+      },
+      "hostIncluded": false,
+      "publicAssetReadback": {
+        "checkedAt": "2026-10-07T20:09:40Z",
+        "assetCount": 13,
+        "receiptSha256": "a917b5e29d9154415295e25026460d35b3316d5c0f0fa71c679e95cd7268509f",
+        "transport": "anonymous-https-no-credentials-or-authorization-headers",
+        "qualification": "published-asset-byte-integrity-only"
+      },
+      "publicBootstrap": {
+        "checkedAt": "2026-10-07T20:42:55.570060+00:00",
+        "configurationRestoration": "exact-scoped-original-bytes-and-modes",
+        "executionSurface": "stock-shell-bootstrap-and-installed-cli-in-isolated-fixture",
+        "independentReviewSha256": "00878cef665a0ec34a81c6c5483807e80467e6e4ca250a0afd7c659c7518bb47",
+        "installedCliChecks": [
+          "help",
+          "doctor",
+          "same-version-reinstall",
+          "project-alias-refusal",
+          "uninstall",
+          "doctor-after-uninstall"
+        ],
+        "platform": "linux-x64",
+        "projectAdapters": [
+          "junie"
+        ],
+        "proof": {
+          "continuation": {
+            "bootstrapInstallOrReinstallRepeated": false,
+            "phaseCount": 5,
+            "phases": [
+              {
+                "exitCode": 0,
+                "name": "reinstalled-junie-doctor",
+                "status": "passed"
+              },
+              {
+                "exitCode": 1,
+                "name": "project-alias-install-refusal",
+                "status": "passed"
+              },
+              {
+                "exitCode": 0,
+                "name": "installed-sdk-mcp-metadata-and-tools",
+                "status": "passed"
+              },
+              {
+                "exitCode": 0,
+                "name": "installed-junie-uninstall",
+                "status": "passed"
+              },
+              {
+                "exitCode": 0,
+                "name": "retained-cli-junie-doctor-after-uninstall",
+                "status": "passed"
+              }
+            ],
+            "receiptSha256": "43d357a95a9fdecf0dda621797e7a39bcb1894f491e8e02d4d67ed9e0d378ae9",
+            "supervisorStatus": "passed"
+          },
+          "freshClosure": {
+            "recordedProcessBirthLifetimesAbsent": 58,
+            "recordedScopesAbsent": 2,
+            "signalsSent": 0
+          },
+          "generatedRuntimeIdentityMarkerSha256": "edf1f73f0a9cf4638b8010cd9449e219bd325565fec3e10fa380f1b60f2a5908",
+          "initialRun": {
+            "failureClassification": "Harness snapshot allowlist omitted the reinstall history root directory.",
+            "productPhaseCount": 7,
+            "productPhaseExitCodes": [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            "receiptSha256": "ca5fcb24cbdf752fb89342eb8971d688463131bfc98147a62698a85f8051cadc",
+            "supervisorStatus": "failed"
+          },
+          "installerSha256": "6e05a7a62f57491cfbda1f8d9212291f6237f04f4ac396bc04d183b88747cd58",
+          "linuxX64ArchiveSha256": "7abb0b5fc03fb52bdbfb4f29eca2a6d058e9f3057b2e96a74d7f16e694274e15",
+          "manifestSha256": "c374bda9838719c01ef6b345da488952429caa6bf8f5a665bbd605391c8e5e3b",
+          "nodeSha256": "7fde7b8afa198da66257f42ee2001d874c7355631e6d1579a5fb5ef1f246df4c",
+          "nodeVersion": "24.21.0",
+          "releasePayloadFiles": 3671,
+          "restoration": {
+            "historyAndBackups": "preserved-by-installer-contract",
+            "ownedSkillLauncherAndActiveReceipt": "absent",
+            "projectConfigOriginalBytesAndMode": "0640",
+            "scratch": "empty",
+            "unrelatedFilesAndAGENTS": "unchanged",
+            "userConfigOriginalBytesAndMode": "0600",
+            "versionedRuntimeCache": "retained-and-file-verified"
+          },
+          "retainedEvidence": "The initial failed receipt remains unchanged; the original full before/after reinstall delta was not saved and is not retroactively claimed.",
+          "sourceRevision": "e0f4d064b076e58b33856d877e0e1c9266f55177",
+          "tag": "v0.1.0-alpha.4"
+        },
+        "qualification": "junie-project-installed-cli-configuration-lifecycle-and-sdk-metadata-only",
+        "receiptSha256": "43d357a95a9fdecf0dda621797e7a39bcb1894f491e8e02d4d67ed9e0d378ae9",
+        "runtimeHashesAndModes": "verified",
+        "transport": "anonymous-public-https-bootstrap",
+        "userAdapters": 0
+      },
+      "mcpMetadataDiscovery": {
+        "broker": "synthetic-private-fixture",
+        "nativeStarts": 0,
+        "nodeVersion": "24.21.0",
+        "qualification": "initialize-and-listTools-only",
+        "sdkVersion": "1.32.1",
+        "server": {
+          "name": "fruitctl",
+          "version": "0.1.0-alpha.4"
+        },
+        "targetFramesOrInput": 0,
+        "toolCallsPerformed": 0,
+        "toolNames": [
+          "vnc_command",
+          "action_queue",
+          "task_complete",
+          "task_failed"
+        ],
+        "transport": "installed-Junie-entry-stock-launcher-bundled-Node"
+      },
+      "installerAcceptance": {
+        "status": "passed",
+        "scope": "offline bundled installer API in an isolated Junie project on darwin-arm64",
+        "installedFileHashAndModeCount": 3672,
+        "generatedMCPEntryVerified": true,
+        "configuredDoctorPassed": true,
+        "uninstallStatus": "removed",
+        "postUninstallDoctorStatus": "not-installed",
+        "ownedConfigAndLinksRemoved": true,
+        "runtimeCacheRetained": true,
+        "publicFetchBootstrap": "not-executed",
+        "actualAgentFrontend": "not-executed",
+        "verifierCorrection": "Optional Junie enabled key was incorrectly required; corrected read-only verification preserved the original failure and performed no reinstall.",
+        "platform": "darwin-arm64",
+        "checkedAt": "2026-10-07T20:38:18.363365+00:00",
+        "archiveSha256": "c242952e4dd1bd1ad5dfeca783f507ac5d291397048509e007a2d80b028b18e2",
+        "manifestSha256": "c374bda9838719c01ef6b345da488952429caa6bf8f5a665bbd605391c8e5e3b",
+        "receiptSha256": "26238d7cca621e8f0e30c4a1cf7407468a60d8e7c5feb69675b81d79920c2d02",
+        "independentReviewSha256": "a4e8bc909fe05ee1c80cd977d4e8bb33b656a1ef5d25e89928b58051501b674d",
+        "qualification": "junie-project-offline-bundled-installer-api-configuration-lifecycle-only"
+      }
+    },
+    {
       "tag": "v0.1.0-alpha.3",
       "releaseScope": "runtime-preview",
       "qualification": "scoped",
