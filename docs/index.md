@@ -17,10 +17,11 @@ artifacts.
 
 The canonical source is [xoxd-ai/fruitctl](https://github.com/xoxd-ai/fruitctl).
 The public documentation is live at
-[fruitctl.clients.xoxd.ai](https://fruitctl.clients.xoxd.ai/). Anonymous canonical
-delivery, public DNS and hostname TLS have been checked. All 24 served files of
-documentation revision `ca6f19cd4430b0ca809bf07169e8a96362853465`, including HTML
-and the build manifest, matched the reviewed build at 02:38 UTC on 2026-10-06.
+[fruitctl.clients.xoxd.ai](https://fruitctl.clients.xoxd.ai/). The
+[live build manifest](https://fruitctl.clients.xoxd.ai/build-manifest.json)
+records the served source revision and artifact checksums. The
+[Public documentation workflow](https://github.com/xoxd-ai/fruitctl/actions/workflows/docs.yml)
+records automatic main-branch builds and uploads.
 The site serves `no-transform` response headers to preserve those bytes.
 
 ## Adoption contract
@@ -42,11 +43,13 @@ milestones and the distinction between Lab targets and public best-effort suppor
 
 ## Current status
 
-The immutable [v0.1.0-alpha.2 runtime preview](https://github.com/xoxd-ai/fruitctl/releases/tag/v0.1.0-alpha.2)
-is available with bundled Node.js 24.21.0 and a signed, Apple-notarized VNC
-controller in its macOS 15+ ARM64 runtime. Archive integrity, offline native
-checks, actual public adapter bootstrap and synthetic VNC/MCP image exchange
-have scoped evidence. Linux
+The immutable [v0.1.0-alpha.3 runtime preview](https://github.com/xoxd-ai/fruitctl/releases/tag/v0.1.0-alpha.3)
+is available with bundled Node.js 24.21.0 and a signed VNC controller in its
+macOS 15+ ARM64 runtime. The controller retains its original Apple Accepted
+submission; that does not notarize the entire runtime archive. Archive and
+corresponding-source integrity, the Darwin ARM64 runtime's synthetic VNC/MCP
+exchange, and 14 Linux x64 user/project lifecycle cases through the bundled
+installer API across seven adapters have scoped evidence. Linux
 connects through the SSH bridge to a configured Darwin controller. Host is an
 unqualified source prototype with no public executable or automatic setup.
 Real agent rendering and desktop journeys, physical overlay exclusion, the SSH
