@@ -1,6 +1,9 @@
 {
   "name": "@xoxd-ai/fruitctl",
-  "version": "0.1.0-alpha.4",
+  "version": "0.1.0-alpha.5",
+  "fruitctlInstallerCapabilities": {
+    "installRoot": 1
+  },
   "description": "Fruitctl: shared VNC MCP transport, agent skill and rootless installation",
   "license": "MIT",
   "author": "Rıza Emre ARAS <r.emrearas@proton.me>",

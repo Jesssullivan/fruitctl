@@ -128,6 +128,112 @@ would need its own attended consent and permission qualification; no managed
 or headless Screen Capture grant is provided. [Apple's ScreenCaptureKit sample](https://developer.apple.com/documentation/screencapturekit/capturing-screen-content-in-macos)
 requires user permission and an app restart before capture.
 
+## Explicit install root: next-preview source guidance
+
+The next installer interface adds `--install-root ABSOLUTE_DIRECTORY` to
+`install`, `doctor`, `rollback` and `uninstall`, and to the stock bootstrap.
+This section describes that source contract. It requires a new immutable
+producer that has been published and qualified for the capability. The
+published **alpha.4 bootstrap and runtime do not support `--install-root`**;
+the pinned alpha.4 installation above keeps its existing behavior.
+
+An install root selects Fruitctl's operational storage. Registration remains a
+separate choice: an explicit-root installation must also specify `--scope user`
+or `--scope project`. `--project-dir` selects the registration project and is
+passed through by the next bootstrap; when omitted, project scope uses the
+current directory. Choose project scope and an explicit project directory when
+you want registration confined to an owned project.
+
+Let `R` be the chosen absolute install root:
+
+| Role | No install root: existing layout | Explicit install root `R` |
+| --- | --- | --- |
+| Verified runtime cache | `~/.local/share/fruitctl/releases/TAG/OS-ARCH` | `R/releases/TAG/OS-ARCH` |
+| Locks, receipts, backups and history | `~/.local/state/fruitctl/install` | `R/state/install` |
+| Convenience launcher | `~/.local/bin/fruitctl` | `R/bin/fruitctl` |
+| User MCP and skill registration | Supported user configuration destinations | Same supported user destinations |
+| Project MCP and skill registration | Selected project directory | Same selected project directory |
+
+`--scope user` still changes the ordinary supported user configuration. An
+install root does **not** isolate a user profile, relocate the account home,
+reassign `HOME` or `CODEX_HOME`, or disable existing adapter environment rules.
+It does not create a broker profile, change runtime configuration or socket
+paths, or supply credentials. Generated MCP entries pin the installed versioned
+executable and existing target/configuration fields; they do not pass
+`--install-root`. That storage option is rejected on `mcp`, `broker`, `relay` and
+`attach`.
+
+For a future qualified producer, replace every placeholder below. Use an
+absolute project path and a dedicated absolute root you own; quote paths that
+contain spaces. Obtain and verify the next bootstrap through its exact producer
+source and checksum before running it:
+
+```text
+sh <verified-next-install.sh> --agent junie --scope project \
+  --project-dir <absolute-project-directory> \
+  --install-root <absolute-install-root> \
+  --version <new-qualified-exact-tag> --target <configured-profile> --dry-run
+
+<absolute-install-root>/bin/fruitctl doctor --agent junie --scope project \
+  --project-dir <absolute-project-directory> --install-root <absolute-install-root>
+```
+
+Review the dry-run destinations, then rerun that installation command without
+`--dry-run`. First adoption requires an empty owned root or an existing matching
+Fruitctl root descriptor. Relative paths, the filesystem or account-home root,
+immutable/store-managed paths, foreign-owned roots and unmarked nonempty roots
+are refused. Install-root aliases resolve to the same effective storage
+namespace; they do not create a second receipt set. Existing project-path alias
+protections remain unchanged. Root identity changes during an operation are
+refused.
+
+The API equivalent is `install({ agent: 'junie', scope: 'project', projectDir,
+installRoot, version, target })`. Existing API `home` behavior remains compatible
+when `installRoot` is omitted. With both supplied, `installRoot` selects storage
+and `home` selects user registration; the CLI does not add a `--home` option.
+
+### Select the same root for inspection and recovery
+
+Supply `--install-root` again on every later doctor, rollback or uninstall call,
+with the same agent, scope and recorded project directory:
+
+```text
+<absolute-install-root>/bin/fruitctl rollback --agent junie --scope project \
+  --project-dir <absolute-project-directory> --install-root <absolute-install-root>
+<absolute-install-root>/bin/fruitctl uninstall --agent junie --scope project \
+  --project-dir <absolute-project-directory> --install-root <absolute-install-root>
+```
+
+Aggregate `doctor --install-root <absolute-install-root> --json` inspects only
+that root's namespace and reports its selection. Omitting the option inspects
+the legacy namespace; an omitted or wrong root cannot certify installations in
+another root. There is no automatic root discovery or global home pointer.
+Recovery uses the validated receipt's recorded registration destinations rather
+than moving them when the invoking environment changes. An existing entry or
+skill owned by another root cannot be adopted as a new installation baseline.
+
+Uninstall removes only owned registration, launcher and active receipt state,
+subject to shared ownership within that namespace. It retains verified release
+caches, generated runtime identity markers, the root descriptor, backups,
+history and their directories. It does not delete the install root. Moving or
+copying a root does not rewrite its absolute paths or migrate receipts: doctor
+reports the mismatch and mutating recovery is refused. To change roots,
+uninstall from the original root and recorded project, then install independently
+into a new empty root. The original cache and history remain. Automatic
+migration and purge are unsupported.
+
+### Older runtimes must refuse explicit-root requests
+
+The updated bootstrap must verify the selected runtime's install-root capability
+before calling its installer API. The executing installer must also verify that
+capability in the target release before committing its cache or registration,
+including when installing or rolling back to an older version. Missing or
+inconsistent capability markers cause an explicit refusal, with no fallback to
+normal-home storage. Do not pass `installRoot` directly to alpha.4's older
+exported API: it ignores the unknown property and does not provide this storage
+selection. Installations without an explicit root remain compatible with older
+releases and their legacy receipt layout.
+
 ## Choose the control path
 
 On macOS, the Darwin ARM64 runtime provides the verified native controller;
