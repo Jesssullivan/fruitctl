@@ -70,8 +70,11 @@ bytes and uses the bundled Node runtime. Alpha2 passed actual anonymous public
 bootstrap for all seven user adapters and Claude project scope on Linux x64,
 including doctor, every runtime hash and mode, uninstall and exact unrelated
 configuration restoration. These checks qualify installed adapters, not a real
-frontend or desktop. That public bootstrap evidence applies to alpha.2. Public
-bootstrap validation for alpha.3 remains pending. Doctor checks
+frontend or desktop. That seven-user-adapter evidence applies to alpha.2. For alpha.3, one
+anonymous Linux x64 stock bootstrap installed Claude project scope. A subsequent
+installed CLI continuation passed help, doctor, uninstall and post-uninstall
+doctor, with exact unrelated configuration bytes and mode restoration. This
+qualifies that installed configuration route. Doctor checks
 installed hashes and modes, including the bundled controller. Rollback uses
 the previous verified runtime; uninstall preserves verified versioned caches
 and unrelated configuration. Explicit operator native-path overrides remain

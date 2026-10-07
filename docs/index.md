@@ -49,8 +49,9 @@ macOS 15+ ARM64 runtime. The controller retains its original Apple Accepted
 submission; that does not notarize the entire runtime archive. Archive and
 corresponding-source integrity, the Darwin ARM64 runtime's synthetic VNC/MCP
 exchange, and 14 Linux x64 user/project lifecycle cases through the bundled
-installer API across seven adapters have scoped evidence. Linux
-connects through the SSH bridge to a configured Darwin controller. Host is an
+installer API across seven adapters have scoped evidence. The public Linux x64
+Claude project bootstrap and installed CLI diagnostics/uninstall also have
+scoped evidence. Linux connects through the SSH bridge to a configured Darwin controller. Host is an
 unqualified source prototype with no public executable or automatic setup.
 Real agent rendering and desktop journeys, physical overlay exclusion, the SSH
 journey and measured service objectives remain pending. A generated MCP entry

@@ -17,10 +17,10 @@
         "archive-integrity-and-corresponding-source",
         "developer-id-signature-and-original-apple-accepted-submission-of-exact-controller",
         "darwin-arm64-complete-signed-runtime-synthetic-rfb-mcp-image-exchange",
-        "offline-linux-x64-seven-user-and-project-adapter-bundled-installer-api-lifecycle"
+        "offline-linux-x64-seven-user-and-project-adapter-bundled-installer-api-lifecycle",
+        "anonymous-public-linux-x64-claude-project-bootstrap-and-installed-cli-lifecycle"
       ],
       "pendingScopes": [
-        "anonymous-public-release-download-and-bootstrap",
         "real-agent-frontend-rendering-and-desktop-journey",
         "physical-overlay-exclusion-and-input-mapping",
         "real-linux-to-darwin-ssh-journey",
@@ -147,6 +147,27 @@
         "independentReviewSha256": "b5d89bcb90c90b4d126b980d7823d8c9498acaa63ead9c3e33a4f3f7d0ab938d",
         "extraCaseCount": 5,
         "executionSurface": "bundled-exported-installer-api"
+      },
+      "publicBootstrap": {
+        "checkedAt": "2026-10-07T02:27:47Z",
+        "platform": "linux-x64",
+        "userAdapters": 0,
+        "projectAdapters": [
+          "claude"
+        ],
+        "transport": "anonymous-https-no-mocks-or-credentials",
+        "runtimeHashesAndModes": "verified",
+        "configurationRestoration": "exact",
+        "receiptSha256": "fc8f916c6a28acf38484336fc900c3d117d5e1dc4b4dbeb6d38fa0856a35acd1",
+        "qualification": "claude-project-installed-cli-configuration-lifecycle-only",
+        "independentReviewSha256": "269658aae550220877819164a02cba4b71b311f13e7c7c4006d33373d6c907a4",
+        "executionSurface": "stock-shell-bootstrap-and-installed-cli",
+        "installedCliChecks": [
+          "help",
+          "doctor",
+          "uninstall",
+          "doctor-after-uninstall"
+        ]
       }
     },
     {
