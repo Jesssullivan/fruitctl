@@ -82,6 +82,13 @@ with `--scope user`. This bootstrap selects project scope from the current
 directory; it has no `--project-dir` option. The installed CLI supports that
 option when subsequently selecting another project.
 
+Use the receipt's recorded project path for subsequent lifecycle commands.
+Alpha.3's bootstrap uses the physical current directory, while the installed
+CLI preserves an explicit `--project-dir` spelling. Under symlinked paths,
+using another spelling can create a second receipt for the same project.
+Current source refuses that alternate path and names the recorded path; this
+guard requires a subsequent runtime release and does not migrate old receipts.
+
 Inspect the JSON result. `installed` records the versioned runtime, MCP entry
 and skill link. `declarative-required` means configuration was retained: apply
 its fragment through Home Manager or the owning configuration surface.
