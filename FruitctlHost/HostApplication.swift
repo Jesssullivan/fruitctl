@@ -69,6 +69,7 @@ final class HostApplicationController: NSObject, NSApplicationDelegate, NSMenuDe
     private var enableCaptureMenuItem: NSMenuItem?
     private var disableCaptureMenuItem: NSMenuItem?
     private var idleReferenceMenuItem: NSMenuItem?
+    private var idleReferenceStatusMenuItem: NSMenuItem?
     private lazy var idleReference = HostIdleReferenceCoordinator(
         permission: permission, clock: { [weak self] in self?.clock.milliseconds() ?? UInt64.max },
         conditions: { [unowned self] in self.idleReferenceConditions },
@@ -137,7 +138,7 @@ final class HostApplicationController: NSObject, NSApplicationDelegate, NSMenuDe
 
     func applicationWillTerminate(_ notification: Notification) {
         timer?.invalidate()
-        invalidateActivity()
+        invalidateActivity(reason: .hostStopping)
         server?.stop(); server = nil
         for observer in notifications {
             NotificationCenter.default.removeObserver(observer)
@@ -176,13 +177,18 @@ final class HostApplicationController: NSObject, NSApplicationDelegate, NSMenuDe
         let reference = NSMenuItem(title: "Arm one idle reference export (60s)",
                                    action: #selector(armIdleReference(_:)), keyEquivalent: "")
         reference.target = self
+        let referenceStatus = NSMenuItem(title: "Reference not armed", action: nil, keyEquivalent: "")
+        referenceStatus.isEnabled = false
+        let identity = NSMenuItem(title: "Host instance " + String(instanceID.prefix(8)), action: nil,
+                                  keyEquivalent: "")
+        identity.isEnabled = false
         menu.addItem(stop); menu.addItem(allow); menu.addItem(.separator())
-        menu.addItem(enable); menu.addItem(disable); menu.addItem(reference)
-        menu.addItem(.separator()); menu.addItem(quit)
+        menu.addItem(enable); menu.addItem(disable); menu.addItem(reference); menu.addItem(referenceStatus)
+        menu.addItem(.separator()); menu.addItem(identity); menu.addItem(quit)
         item.menu = menu
         statusItem = item; stopMenuItem = stop; allowMenuItem = allow
         enableCaptureMenuItem = enable; disableCaptureMenuItem = disable
-        idleReferenceMenuItem = reference
+        idleReferenceMenuItem = reference; idleReferenceStatusMenuItem = referenceStatus
         updateHumanControl()
     }
 
@@ -193,14 +199,24 @@ final class HostApplicationController: NSObject, NSApplicationDelegate, NSMenuDe
         disableCaptureMenuItem?.isEnabled = capturePreferences.isEnabled
         idleReferenceMenuItem?.isEnabled = capturePreferences.isEnabled && permission.isGranted
             && idleReferenceConditions.isIdle && !idleReference.isExporting
-        statusItem?.button?.title = availability.humanAllowed ? "Fruitctl" : "Fruitctl · Stopped"
+        updateIdleReferencePresentation()
+    }
+
+    private func updateIdleReferencePresentation() {
+        let status = idleReference.status
+        idleReferenceStatusMenuItem?.title = status.message
+        statusItem?.button?.title = !availability.humanAllowed ? "Fruitctl · Stopped"
+            : status.state == .armed ? "Fruitctl · Reference \(status.remainingSeconds)s" : "Fruitctl"
+        let description = status.message + " · Host instance " + String(instanceID.prefix(8))
+        statusItem?.button?.toolTip = description
+        statusItem?.button?.setAccessibilityLabel(description)
     }
 
     func menuWillOpen(_ menu: NSMenu) { updateHumanControl() }
 
     @objc private func stopAgentControl(_ sender: Any?) {
         availability.apply(.humanStopped)
-        invalidateActivity()
+        invalidateActivity(reason: .humanStopped)
         updateHumanControl()
     }
 
@@ -208,7 +224,7 @@ final class HostApplicationController: NSObject, NSApplicationDelegate, NSMenuDe
         availability.apply(.humanResumed)
         // Allowing creates no lease and bypasses none of the session/display
         // checks. A controller must start an entirely new activity.
-        invalidateActivity()
+        invalidateActivity(reason: .humanResumed)
         updateHumanControl()
     }
 
@@ -220,7 +236,7 @@ final class HostApplicationController: NSObject, NSApplicationDelegate, NSMenuDe
     @objc private func enableCapture(_ sender: Any?) {
         // Persist before asking: macOS Quit & Reopen drops custom launch args.
         capturePreferences.setEnabled(true)
-        invalidateActivity()
+        invalidateActivity(reason: .captureEnabled)
         updateHumanControl()
         if !permission.isGranted { _ = permission.requestFromHuman() }
         updateHumanControl()
@@ -228,18 +244,18 @@ final class HostApplicationController: NSObject, NSApplicationDelegate, NSMenuDe
 
     @objc private func disableCapture(_ sender: Any?) {
         capturePreferences.setEnabled(false)
-        invalidateActivity()
+        invalidateActivity(reason: .captureDisabled)
         updateHumanControl()
     }
 
     @objc private func armIdleReference(_ sender: Any?) {
         do {
             _ = try idleReference.armFromHuman()
-            statusItem?.button?.toolTip = "One idle reference may be exported within 60 seconds"
         } catch {
             // This diagnostic never requests permission, enables capture,
             // hides panels, or clears the human Stop latch.
-            statusItem?.button?.toolTip = "Idle reference unavailable; no capture started"
+            // The coordinator retains a bounded rejection reason for both
+            // the visible menu status and the read-only health snapshot.
         }
         updateHumanControl()
     }
@@ -251,7 +267,7 @@ final class HostApplicationController: NSObject, NSApplicationDelegate, NSMenuDe
             MainActor.assumeIsolated {
                 guard let self else { return }
                 self.generation &+= 1
-                self.invalidateActivity()
+                self.invalidateActivity(reason: .displayChanged)
                 self.renderer.rebuild()
             }
         })
@@ -272,7 +288,14 @@ final class HostApplicationController: NSObject, NSApplicationDelegate, NSMenuDe
                     self.availability.apply(event)
                     // Every transition requires a fresh activity/capture; wake
                     // never restores an expired lease or an old input permit.
-                    self.invalidateActivity()
+                    let reason: HostIdleReferenceReason
+                    switch event {
+                    case .sessionResigned, .sessionActivated: reason = .sessionChanged
+                    case .screensSlept, .screensWoke: reason = .screenSleepChanged
+                    case .systemSlept, .systemWoke: reason = .systemSleepChanged
+                    default: reason = .lifecycleChanged
+                    }
+                    self.invalidateActivity(reason: reason)
                 }
             })
         }
@@ -286,9 +309,10 @@ final class HostApplicationController: NSObject, NSApplicationDelegate, NSMenuDe
     private func tick() {
         let now = clock.milliseconds()
         if lease.expire(at: now) { clearActivityUI() }
-        if (lease.active != nil || idleReference.armedID != nil || idleReference.isExporting)
-            && (!activityEligible || !capture.enabled || !permission.isGranted) {
-            invalidateActivity()
+        if lease.active != nil || idleReference.armedID != nil || idleReference.isExporting {
+            if !activityEligible { invalidateActivity(reason: .activityUnavailable) }
+            else if !capture.enabled { invalidateActivity(reason: .captureDisabled) }
+            else if !permission.isGranted { invalidateActivity(reason: .permissionUnavailable) }
         }
         if lease.active != nil {
             switch HostLeaseState.uiHeartbeatDecision(activityEligible: activityEligible,
@@ -299,9 +323,12 @@ final class HostApplicationController: NSObject, NSApplicationDelegate, NSMenuDe
                 // No UI heartbeat or ready permit exists before excluded capture.
                 break
             case .recordVisibleHeartbeat: lastUIHeartbeat = now
-            case .invalidate: invalidateActivity()
+            case .invalidate: invalidateActivity(reason: .uiUnavailable)
             }
         }
+        // Update the existing local menu; this reads no permission API and
+        // never renews the stored 60-second human choice.
+        updateIdleReferencePresentation()
     }
 
     private var activityEligible: Bool {
@@ -329,7 +356,9 @@ final class HostApplicationController: NSObject, NSApplicationDelegate, NSMenuDe
     }
 
     private func requireAvailable() throws {
-        guard activityEligible else { invalidateActivity(); throw HostLeaseError.notReady }
+        guard activityEligible else {
+            invalidateActivity(reason: .activityUnavailable); throw HostLeaseError.notReady
+        }
     }
 
     private func disconnected(_ connectionID: UUID) {
@@ -337,8 +366,8 @@ final class HostApplicationController: NSObject, NSApplicationDelegate, NSMenuDe
         if lease.release(connectionID: connectionID) { clearActivityUI() }
     }
 
-    private func invalidateActivity() {
-        idleReference.invalidate()
+    private func invalidateActivity(reason: HostIdleReferenceReason = .lifecycleChanged) {
+        idleReference.invalidate(reason: reason)
         lease.invalidate(); clearActivityUI()
     }
 
@@ -399,14 +428,22 @@ final class HostApplicationController: NSObject, NSApplicationDelegate, NSMenuDe
     private func handle(_ request: HostRequest, connectionID: UUID) async -> HostResponse {
         let now = clock.milliseconds()
         if lease.expire(at: now) { clearActivityUI() }
+        // A health reply reports the same permission sample that guarded its
+        // Arm. Capture/export still perform their own independent checks.
+        let healthPermissionGranted: Bool? = request.action == "health" ? permission.isGranted : nil
         if (lease.active != nil || idleReference.armedID != nil || idleReference.isExporting)
-            && !permission.isGranted { invalidateActivity() }
+            && !(healthPermissionGranted ?? permission.isGranted) {
+            invalidateActivity(reason: .permissionUnavailable)
+        }
         do {
             switch request.action {
             case "health":
                 var status = readiness(now: now)
-                status["screen_capture_permission"] = .boolean(permission.isGranted)
-                status["idle_reference_armed_id"] = idleReference.armedID.map { .string($0) } ?? .null
+                status["screen_capture_permission"] = .boolean(healthPermissionGranted ?? false)
+                let referenceStatus = idleReference.status
+                status["idle_reference_armed_id"] = referenceStatus.armedID.map { .string($0) } ?? .null
+                status["idle_reference_status"] = .object(referenceStatus.metadata)
+                status["instance_label"] = .string(String(instanceID.prefix(8)))
                 status["idle_reference_exporting"] = .boolean(idleReference.isExporting)
                 status["capabilities"] = .array(["capture", "begin_activity", "renew_activity",
                                                  "release_activity", "export_idle_reference"].map { .string($0) })
@@ -417,7 +454,7 @@ final class HostApplicationController: NSObject, NSApplicationDelegate, NSMenuDe
                 try requireAvailable()
                 guard capture.enabled else { throw HostCaptureError.notEnabled }
                 guard !captureInProgress, !idleReference.isExporting else { throw HostLeaseError.busy }
-                idleReference.invalidate()
+                idleReference.invalidate(reason: .activityRequested)
                 let session = try request.requiredString("session_id")
                 let sequence = try request.requiredSequence()
                 let challenge = try request.requiredString("challenge")
