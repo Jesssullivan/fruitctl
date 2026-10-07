@@ -42,6 +42,8 @@ test('all seven adapters render their actual native schemas without launching ag
     const result = await install({ ...f, agent, dryRun: true });
     assert.equal(result.status, 'planned');
     assert.match(result.snippet, /fruitctl/);
+    if (agent === 'junie') assert.equal(result.ideSettingsSnippet, result.snippet);
+    else assert.equal(result.ideSettingsSnippet, undefined);
   }
   const open = JSON.parse(renderIntegration({ agent: 'opencode', executable: '/p/bin/fruitctl', target: 'desktop' }));
   assert.deepEqual(open.mcp.fruitctl.command, ['/p/bin/fruitctl', 'mcp', '--target', 'desktop']);
@@ -247,6 +249,10 @@ test('Junie mutable enabled state survives upgrades and rollback; no instruction
   const config = JSON.parse(await fs.readFile(configPath, 'utf8'));
   config.mcpServers.fruitctl.enabled = false;
   await fs.writeFile(configPath, JSON.stringify(config, null, 2));
+  const preview = await install({ ...f, dryRun: true });
+  assert.equal(preview.status, 'planned');
+  assert.equal(JSON.parse(preview.ideSettingsSnippet).mcpServers.fruitctl.enabled, false);
+  assert.equal(await fs.readFile(configPath, 'utf8'), JSON.stringify(config, null, 2));
   const v2 = await releaseFixture(f, 'v0.1.0-alpha.2');
   const result = await install({ ...f, version: v2.manifest.version, offline: v2.offline });
   assert.ok(result.ideSettingsSnippet);
@@ -355,7 +361,7 @@ test('custom Copilot install, doctor, rollback and idempotent uninstall preserve
   assert.equal((await fs.stat(first.receiptPath)).mode & 0o777, 0o600);
   const project = { ...f, scope: 'project', env };
   await install({ ...project, offline: v1.offline });
-  assert.equal((await doctor({ home: f.home, env: {} })).status, 'configured');
+  assert.equal((await doctor({ home: f.home, platform: f.platform, arch: f.arch, env: {} })).status, 'configured');
   const v2 = await releaseFixture(f, 'v0.1.0-alpha.2');
   await install({ ...f, env, version: v2.manifest.version, offline: v2.offline });
   assert.equal((await rollback({ ...f, env: {} })).to, f.version);
@@ -368,7 +374,7 @@ test('custom Copilot install, doctor, rollback and idempotent uninstall preserve
   assert.equal(await fs.readFile(projectConfig, 'utf8'), projectOriginal);
   assert.equal(await fs.readFile(defaultConfig, 'utf8'), defaultOriginal);
   assert.equal(await fs.readFile(settings, 'utf8'), settingsOriginal);
-  assert.equal((await doctor({ home: f.home, env })).status, 'not-installed');
+  assert.equal((await doctor({ home: f.home, platform: f.platform, arch: f.arch, env })).status, 'not-installed');
 });
 
 test('changed install destinations cannot detach receipts and backups from their owned files', async t => {
@@ -506,19 +512,21 @@ test('rollback refuses a prior runtime with altered permissions before changing 
 
 test('aggregate doctor audits receipts and rejects missing/unknown agent identities without recursion', async t => {
   const f = await fixture(t);
-  assert.equal((await doctor({ home: f.home, env: {} })).status, 'not-installed');
+  const aggregateContext = { home: f.home, platform: f.platform, arch: f.arch, env: {} };
+  assert.equal((await doctor(aggregateContext)).status, 'not-installed');
   const release = await releaseFixture(f), result = await install({ ...f, offline: release.offline });
-  const aggregate = await doctor({ home: f.home, env: {} });
+  const aggregate = await doctor(aggregateContext);
   assert.equal(aggregate.status, 'configured');
   assert.equal(aggregate.installations.length, 1);
   assert.match(aggregate.qualification, /runtime and target behavior unverified/);
+  await assert.rejects(doctor({ ...aggregateContext, platform: 'darwin', arch: 'arm64' }), /runtime identity mismatch/);
   const receipt = JSON.parse(await fs.readFile(result.receiptPath, 'utf8'));
   delete receipt.agent;
   await fs.writeFile(result.receiptPath, JSON.stringify(receipt));
-  await assert.rejects(doctor({ home: f.home, env: {} }), /Invalid install receipt/);
+  await assert.rejects(doctor(aggregateContext), /Invalid install receipt/);
   receipt.agent = 'constructor';
   await fs.writeFile(result.receiptPath, JSON.stringify(receipt));
-  await assert.rejects(doctor({ home: f.home, env: {} }), /Invalid install receipt/);
+  await assert.rejects(doctor(aggregateContext), /Invalid install receipt/);
 });
 
 test('strict JSON and ambiguous TOML declarations are rejected before any write', async t => {

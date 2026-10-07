@@ -23,7 +23,6 @@ async function main() {
   for await (const chunk of fs.createReadStream(null, { fd: 3 })) bytes = Buffer.concat([bytes, chunk]);
   if (bytes.readUInt32BE(0) !== bytes.length - 4 || Object.hasOwn(process.env, 'VNC_PASSWORD')) process.exit(70);
   bytes.fill(0);
-  record('started');
   const keepAlive = setInterval(() => {}, 1000);
   process.on('SIGTERM', () => {
     record('owned-term');
@@ -32,6 +31,7 @@ async function main() {
       setTimeout(() => process.exit(0), 180);
     } else process.exit(0);
   });
+  record('started');
   if (process.env.FRUITCTL_STARTUP_MODE === 'normal') {
     emit({ method: 'ready', params: { scaledWidth: 32, scaledHeight: 16 } });
   }
@@ -77,9 +77,9 @@ async function fixture(t, mode = 'never-ready') {
     await fs.rm(directory, { recursive: true, force: true });
   });
   const events = async () => (await fs.readFile(eventsPath, 'utf8')).trim().split('\n').filter(Boolean).map(JSON.parse);
-  const ownership = async () => {
+  const ownership = async (timeoutMs = 1500) => {
     let started;
-    await waitUntil(async () => { started = (await events()).find(event => event.event === 'started'); return started; }, 'owned fixture did not start');
+    await waitUntil(async () => { started = (await events()).find(event => event.event === 'started'); return started; }, 'owned fixture did not start', timeoutMs);
     assert.equal(started.ppid, process.pid, 'the signal target must be this test process\'s own child');
     const status = await fs.readFile(`/proc/${started.pid}/status`, 'utf8');
     assert.match(status, new RegExp(`^PPid:\\s+${process.pid}$`, 'm'));
@@ -99,8 +99,23 @@ async function fixture(t, mode = 'never-ready') {
 for (const trigger of ['abort', 'deadline']) {
   test(`cold broker ${trigger} retires an owned never-ready child, drains its queue and ignores late readiness`, ownedLinux, async t => {
     const owned = await fixture(t);
+    let prepared;
+    let preparedPid;
+    if (trigger === 'deadline') {
+      // Establish the child ownership prerequisite before starting the 250ms
+      // request budget. A cold process can otherwise be correctly killed before
+      // it gets CPU to write its PID journal. Readiness stays blocked, so this
+      // still exercises the broker's timed startup, queue and retirement path.
+      prepared = new NativeExecutor({ env: owned.env, daemonPath: owned.daemonPath, emitDiagnostics: false });
+      t.after(() => prepared.close({ graceful: false }));
+      preparedPid = await owned.ownership(10000);
+    }
     const socketPath = path.join(owned.directory, 's');
-    const broker = await createBroker({ socketPath, config: { targets: { desktop: owned.profile } } });
+    const broker = await createBroker({ socketPath, config: { targets: { desktop: owned.profile } },
+      ...(prepared ? { factory: async (_profile, { signal, deadline, onExecutor }) => {
+        onExecutor(prepared);
+        return prepared.ready(30000, { signal, deadline });
+      } } : {}) });
     const lane = broker.lanes.get('desktop');
     const a = new BrokerExecutor({ socketPath, target: 'desktop' });
     const b = new BrokerExecutor({ socketPath, target: 'desktop' });
@@ -111,7 +126,7 @@ for (const trigger of ['abort', 'deadline']) {
     const first = a.execute([{ action: 'key_tap', key: 'tab' }],
       { signal: controller.signal, timeoutMs: trigger === 'deadline' ? 250 : 1500 });
     const firstRejected = assert.rejects(first, /deadline|operator startup abort/i);
-    const pid = await owned.ownership();
+    const pid = preparedPid ?? await owned.ownership();
     const queued = a.execute([{ action: 'key_tap', key: 'enter' }], { timeoutMs: 1500 });
     const queuedRejected = assert.rejects(queued, /revoked|released/i);
     await waitUntil(() => lane.waiting === 2, 'second request did not enter the cold queue');

@@ -9,19 +9,23 @@ The flake exports `packages.<system>.fruitctl` (`default`, `runtime` and `proxy`
 aliases), `homeManagerModules.default`, `overlays.default`, and the canonical skill at
 `share/fruitctl/skills/fruitctl`. The Node package is available for ARM and x86
 Darwin/Linux evaluation. `packages.aarch64-darwin.native-controller` supplies
-the released alpha.2 signed controller; native VNC control is Apple Silicon
+the released alpha.3 signed controller; native VNC control is Apple Silicon
 Darwin only. Linux uses the SSH bridge. The Host prototype has no public package
 export or runtime payload.
 
 ```nix
-inputs.fruitctl.url = "github:xoxd-ai/fruitctl/b0efd25aeabe382ce938fc587d25f97095534b2c";
+inputs.fruitctl.url = "github:xoxd-ai/fruitctl/a628a854f6988bf91834a810228c8a398f0e3f07";
 
 # In the Home Manager module list:
 imports = [ inputs.fruitctl.homeManagerModules.default ];
 ```
 
-This reviewed development-source pin adds the installation mode below and
-continues to consume the released alpha.2 controller bytes.
+This reviewed development-source pin supplies the portable runtime and skill.
+The explicitly selected `native-controller` package separately consumes the
+immutable alpha.3 controller produced from
+`e00fcc86bbac4247d5a0847d7e656369c52cc15f`. Advancing the source pin does not
+rebuild, patch or re-sign those released bytes. Source evaluation, package
+realization and a Home Manager activation are separate checks.
 
 ## CLI and skills installation
 
@@ -104,7 +108,7 @@ can still reach the same machine, so assign its physical identity explicitly;
 the broker does not infer arbitrary network aliases.
 
 The optional Host/indicator remains a private prototype until its exact
-capture mode passes background and indicator-exclusion qualification. Alpha.2
+capture mode passes background and indicator-exclusion qualification. Alpha.3
 ships no Host app, ZIP, package export, service or helper mapping. The existing
 `targets.<profile>.hostHelper` option remains available for independently
 qualified private work and defaults to null; configuring it does not install or
@@ -112,7 +116,7 @@ start an app. Home Manager never creates a qualification receipt or infers
 display geometry.
 
 The `native-controller` package extracts only the unchanged signed controller
-from the [alpha.2 Darwin runtime](https://github.com/xoxd-ai/fruitctl/releases/tag/v0.1.0-alpha.2).
+from the [alpha.3 Darwin runtime](https://github.com/xoxd-ai/fruitctl/releases/tag/v0.1.0-alpha.3).
 Its output contains `bin/claude-kvm-daemon`, the native notices and curated
 release metadata; the separate Node package owns `bin/fruitctl`. Archive,
 executable and notice hashes, archive file modes, ARM64 linkage and the strict
@@ -122,7 +126,8 @@ executable bytes and signature remain unchanged. Fixups, stripping and
 re-signing are disabled.
 The exact artifact and corresponding-source bindings live in
 [`nix/native-release.json`](../nix/native-release.json). Apple returned `Accepted`
-for this command-line tool; it is not stapled. These distribution checks do not
+for the original controller-ZIP submission; that does not notarize the complete
+runtime archive. The command-line tool is not stapled. These checks do not
 qualify real VNC authentication, target pixels/input mapping, an agent frontend,
 the Linux bridge journey or product SLOs.
 
@@ -132,7 +137,7 @@ binary and receipt hashes, expected signing identifier and Developer ID team,
 and disables binary fixups/stripping. It is a historical diagnostic baseline;
 it **does not include the current fresh-frame repair**. Selecting it explicitly
 does not qualify a new Fruitctl release. It remains separate from the explicitly
-selected alpha.2 `native-controller` package.
+selected alpha.3 `native-controller` package.
 
 ## Linux SSH controller
 

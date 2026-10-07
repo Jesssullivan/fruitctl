@@ -17,12 +17,13 @@ verified release, configures a named target, and checks a fresh observation
 before input. If the release does not support your controller and agent, it
 reports the missing prerequisite instead of claiming installation succeeded.
 
-The immutable [v0.1.0-alpha.2 runtime preview](https://github.com/xoxd-ai/fruitctl/releases/tag/v0.1.0-alpha.2)
+The immutable [v0.1.0-alpha.3 runtime preview](https://github.com/xoxd-ai/fruitctl/releases/tag/v0.1.0-alpha.3)
 ships bundled Node.js 24.21.0, the installer, shared skill and MCP/broker code.
 Its Apple Silicon macOS 15+ runtime also contains the unchanged Developer
-ID-signed, Apple-notarized VNC controller. Archive integrity, offline native
-checks, actual public adapter bootstrap and synthetic VNC/MCP image exchange
-have scoped evidence. Linux uses
+ID-signed VNC controller. Apple accepted the original controller-ZIP submission;
+that acceptance does not cover the complete runtime archive. Archive integrity,
+synthetic VNC/MCP image exchange, the public Linux x64 Claude project bootstrap
+and installed CLI diagnostics/uninstall have scoped evidence. Linux uses
 the SSH bridge to a configured Darwin controller. Real frontend and desktop
 journeys, physical overlay exclusion, SSH adoption and measured service
 objectives remain pending.
@@ -55,6 +56,7 @@ require the qualified inputs in [project.yml](project.yml).
 
 - [Product documentation](docs/index.md)
 - [Agent adapters and IntelliJ/Junie setup](docs/agents.md)
+- [Junie CLI and IntelliJ installation guide](docs/junie.md)
 - [Architecture and capture contract](docs/architecture.md)
 - [Product scope](docs/product.md) and [service objectives](docs/slo.md)
 - [Test entrypoints](test/README.md) and [MCP tool schemas](tools/index.js)

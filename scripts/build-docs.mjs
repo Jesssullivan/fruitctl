@@ -15,9 +15,9 @@ if (process.argv.slice(2).some((arg) => arg !== '--check')) {
 const output = path.join(root, 'build-docs');
 const origin = 'https://fruitctl.clients.xoxd.ai';
 const repository = 'https://github.com/xoxd-ai/fruitctl';
-const pageNames = ['index', 'install', 'agents', 'architecture', 'compatibility', 'home-manager', 'licensing', 'product', 'slo'];
+const pageNames = ['index', 'install', 'agents', 'junie', 'architecture', 'compatibility', 'home-manager', 'licensing', 'product', 'slo'];
 const labels = {
-  index: 'Fruitctl', install: 'Install', agents: 'Agent adapters', architecture: 'Architecture',
+  index: 'Fruitctl', install: 'Install', agents: 'Agent adapters', junie: 'Junie and IntelliJ', architecture: 'Architecture',
   compatibility: 'Compatibility', product: 'Product', slo: 'Service objectives',
   'home-manager': 'Home Manager', licensing: 'Licensing',
 };
@@ -205,7 +205,7 @@ for (const [name, content] of pageSources) {
 }
 artifacts.set('site.css', await source('docs/site/site.css'));
 artifacts.set('install-prompt.md', installPrompt);
-artifacts.set('agents.md', `# Fruitctl adoption\n\nCanonical repository: ${repository}\nCanonical documentation: ${origin}/\n\nUse adoption.json and versions.json to resolve a verified immutable release. Pin\nfull source SHAs and verify binary SHA-256 hashes. Preserve unrelated MCP/skill\nconfiguration. Use operator-selected profiles and controller-local credentials.\nCapture a complete fresh frame before input; stop without replay on uncertainty.\nQualify the installed adapter and capture mode. Enable the indicator only with\nrecorded exclusion proof. Public support is best effort.\n\nRead /install-prompt.md, /install/, /agents/, /compatibility/, /architecture/, and /slo/.\nSource revision: ${revision}; source status: ${sourceStatus}.\nRelease status: ${adoption.releaseStatus}; hosting status: ${deployment.status}.\n`);
+artifacts.set('agents.md', `# Fruitctl adoption\n\nCanonical repository: ${repository}\nCanonical documentation: ${origin}/\n\nUse adoption.json and versions.json to resolve a verified immutable release. Pin\nfull source SHAs and verify binary SHA-256 hashes. Preserve unrelated MCP/skill\nconfiguration. Use operator-selected profiles and controller-local credentials.\nCapture a complete fresh frame before input; stop without replay on uncertainty.\nQualify the installed adapter and capture mode. Enable the indicator only with\nrecorded exclusion proof. Public support is best effort.\n\nRead /install-prompt.md, /install/, /agents/, /junie/, /compatibility/, /architecture/, and /slo/.\nSource revision: ${revision}; source status: ${sourceStatus}.\nRelease status: ${adoption.releaseStatus}; hosting status: ${deployment.status}.\n`);
 artifacts.set('llms.txt', `# Fruitctl\n\n> Agent VNC desktop control. Resolve verified releases before installation.\n\n## Documentation\n${pageNames.map((name) => `- [${labels[name]}](${origin}${name === 'index' ? '/' : `/${name}/`})`).join('\n')}\n\n## Machine adoption\n- [Agent instructions](${origin}/agents.md)\n- [Install prompt](${origin}/install-prompt.md)\n- [Adoption JSON](${origin}/adoption.json)\n- [Adoption TOON](${origin}/adoption.toon)\n- [Curated versions](${origin}/versions.json)\n- [Public source](${repository})\n`);
 const releaseManifestSchemaText = await source('release/release-manifest.schema.json');
 const nativeInputManifestSchemaText = await source('release/native-input-manifest.schema.json');
