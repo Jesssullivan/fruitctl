@@ -237,6 +237,135 @@ final class FruitctlHostTests: XCTestCase {
         XCTAssertTrue(state.allowsActivity(onConsole: true, ownedSession: true, displaysDrawable: true))
     }
 
+    func testActiveHumanStopRevokesTheLeaseAndRetainsItsFinalBinding() throws {
+        var state = try started()
+        try renew(&state, at: 350, pulse: 350)
+        state.stopFromHuman(instanceID: "instance-A", processID: 321, displayID: 1,
+                            displayGeneration: 7, now: 400)
+
+        XCTAssertNil(state.active)
+        XCTAssertThrowsError(try state.requireOwner(sessionID: "session-A", connectionID: owner,
+            displayGeneration: 7, now: 400)) { XCTAssertEqual($0 as? HostLeaseError, .expired) }
+        XCTAssertThrowsError(try renew(&state, at: 401, pulse: 401)) {
+            XCTAssertEqual($0 as? HostLeaseError, .expired)
+        }
+        let event = try XCTUnwrap(state.lastHumanStopEvent)
+        XCTAssertEqual(event.eventNumber, 1)
+        XCTAssertEqual(event.instanceID, "instance-A")
+        XCTAssertEqual(event.processID, 321)
+        XCTAssertEqual(event.displayID, 1)
+        XCTAssertEqual(event.displayGeneration, 7)
+        XCTAssertEqual(event.invokedAtMilliseconds, 400)
+        XCTAssertEqual(event.activity?.sessionID, "session-A")
+        XCTAssertEqual(event.activity?.sequence, 2)
+        XCTAssertEqual(event.activity?.displayGeneration, 7)
+        XCTAssertEqual(event.activity?.remainingMilliseconds, 2_950)
+        XCTAssertEqual(event.metadata["active_lease_at_stop"], .boolean(true))
+    }
+
+    func testIdleHumanStopIsObservableWithoutInventingAnActiveLease() throws {
+        var state = HostLeaseState()
+        state.stopFromHuman(instanceID: "instance-A", processID: 321, displayID: 1,
+                            displayGeneration: 7, now: 400)
+        let event = try XCTUnwrap(state.lastHumanStopEvent)
+        XCTAssertNil(state.active)
+        XCTAssertNil(event.activity)
+        XCTAssertEqual(event.metadata["active_lease_at_stop"], .boolean(false))
+        XCTAssertEqual(event.metadata["active_lease"], .null)
+        XCTAssertEqual(event.metadata["invoked_monotonic_ms"], .integer(400))
+    }
+
+    func testOrdinaryReleaseBeforeHumanStopCannotBecomeActiveStopEvidence() throws {
+        var state = try started()
+        XCTAssertTrue(state.release(connectionID: owner, sessionID: "session-A"))
+        XCTAssertNil(state.lastHumanStopEvent)
+        state.stopFromHuman(instanceID: "instance-A", processID: 321, displayID: 1,
+                            displayGeneration: 7, now: 200)
+        XCTAssertNil(try XCTUnwrap(state.lastHumanStopEvent).activity)
+    }
+
+    func testExpiredOrChangedDisplayLeaseIsNotBoundToAnActiveHumanStop() throws {
+        for (now, generation) in [(UInt64(3_100), UInt64(7)), (3_101, 7), (200, 8)] {
+            var state = try started()
+            // Do not tick/expire first: the transition must reject a stale
+            // stored lease on its own, including the exact expiry boundary.
+            state.stopFromHuman(instanceID: "instance-A", processID: 321, displayID: 1,
+                                displayGeneration: generation, now: now)
+            XCTAssertNil(state.active)
+            XCTAssertNil(try XCTUnwrap(state.lastHumanStopEvent).activity)
+            XCTAssertEqual(state.lastHumanStopEvent?.displayGeneration, generation)
+        }
+    }
+
+    func testStopEventAndHumanLatchSurviveReconnectAndWakeWithoutReactivation() throws {
+        var state = try started()
+        var availability = HostAvailabilityState()
+        availability.apply(.humanStopped)
+        state.stopFromHuman(instanceID: "instance-A", processID: 321, displayID: 1,
+                            displayGeneration: 7, now: 200)
+        let event = try XCTUnwrap(state.lastHumanStopEvent)
+
+        // A disconnected owner and a fresh attachment cannot erase the event.
+        XCTAssertFalse(state.release(connectionID: owner))
+        XCTAssertFalse(state.release(connectionID: other))
+        for transition in [HostAvailabilityState.Event.sessionResigned, .screensSlept,
+                           .systemSlept, .systemWoke, .screensWoke, .sessionActivated] {
+            availability.apply(transition)
+            state.invalidate()
+            XCTAssertNil(state.active)
+            XCTAssertEqual(state.lastHumanStopEvent, event)
+            XCTAssertFalse(availability.allowsActivity(onConsole: true, ownedSession: true,
+                                                       displaysDrawable: true))
+        }
+        availability.apply(.humanResumed)
+        state.invalidate()
+        XCTAssertEqual(state.lastHumanStopEvent, event)
+        XCTAssertNil(state.active)
+        XCTAssertTrue(availability.humanAllowed)
+    }
+
+    func testOnlyLatestStopEventIsRetainedAndNewProcessStartsWithoutHistory() throws {
+        var state = try started()
+        state.stopFromHuman(instanceID: "instance-A", processID: 321, displayID: 1,
+                            displayGeneration: 7, now: 200)
+        let first = try XCTUnwrap(state.lastHumanStopEvent)
+        state.stopFromHuman(instanceID: "instance-A", processID: 321, displayID: 1,
+                            displayGeneration: 7, now: 300)
+        let latest = try XCTUnwrap(state.lastHumanStopEvent)
+        XCTAssertEqual(latest.eventNumber, 2)
+        XCTAssertNotEqual(latest.eventID, first.eventID)
+        XCTAssertEqual(latest.invokedAtMilliseconds, 300)
+        XCTAssertNil(latest.activity)
+
+        var restarted = HostLeaseState()
+        XCTAssertNil(restarted.lastHumanStopEvent)
+        restarted.stopFromHuman(instanceID: "instance-B", processID: 654, displayID: 1,
+                                displayGeneration: 1, now: 5)
+        let restartedEvent = try XCTUnwrap(restarted.lastHumanStopEvent)
+        XCTAssertEqual(restartedEvent.eventNumber, 1)
+        XCTAssertEqual(restartedEvent.instanceID, "instance-B")
+        XCTAssertNotEqual(restartedEvent.eventID, latest.eventID)
+    }
+
+    func testStopMetadataExposesCorrelationWithoutChallengeOrConnectionIdentity() throws {
+        var state = try started()
+        state.stopFromHuman(instanceID: "instance-A", processID: 321, displayID: 1,
+                            displayGeneration: 7, now: 200)
+        let event = try XCTUnwrap(state.lastHumanStopEvent)
+        let data = try JSONEncoder().encode(HostValue.object(event.metadata))
+        let encoded = try XCTUnwrap(String(data: data, encoding: .utf8))
+        XCTAssertFalse(encoded.contains("challenge-A"))
+        XCTAssertFalse(encoded.contains(owner.uuidString))
+        XCTAssertEqual(event.metadata["clock_basis"], .string("host_instance_milliseconds"))
+        XCTAssertEqual(event.metadata["schema"], .string("fruitctl.human-stop.v1"))
+        guard case .object(let activity)? = event.metadata["active_lease"] else {
+            return XCTFail("Active Stop must retain the ended lease binding")
+        }
+        XCTAssertEqual(Set(activity.keys), Set(["session_id", "displayGeneration", "sequence",
+                                              "lease_remaining_ms"]))
+        XCTAssertNil(event.metadata["physical_cleared"])
+    }
+
     func testHumanAllowDoesNotOverrideAnInactiveSessionOrSleepingDisplay() {
         var state = HostAvailabilityState()
         state.apply(.humanStopped)

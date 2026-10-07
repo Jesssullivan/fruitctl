@@ -1,7 +1,8 @@
 import Foundation
 
 /// ContinuousClock progresses during system sleep. Its origin remains private
-/// to this process; clients receive durations and echoed challenges only.
+/// to this process. Health diagnostics expose process-relative milliseconds
+/// for Stop correlation; clients cannot compare clocks across Host instances.
 final class HostClock {
     private let clock = ContinuousClock()
     private let origin: ContinuousClock.Instant
