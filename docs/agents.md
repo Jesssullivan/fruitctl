@@ -14,16 +14,26 @@ it does not mean a desktop session or native binary has been qualified.
 
 ## Install a pinned release
 
-The immutable [v0.1.0-alpha.2 controller runtime preview](https://github.com/xoxd-ai/fruitctl/releases/tag/v0.1.0-alpha.2)
-is pinned to source commit `6c8a5751b1ab92ee4093aa0091e88ef212021dab`.
+The immutable [v0.1.0-alpha.3 controller runtime preview](https://github.com/xoxd-ai/fruitctl/releases/tag/v0.1.0-alpha.3)
+is pinned to source commit `e00fcc86bbac4247d5a0847d7e656369c52cc15f`.
 It provides the runtime, skill and adapters. The Darwin arm64 runtime includes
-the Developer ID-signed, notarized controller at `bin/claude-kvm-daemon`.
+the Developer ID-signed controller at `bin/claude-kvm-daemon`. Apple accepted
+its original controller-ZIP submission; the complete runtime archive is separate
+and is not covered by that acceptance.
 Linux uses the separately configured SSH bridge to Darwin. The broker, target
 profile, credential provider, target Screen Sharing and any macOS consent remain
 operator-owned. The Host application and purple indicator remain source
 prototypes with private lab binaries and are not distributed in this preview.
 
-The alpha.2 Linux x64 public download and bootstrap passed anonymous HTTPS
+For alpha.3, an anonymous Linux x64 stock bootstrap installed Claude project
+scope. A subsequent installed CLI continuation passed help, doctor, uninstall
+and post-uninstall doctor, preserving unrelated configuration bytes and modes.
+The separate bundled-installer API checks cover 14 user/project lifecycle
+cases across seven adapters. Neither scope proves a real frontend or desktop
+journey.
+
+Historical alpha.2 evidence (release published 2026-10-06): its Linux x64 public
+download and bootstrap passed anonymous HTTPS
 acceptance on Rocky Linux 10.2 using isolated home and project paths containing
 spaces. All seven user adapters and Claude project installation, the bundled
 Node.js 24.21.0 launcher, all runtime hashes and permissions, aggregate doctor
@@ -37,8 +47,8 @@ existing Darwin native controller. Its earlier anonymous Codex user and Claude
 project bootstrap checks remain historical evidence for that release.
 
 ```sh
-fruitctl install --agent codex --scope user --version v0.1.0-alpha.2 --target <profile> --dry-run
-fruitctl install --agent codex --scope user --version v0.1.0-alpha.2 --target <profile>
+fruitctl install --agent codex --scope user --version v0.1.0-alpha.3 --target <profile> --dry-run
+fruitctl install --agent codex --scope user --version v0.1.0-alpha.3 --target <profile>
 fruitctl doctor --agent codex --scope user
 fruitctl doctor --json
 fruitctl rollback --agent codex --scope user
@@ -65,8 +75,8 @@ one terminal operation. Replace `default` with your configured profile:
 
 ```sh
 (
-  FRUITCTL_SOURCE_SHA='6c8a5751b1ab92ee4093aa0091e88ef212021dab'
-  FRUITCTL_RELEASE_TAG='v0.1.0-alpha.2'
+  FRUITCTL_SOURCE_SHA='e00fcc86bbac4247d5a0847d7e656369c52cc15f'
+  FRUITCTL_RELEASE_TAG='v0.1.0-alpha.3'
   FRUITCTL_SCRIPT=$(mktemp)
   trap 'rm -f "$FRUITCTL_SCRIPT"' EXIT
   curl --disable --fail --silent --show-error --location --proto '=https' --proto-redir '=https' \
@@ -132,7 +142,8 @@ replaces native MCP behavior, so inspect the extension's actual registration
 before claiming native configuration will be read. [Pi changelog](https://pi.dev/changelog),
 [Pi MCP](https://pi.dev/docs/latest/mcp).
 
-The alpha.2 skill passed the official `skills-ref` 0.1.0 validator. An isolated
+Historical alpha.2 evidence (release published 2026-10-06): its skill passed
+the official `skills-ref` 0.1.0 validator. An isolated
 Pi 1.0.4 SDK check discovered its user and project skill symlinks and loaded the
 user skill through `DefaultResourceLoader`. A fresh isolated alpha.2 Pi user
 installation then supplied the configuration for an SDK fixture using the
@@ -152,12 +163,17 @@ VNC desktop, input or leases. [Pi SDK](https://pi.dev/docs/latest/sdk),
 [Agent Skills validation](https://github.com/agentskills/agentskills/tree/69ef37e9424c0a7ea9dd2293b559e43ec8176379/skills-ref).
 
 **IntelliJ and Junie:** Junie CLI, standalone Junie IDE plugin and integrated
-AI Assistant/ACP are separate frontends. The installer writes the documented
+AI Assistant/ACP are separate frontends. Follow the [Junie installation
+guide](junie.md) for project-scope installation and the settings for each IDE
+surface. The installer writes the documented
 CLI/standalone config and also returns an `ideSettingsSnippet`. Integrated AI
-Assistant users add that snippet through Settings → Tools → AI Assistant → MCP.
+Assistant users add that snippet through Settings → Tools → AI Assistant →
+Model Context Protocol (MCP).
 For Junie in AI Chat, also enable Settings → Tools → AI Assistant → Agents →
-**Pass custom MCP servers**. The standalone plugin uses Tools → Junie → MCP
-Settings instead; configuring one frontend does not qualify the others.
+**Pass custom MCP servers**. Older standalone plugin builds used Tools → Junie
+→ MCP Settings; current Marketplace releases removed that page. Use the
+documented project/user JSON files and verify the actual selected frontend's
+MCP status. Configuring one frontend does not qualify the others.
 The installer does not edit JetBrains internal XML or download/open an IDE.
 Current Junie documentation describes IDE skills, while older AI Assistant
 documentation lists a narrower support matrix; qualify the exact IDE build and
@@ -171,7 +187,7 @@ read `.mcp.json` and `~/.copilot/mcp-config.json` directly. In an extension-host
 session, discovery of the Copilot user file is off by default; enable the
 `copilot` source in `chat.mcp.discovery.enabled` or configure the server through
 the VS Code MCP settings. A custom `COPILOT_HOME` replaces the default user
-location. The current source installer honors it for user scope and records the
+location. The alpha.3 installer honors it for user scope and records the
 actual destination for doctor and uninstall. Uninstall the recorded installation
 before selecting a different MCP or skill destination; recovery uses its recorded
 paths even if the environment changes. The immutable alpha.2 installer predates

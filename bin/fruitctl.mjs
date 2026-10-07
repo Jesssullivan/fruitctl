@@ -6,6 +6,11 @@ import { defaultConfigPath, defaultSocketPath, loadConfig } from '../lib/broker/
 
 let values, positionals, command, socketPath, configPath;
 
+async function packageVersion() {
+  const metadata = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
+  return metadata.version;
+}
+
 function lifecycle(service) {
   let stopping = false;
   const stop = async () => {
@@ -68,16 +73,16 @@ configPath = values.config || defaultConfigPath();
   } else if (command === 'mcp') {
     const { BrokerExecutor } = await import('../lib/broker/client.mjs');
     const { startMcp } = await import('../lib/mcp/server.js');
+    const version = await packageVersion();
     const executor = new BrokerExecutor({ socketPath, target: values.target });
     await executor.opened;
-    const server = await startMcp({ executor, name: 'fruitctl', version: '0.1.0-alpha.1' });
+    const server = await startMcp({ executor, name: 'fruitctl', version });
     lifecycle({ close: async () => { await server.close(); await executor.close(); } });
     process.stdin.once('end', () => executor.close());
   } else if (['install', 'doctor', 'uninstall', 'rollback'].includes(command)) {
     const installer = await import('../lib/install/index.mjs');
-    const metadata = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
     const result = await installer[command]({ agent: values.agent, scope: values.scope,
-      version: values.version || metadata.version, target: values.target,
+      version: values.version || await packageVersion(), target: values.target,
       dryRun: Boolean(values['dry-run']), projectDir: values['project-dir'],
       configPath: values.config || process.env.FRUITCTL_CONFIG_PATH,
       manifestUrl: values['manifest-url'] });
