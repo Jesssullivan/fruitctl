@@ -14,21 +14,39 @@ it does not mean a desktop session or native binary has been qualified.
 
 ## Install a pinned release
 
-The immutable [v0.1.0-alpha.3 controller runtime preview](https://github.com/xoxd-ai/fruitctl/releases/tag/v0.1.0-alpha.3)
-is pinned to source commit `e00fcc86bbac4247d5a0847d7e656369c52cc15f`.
+The immutable [v0.1.0-alpha.4 controller runtime preview](https://github.com/xoxd-ai/fruitctl/releases/tag/v0.1.0-alpha.4)
+is pinned to portable source commit `e0f4d064b076e58b33856d877e0e1c9266f55177`.
 It provides the runtime, skill and adapters. The Darwin arm64 runtime includes
 the Developer ID-signed controller at `bin/claude-kvm-daemon`. Apple accepted
-its original controller-ZIP submission; the complete runtime archive is separate
-and is not covered by that acceptance.
-Linux uses the separately configured SSH bridge to Darwin. The broker, target
+its original controller-ZIP submission, produced from
+`e00fcc86bbac4247d5a0847d7e656369c52cc15f`. Alpha.4 reuses those unchanged
+native bytes; the complete runtime archive is separate and is not covered by
+that acceptance. Linux uses the separately configured SSH bridge to Darwin. The broker, target
 profile, credential provider, target Screen Sharing and any macOS consent remain
 operator-owned. The Host application and purple indicator remain source
 prototypes with private lab binaries and are not distributed in this preview.
 
-For alpha.3, an anonymous Linux x64 stock bootstrap installed Claude project
-scope. A subsequent installed CLI continuation passed help, doctor, uninstall
-and post-uninstall doctor, preserving unrelated configuration bytes and modes.
-The separate bundled-installer API checks cover 14 user/project lifecycle
+Alpha.4 passed an anonymous Linux x64 stock Junie project bootstrap, installed
+help/doctor/reinstall, alternate-project-alias dry-run refusal and uninstall. A
+continuation initialized the MCP SDK against Junie's installed MCP launcher
+and called `listTools`, discovering four tool schemas without tool actions.
+Original unrelated configuration bytes/modes and 3,671 Linux runtime payload
+files were preserved; the generated identity marker is separate and installer
+history remains append-only. Actual frontend image/input/release/reconnect
+acceptance remains pending.
+
+On Darwin ARM64, alpha.4 passed an offline Junie project lifecycle through the
+bundled installer API and an installed SDK/shared-broker journey through the
+unchanged signed controller to a loopback RFB fixture. It verified four complete
+96×53 frames, one reconnect and release through both `task_complete` and
+`task_failed`. This is synthetic protocol evidence; the Darwin stock public
+bootstrap and actual frontends remain pending.
+
+Historical alpha.3 evidence: an anonymous Linux x64 stock bootstrap installed
+Claude project scope. A subsequent installed CLI continuation passed help,
+doctor, uninstall and post-uninstall doctor, preserving unrelated configuration
+bytes and modes.
+Its separate bundled-installer API checks cover 14 user/project lifecycle
 cases across seven adapters. Neither scope proves a real frontend or desktop
 journey.
 
@@ -47,8 +65,8 @@ existing Darwin native controller. Its earlier anonymous Codex user and Claude
 project bootstrap checks remain historical evidence for that release.
 
 ```sh
-fruitctl install --agent codex --scope user --version v0.1.0-alpha.3 --target <profile> --dry-run
-fruitctl install --agent codex --scope user --version v0.1.0-alpha.3 --target <profile>
+fruitctl install --agent codex --scope user --version v0.1.0-alpha.4 --target <profile> --dry-run
+fruitctl install --agent codex --scope user --version v0.1.0-alpha.4 --target <profile>
 fruitctl doctor --agent codex --scope user
 fruitctl doctor --json
 fruitctl rollback --agent codex --scope user
@@ -75,8 +93,8 @@ one terminal operation. Replace `default` with your configured profile:
 
 ```sh
 (
-  FRUITCTL_SOURCE_SHA='e00fcc86bbac4247d5a0847d7e656369c52cc15f'
-  FRUITCTL_RELEASE_TAG='v0.1.0-alpha.3'
+  FRUITCTL_SOURCE_SHA='e0f4d064b076e58b33856d877e0e1c9266f55177'
+  FRUITCTL_RELEASE_TAG='v0.1.0-alpha.4'
   FRUITCTL_SCRIPT=$(mktemp)
   trap 'rm -f "$FRUITCTL_SCRIPT"' EXIT
   curl --disable --fail --silent --show-error --location --proto '=https' --proto-redir '=https' \
@@ -187,9 +205,10 @@ read `.mcp.json` and `~/.copilot/mcp-config.json` directly. In an extension-host
 session, discovery of the Copilot user file is off by default; enable the
 `copilot` source in `chat.mcp.discovery.enabled` or configure the server through
 the VS Code MCP settings. A custom `COPILOT_HOME` replaces the default user
-location. The alpha.3 installer honors it for user scope and records the
-actual destination for doctor and uninstall. Uninstall the recorded installation
-before selecting a different MCP or skill destination; recovery uses its recorded
+location. The alpha.4 installer retains alpha.3's support for it in user scope
+and records the actual destination for doctor and uninstall. Uninstall the
+recorded installation before selecting a different MCP or skill destination;
+recovery uses its recorded
 paths even if the environment changes. The immutable alpha.2 installer predates
 this support, so use declarative configuration for a custom Copilot home with
 that release. Record the selected harness when qualifying the connection. Existing

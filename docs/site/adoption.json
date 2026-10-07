@@ -16,8 +16,8 @@
   "indicatorPolicy": "qualified-capture-exclusion-only",
   "support": "public-best-effort",
   "currentPreview": {
-    "tag": "v0.1.0-alpha.3",
-    "sourceRevision": "e00fcc86bbac4247d5a0847d7e656369c52cc15f",
+    "tag": "v0.1.0-alpha.4",
+    "sourceRevision": "e0f4d064b076e58b33856d877e0e1c9266f55177",
     "releaseScope": "runtime-preview",
     "qualification": "scoped"
   },

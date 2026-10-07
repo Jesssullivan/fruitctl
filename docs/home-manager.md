@@ -14,18 +14,21 @@ Darwin only. Linux uses the SSH bridge. The Host prototype has no public package
 export or runtime payload.
 
 ```nix
-inputs.fruitctl.url = "github:xoxd-ai/fruitctl/a628a854f6988bf91834a810228c8a398f0e3f07";
+inputs.fruitctl.url = "github:xoxd-ai/fruitctl/e0f4d064b076e58b33856d877e0e1c9266f55177";
 
 # In the Home Manager module list:
 imports = [ inputs.fruitctl.homeManagerModules.default ];
 ```
 
-This reviewed development-source pin supplies the portable runtime and skill.
+This development-source example supplies the portable runtime and skill used
+by alpha.4. A consumer's final pin, package realization and Home Manager
+activation require their own recorded checks.
 The explicitly selected `native-controller` package separately consumes the
 immutable alpha.3 controller produced from
 `e00fcc86bbac4247d5a0847d7e656369c52cc15f`. Advancing the source pin does not
-rebuild, patch or re-sign those released bytes. Source evaluation, package
-realization and a Home Manager activation are separate checks.
+rebuild, patch or re-sign those released bytes. Alpha.4's Darwin runtime also
+reuses that native payload; its newer portable-source revision does not change
+the controller's original source or Apple submission.
 
 ## CLI and skills installation
 
@@ -108,7 +111,7 @@ can still reach the same machine, so assign its physical identity explicitly;
 the broker does not infer arbitrary network aliases.
 
 The optional Host/indicator remains a private prototype until its exact
-capture mode passes background and indicator-exclusion qualification. Alpha.3
+capture mode passes background and indicator-exclusion qualification. Alpha.4
 ships no Host app, ZIP, package export, service or helper mapping. The existing
 `targets.<profile>.hostHelper` option remains available for independently
 qualified private work and defaults to null; configuring it does not install or
@@ -125,7 +128,9 @@ archive executable mode `0755` need not remain unchanged in the store; the
 executable bytes and signature remain unchanged. Fixups, stripping and
 re-signing are disabled.
 The exact artifact and corresponding-source bindings live in
-[`nix/native-release.json`](../nix/native-release.json). Apple returned `Accepted`
+[`nix/native-release.json`](../nix/native-release.json), which remains the
+historical alpha.3 controller input. The public alpha.4 runtime inventory is a
+separate packaging record. Apple returned `Accepted`
 for the original controller-ZIP submission; that does not notarize the complete
 runtime archive. The command-line tool is not stapled. These checks do not
 qualify real VNC authentication, target pixels/input mapping, an agent frontend,

@@ -9,9 +9,9 @@ it to qualified status.
 
 | Role | Baseline | Status |
 | --- | --- | --- |
-| Native controller | Apple Silicon; macOS 15+ | Alpha3 bundles signed bytes with an Apple Accepted controller submission; synthetic VNC/MCP checks passed; live desktop qualification pending |
-| Public Node relay | Bundled Node.js 24.21.0 | Immutable runtime preview; synthetic MCP checks on Linux x64 and Darwin arm64 |
-| Linux x64 runtime | Rootless preview bundle | Alpha3 public Claude project bootstrap and installed CLI continuation passed; bundled-installer API covers seven adapters separately |
+| Native controller | Apple Silicon; macOS 15+ | Alpha.4 reuses the signed alpha.3 controller; its original submission is Apple Accepted; alpha.4 synthetic SDK/broker/RFB check passed; physical desktop pending |
+| Public Node relay | Bundled Node.js 24.21.0 | Alpha.4 Darwin synthetic MCP journey and Linux MCP metadata checked; real SSH journey pending |
+| Linux x64 runtime | Rootless preview bundle | Alpha.4 public Junie project bootstrap, CLI lifecycle and four-tool metadata discovery passed; no tool actions or frontend rendering |
 | Linux arm64 runtime | Preview bundle available | Archive integrity checked; runtime execution pending |
 | Linux agent seat | SSH bridge to Darwin controller | Initial supported design; acceptance pending |
 | Rocky Linux agent seat | Same SSH bridge | Historical alpha2 Linux x64 bootstrap passed on Rocky 10.2; SSH/desktop journey pending |
@@ -23,25 +23,33 @@ it to qualified status.
 
 `project.yml` targets macOS 15.0 and `arm64`. This is a build baseline, not a
 claim that every later OS version is tested. The immutable
-[v0.1.0-alpha.3 preview](https://github.com/xoxd-ai/fruitctl/releases/tag/v0.1.0-alpha.3)
+[v0.1.0-alpha.4 preview](https://github.com/xoxd-ai/fruitctl/releases/tag/v0.1.0-alpha.4)
 publishes Darwin arm64, Linux x64 and Linux arm64 runtime archives. Its Darwin
-runtime includes `bin/claude-kvm-daemon`, with exact Developer ID signature,
+runtime reuses `bin/claude-kvm-daemon` from source
+`e00fcc86bbac4247d5a0847d7e656369c52cc15f`, with exact Developer ID signature,
 Apple Accepted controller-ZIP submission and corresponding source evidence.
 That acceptance does not cover the whole runtime archive. A bare binary has no
 stapled ticket. Linux still needs a configured Darwin controller through
 SSH. The older alpha1 preview retains its existing-controller prerequisite.
 `versions.json` records scoped preview checks separately from
 fully qualified product releases. The current fully qualified release count is
-zero.
+zero. Alpha.4's portable source is
+`e0f4d064b076e58b33856d877e0e1c9266f55177`. Its Darwin ARM64 runtime passed an
+offline Junie project lifecycle through the bundled installer API and an
+installed SDK/shared-broker journey through the unchanged signed controller to
+a loopback RFB fixture. Four complete 96×53 frames, synthetic input/pixel
+checks, one reconnect and releases through `task_complete` and `task_failed`
+passed. This scope is synthetic protocol evidence. The Darwin stock public
+bootstrap remains pending, and earlier alpha.2/alpha.3 proofs stay historical.
 
 ## Agents
 
 | Agent | Adoption surface | Release status |
 | --- | --- | --- |
-| Codex | Skill plus stdio MCP adapter | Preview bootstrap checked; real frontend acceptance pending |
-| Claude Code | Skill plus stdio MCP adapter | Preview bootstrap checked; real frontend acceptance pending |
+| Codex | Skill plus stdio MCP adapter | Historical preview bootstrap checked; real frontend acceptance pending |
+| Claude Code | Skill plus stdio MCP adapter | Historical alpha.2/alpha.3 bootstrap checked; real frontend acceptance pending |
 | Pi | Shared skill plus native MCP in 0.99.0+ | Configuration documented; runtime experimental |
-| Junie CLI | Shared skill plus supported MCP settings | Configuration documented; runtime experimental |
+| Junie CLI | Shared skill plus supported MCP settings | Alpha.4 project install/lifecycle and MCP metadata checked; actual frontend acceptance pending |
 | IntelliJ Junie | Standalone IDE plugin MCP settings and instructions | Separate IDE/plugin version qualification pending |
 | OpenCode | Shared skill plus MCP configuration | Configuration documented; runtime experimental |
 | VS Code / GitHub Copilot | Shared skill plus portable MCP configuration | Configuration documented; runtime experimental |
@@ -58,10 +66,20 @@ upstream references. The [adoption contract](../integrations/adoption.json) owns
 frontend qualification state. This matrix summarizes those records; generated
 configuration does not promote runtime status.
 
-Alpha3's actual anonymous Linux x64 stock bootstrap installed Claude project
-scope; its installed CLI continuation passed help, doctor, uninstall and
-post-uninstall doctor with unrelated configuration bytes and modes preserved.
-Separate bundled-installer API checks cover 14 user/project lifecycle cases
+Alpha.4's anonymous Linux x64 stock bootstrap installed Junie project scope.
+Installed help, doctor, reinstall, alternate-project-alias dry-run refusal and
+uninstall passed. A continuation initialized the MCP SDK against Junie's
+installed MCP launcher and called `listTools`, discovering four tool schemas without
+tool actions. Original unrelated configuration bytes/modes and 3,671 Linux
+runtime payload files were preserved; the generated identity marker is separate
+and installer history remains append-only. Frontend images, input and session
+lifecycle remain pending.
+
+Historical alpha.3 evidence: its anonymous Linux x64 stock bootstrap installed
+Claude project scope; its installed CLI continuation passed help, doctor,
+uninstall and post-uninstall doctor with unrelated configuration bytes and
+modes preserved.
+Its separate bundled-installer API checks cover 14 user/project lifecycle cases
 across seven adapters. These are configuration checks, not frontend acceptance.
 
 Historical alpha2 evidence (release published 2026-10-06): all seven user

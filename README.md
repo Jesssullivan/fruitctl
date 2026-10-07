@@ -17,16 +17,25 @@ verified release, configures a named target, and checks a fresh observation
 before input. If the release does not support your controller and agent, it
 reports the missing prerequisite instead of claiming installation succeeded.
 
-The immutable [v0.1.0-alpha.3 runtime preview](https://github.com/xoxd-ai/fruitctl/releases/tag/v0.1.0-alpha.3)
+The immutable [v0.1.0-alpha.4 runtime preview](https://github.com/xoxd-ai/fruitctl/releases/tag/v0.1.0-alpha.4)
 ships bundled Node.js 24.21.0, the installer, shared skill and MCP/broker code.
-Its Apple Silicon macOS 15+ runtime also contains the unchanged Developer
-ID-signed VNC controller. Apple accepted the original controller-ZIP submission;
-that acceptance does not cover the complete runtime archive. Archive integrity,
-synthetic VNC/MCP image exchange, the public Linux x64 Claude project bootstrap
-and installed CLI diagnostics/uninstall have scoped evidence. Linux uses
-the SSH bridge to a configured Darwin controller. Real frontend and desktop
-journeys, physical overlay exclusion, SSH adoption and measured service
-objectives remain pending.
+Its portable source is `e0f4d064b076e58b33856d877e0e1c9266f55177`. The Apple
+Silicon macOS 15+ runtime reuses the unchanged Developer ID-signed VNC
+controller originally produced from `e00fcc86bbac4247d5a0847d7e656369c52cc15f`.
+Apple accepted that original controller-ZIP submission; the complete runtime
+archive is separate.
+
+Alpha.4's anonymous Linux x64 Junie project bootstrap, installed CLI lifecycle
+and four-tool MCP metadata discovery have scoped evidence. No desktop tool
+action or frontend image rendering was exercised. On Darwin ARM64, alpha.4
+passed an offline Junie project lifecycle through the bundled installer API and
+an installed SDK/shared-broker journey through the unchanged signed controller
+to a loopback RFB fixture: four complete 96×53 frames, one reconnect and two
+terminal releases. These are synthetic protocol checks. Earlier seven-adapter,
+Claude bootstrap and Darwin image checks remain historical alpha.2/alpha.3
+evidence. Real frontends, desktop journeys, physical overlay exclusion, SSH
+adoption and measured service objectives remain pending. Linux uses the SSH
+bridge to a configured Darwin controller.
 
 The canonical public documentation is live at
 [fruitctl.clients.xoxd.ai](https://fruitctl.clients.xoxd.ai/), with verified
