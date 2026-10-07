@@ -19,6 +19,7 @@ private final class IdleReferenceFixture {
     var generation: UInt64 = 1
     var slowAdmission = false
     var requests = 0
+    var preflights = 0
     var captures = 0
     var persisted: [[String: HostValue]] = []
     var failCapture = false
@@ -26,7 +27,7 @@ private final class IdleReferenceFixture {
     var pending: CheckedContinuation<HostReferenceCapture, Error>?
     let connection = UUID()
 
-    lazy var permission = HostCapturePermission(preflight: { [unowned self] in self.granted },
+    lazy var permission = HostCapturePermission(preflight: { [unowned self] in self.preflights += 1; return self.granted },
         request: { [unowned self] in self.requests += 1; return self.granted })
     lazy var coordinator = HostIdleReferenceCoordinator(permission: permission,
         clock: { [unowned self] in self.now }, conditions: { [unowned self] in self.conditions },
@@ -79,6 +80,169 @@ final class HostIdleReferenceTests: XCTestCase {
             await Task.yield()
         }
         XCTFail("Injected capture never reached its suspension point")
+    }
+
+    func testArmStatusCountdownAndReadOnlyPresentationShareExactDeadline() throws {
+        let fixture = IdleReferenceFixture()
+        let id = try fixture.coordinator.armFromHuman()
+        let reads = fixture.preflights
+        let initial = fixture.coordinator.status
+        XCTAssertEqual(initial.state, .armed)
+        XCTAssertEqual(initial.armedID, id)
+        XCTAssertEqual(initial.remainingMilliseconds, 60_000)
+        XCTAssertEqual(initial.lastOutcome, .accepted)
+        XCTAssertNil(initial.lastReason)
+        XCTAssertEqual(initial.lastArmID, id)
+        XCTAssertEqual(initial.changedAtMilliseconds, 100)
+        XCTAssertEqual(initial.metadata["armed_id"], .string(id))
+        XCTAssertEqual(initial.metadata["remaining_ms"], .integer(60_000))
+        XCTAssertEqual(initial.message, "Reference armed · 60s remaining")
+        fixture.now += 59_001
+        let almostExpired = fixture.coordinator.status
+        XCTAssertEqual(almostExpired.remainingMilliseconds, 999)
+        XCTAssertEqual(almostExpired.remainingSeconds, 1)
+        XCTAssertEqual(almostExpired.message, "Reference armed · 1s remaining")
+        for _ in 0..<10 { _ = fixture.coordinator.status.metadata; _ = fixture.coordinator.status.message }
+        XCTAssertEqual(fixture.coordinator.status.remainingMilliseconds, 999)
+        XCTAssertEqual(fixture.preflights, reads)
+        XCTAssertEqual(fixture.requests, 0)
+        XCTAssertEqual(fixture.captures, 0)
+        XCTAssertFalse(fixture.lease)
+    }
+
+    func testObservedArmExpiryRetainsCauseAndNeverChangesStaleExportAdmission() async throws {
+        let fixture = IdleReferenceFixture()
+        let id = try fixture.coordinator.armFromHuman()
+        fixture.now += 60_000
+        let expired = fixture.coordinator.status
+        XCTAssertEqual(expired.state, .idle)
+        XCTAssertNil(expired.armedID)
+        XCTAssertEqual(expired.remainingMilliseconds, 0)
+        XCTAssertEqual(expired.lastOutcome, .expired)
+        XCTAssertEqual(expired.lastReason, .deadlineElapsed)
+        XCTAssertEqual(expired.lastArmID, id)
+        XCTAssertEqual(expired.changedAtMilliseconds, 60_100)
+        fixture.now += 200
+        XCTAssertEqual(fixture.coordinator.status.changedAtMilliseconds, 60_100)
+        XCTAssertEqual(fixture.coordinator.status.message, expired.message)
+        do { _ = try await export(fixture, id: id); XCTFail("Observed expiry revived the Arm") }
+        catch { XCTAssertEqual(error as? HostIdleReferenceError, .staleArm) }
+        XCTAssertEqual(fixture.captures, 0)
+        XCTAssertEqual(fixture.requests, 0)
+    }
+
+    func testArmRejectionReasonSurvivesPermissionRecoveryWithoutInventingAnArm() {
+        let fixture = IdleReferenceFixture(); fixture.granted = false
+        XCTAssertThrowsError(try fixture.coordinator.armFromHuman())
+        fixture.granted = true
+        let status = fixture.coordinator.status
+        XCTAssertEqual(status.state, .idle)
+        XCTAssertNil(status.armedID)
+        XCTAssertEqual(status.lastOutcome, .rejected)
+        XCTAssertEqual(status.lastReason, .permissionUnavailable)
+        XCTAssertEqual(status.metadata["last_reason"], .string("screen_capture_permission_unavailable"))
+        XCTAssertEqual(status.message, "Arm rejected: Screen Recording permission was unavailable")
+        XCTAssertEqual(fixture.requests, 0)
+        XCTAssertEqual(fixture.captures, 0)
+    }
+
+    func testEachAdmissionFailureReportsSpecificReasonWithoutCaptureOrPermissionRequest() {
+        let cases: [(HostIdleReferenceReason, (IdleReferenceFixture) -> Void)] = [
+            (.captureDisabled, { $0.enabled = false }),
+            (.permissionUnavailable, { $0.granted = false }),
+            (.activityUnavailable, { $0.eligible = false }),
+            (.activeLease, { $0.lease = true }),
+            (.captureReady, { $0.captureReady = true }),
+            (.overlayReady, { $0.overlayReady = true }),
+            (.visiblePanel, { $0.visible = true }),
+            (.captureInProgress, { $0.otherCapture = true }),
+            (.clockOverflow, { $0.now = UInt64.max })
+        ]
+        for (reason, change) in cases {
+            let fixture = IdleReferenceFixture(); change(fixture)
+            XCTAssertThrowsError(try fixture.coordinator.armFromHuman())
+            let status = fixture.coordinator.status
+            XCTAssertEqual(status.lastOutcome, .rejected)
+            XCTAssertEqual(status.lastReason, reason)
+            XCTAssertNil(status.armedID)
+            XCTAssertEqual(status.remainingMilliseconds, 0)
+            XCTAssertEqual(fixture.requests, 0)
+            XCTAssertEqual(fixture.captures, 0)
+        }
+    }
+
+    func testFirstInvalidationCausePersistsAfterRecoveryAndRepeatedClear() throws {
+        for reason in [HostIdleReferenceReason.humanStopped, .humanResumed, .captureDisabled,
+            .captureEnabled, .permissionUnavailable, .activityUnavailable, .displayChanged,
+            .sessionChanged, .screenSleepChanged, .systemSleepChanged, .hostStopping,
+            .activityRequested, .uiUnavailable, .lifecycleChanged] {
+            let fixture = IdleReferenceFixture()
+            let id = try fixture.coordinator.armFromHuman()
+            fixture.now += 1
+            fixture.coordinator.invalidate(reason: reason)
+            fixture.now += 1
+            fixture.coordinator.invalidate(reason: .lifecycleChanged)
+            let status = fixture.coordinator.status
+            XCTAssertEqual(status.state, .idle)
+            XCTAssertNil(status.armedID)
+            XCTAssertEqual(status.lastOutcome, .invalidated)
+            XCTAssertEqual(status.lastReason, reason)
+            XCTAssertEqual(status.lastArmID, id)
+            XCTAssertEqual(status.changedAtMilliseconds, 101)
+            XCTAssertEqual(fixture.requests, 0)
+            XCTAssertEqual(fixture.captures, 0)
+        }
+    }
+
+    func testRejectedRearmKeepsEarlierArmAndDeadlineVisible() throws {
+        let fixture = IdleReferenceFixture()
+        let id = try fixture.coordinator.armFromHuman()
+        fixture.now += 1_000; fixture.visible = true
+        XCTAssertThrowsError(try fixture.coordinator.armFromHuman())
+        fixture.visible = false
+        let status = fixture.coordinator.status
+        XCTAssertEqual(status.state, .armed)
+        XCTAssertEqual(status.armedID, id)
+        XCTAssertEqual(status.remainingMilliseconds, 59_000)
+        XCTAssertEqual(status.lastOutcome, .rejected)
+        XCTAssertEqual(status.lastReason, .visiblePanel)
+        XCTAssertTrue(status.message.contains("Reference armed · 59s remaining"))
+        XCTAssertTrue(status.message.contains("Arm rejected: An activity panel is visible"))
+        XCTAssertEqual(fixture.requests, 0)
+        XCTAssertEqual(fixture.captures, 0)
+    }
+
+    func testConsumedAndInvalidatedExportStatusesCannotRestoreAnArm() async throws {
+        let failed = IdleReferenceFixture(); failed.failCapture = true
+        let failedID = try failed.coordinator.armFromHuman()
+        do { _ = try await export(failed, id: failedID); XCTFail("Injected capture failure succeeded") }
+        catch { XCTAssertEqual(error as? HostCaptureError, .captureFailed) }
+        XCTAssertEqual(failed.coordinator.status.lastOutcome, .consumed)
+        XCTAssertEqual(failed.coordinator.status.lastReason, .exportRequested)
+        XCTAssertNil(failed.coordinator.status.armedID)
+        XCTAssertTrue(failed.persisted.isEmpty)
+
+        let pending = IdleReferenceFixture(); pending.suspendCapture = true
+        let id = try pending.coordinator.armFromHuman()
+        let operation = Task { try await self.export(pending, id: id) }
+        await awaitPending(pending)
+        XCTAssertEqual(pending.coordinator.status.state, .exporting)
+        XCTAssertThrowsError(try pending.coordinator.armFromHuman())
+        XCTAssertEqual(pending.coordinator.status.lastReason, .exportInProgress)
+        pending.coordinator.invalidate(reason: .humanStopped)
+        pending.now += 1
+        pending.coordinator.invalidate(reason: .permissionUnavailable)
+        XCTAssertEqual(pending.coordinator.status.lastReason, .humanStopped)
+        pending.finishCapture()
+        do { _ = try await operation.value; XCTFail("Revoked export succeeded") }
+        catch { XCTAssertEqual(error as? HostIdleReferenceError, .lifecycleChanged) }
+        XCTAssertEqual(pending.coordinator.status.state, .idle)
+        XCTAssertEqual(pending.coordinator.status.lastOutcome, .invalidated)
+        XCTAssertEqual(pending.coordinator.status.lastReason, .humanStopped)
+        XCTAssertEqual(pending.coordinator.status.lastArmID, id)
+        XCTAssertNil(pending.coordinator.status.armedID)
+        XCTAssertTrue(pending.persisted.isEmpty)
+        XCTAssertEqual(pending.requests, 0)
     }
 
     func testPermissionIntentAndGrantAreIndependentAndNeverImplicitlyRequested() throws {

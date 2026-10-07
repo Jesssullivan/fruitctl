@@ -30,6 +30,104 @@ struct HostIdleReferenceConditions {
     }
 }
 
+/// Bounded, in-memory diagnostics of the local human choice. Reading these
+/// values cannot create or renew an Arm, start capture, or request permission.
+enum HostIdleReferenceReason: String {
+    case captureDisabled = "capture_disabled"
+    case permissionUnavailable = "screen_capture_permission_unavailable"
+    case activityUnavailable = "activity_unavailable"
+    case activeLease = "activity_lease_active"
+    case captureReady = "capture_ready"
+    case overlayReady = "overlay_ready"
+    case visiblePanel = "visible_panel"
+    case captureInProgress = "capture_in_progress"
+    case exportInProgress = "reference_export_in_progress"
+    case clockOverflow = "clock_overflow"
+    case deadlineElapsed = "arm_deadline_elapsed"
+    case humanStopped = "human_stopped"
+    case humanResumed = "human_resumed"
+    case captureEnabled = "capture_enabled"
+    case displayChanged = "display_changed"
+    case sessionChanged = "session_changed"
+    case screenSleepChanged = "screen_sleep_changed"
+    case systemSleepChanged = "system_sleep_changed"
+    case hostStopping = "host_stopping"
+    case activityRequested = "activity_begin_requested"
+    case ownerDisconnected = "export_owner_disconnected"
+    case lifecycleChanged = "lifecycle_changed"
+    case uiUnavailable = "activity_ui_unavailable"
+    case exportRequested = "reference_export_requested"
+
+    var message: String {
+        switch self {
+        case .captureDisabled: return "Capture is disabled"
+        case .permissionUnavailable: return "Screen Recording permission was unavailable"
+        case .activityUnavailable: return "The local session or display was unavailable"
+        case .activeLease: return "Agent activity is already running"
+        case .captureReady: return "A capture is already ready"
+        case .overlayReady, .visiblePanel: return "An activity panel is visible"
+        case .captureInProgress: return "A capture is already in progress"
+        case .exportInProgress: return "A reference export is already in progress"
+        case .clockOverflow: return "The reference deadline could not be set"
+        case .deadlineElapsed: return "The 60-second Arm deadline elapsed"
+        case .humanStopped: return "Stopped locally"
+        case .humanResumed: return "Allow cleared the previous reference"
+        case .captureEnabled: return "Enable capture cleared the previous reference"
+        case .displayChanged: return "The display configuration changed"
+        case .sessionChanged: return "The local session changed"
+        case .screenSleepChanged: return "The display sleep state changed"
+        case .systemSleepChanged: return "The system sleep state changed"
+        case .hostStopping: return "Fruitctl Host is stopping"
+        case .activityRequested: return "An activity start was requested"
+        case .ownerDisconnected: return "The exporting connection closed"
+        case .lifecycleChanged: return "The reference lifecycle changed"
+        case .uiUnavailable: return "The activity display became unavailable"
+        case .exportRequested: return "The one reference export was requested"
+        }
+    }
+}
+
+struct HostIdleReferenceStatus {
+    enum State: String { case idle, armed, exporting }
+    enum Outcome: String { case none, accepted, rejected, expired, invalidated, consumed }
+    let state: State
+    let armedID: String?
+    let remainingMilliseconds: UInt64
+    let lastOutcome: Outcome
+    let lastReason: HostIdleReferenceReason?
+    let lastArmID: String?
+    let changedAtMilliseconds: UInt64?
+
+    var remainingSeconds: UInt64 { remainingMilliseconds == 0 ? 0 : (remainingMilliseconds - 1) / 1_000 + 1 }
+
+    var message: String {
+        if state == .armed {
+            let armed = "Reference armed · \(remainingSeconds)s remaining"
+            return lastOutcome == .rejected ? armed + " · Arm rejected: " + (lastReason?.message ?? "") : armed
+        }
+        if state == .exporting { return "Reference export in progress" }
+        let detail = lastReason?.message ?? ""
+        switch lastOutcome {
+        case .none: return "Reference not armed"
+        case .accepted: return "Reference not armed"
+        case .rejected: return "Arm rejected: " + detail
+        case .expired: return "Reference expired: " + detail
+        case .invalidated: return "Reference cleared: " + detail
+        case .consumed: return "Reference consumed: " + detail
+        }
+    }
+
+    var metadata: [String: HostValue] {
+        ["state": .string(state.rawValue),
+         "armed_id": armedID.map { .string($0) } ?? .null,
+         "remaining_ms": .integer(Int64(clamping: remainingMilliseconds)),
+         "last_outcome": .string(lastOutcome.rawValue),
+         "last_reason": lastReason.map { .string($0.rawValue) } ?? .null,
+         "last_arm_id": lastArmID.map { .string($0) } ?? .null,
+         "changed_monotonic_ms": changedAtMilliseconds.map { .integer(Int64(clamping: $0)) } ?? .null]
+    }
+}
+
 struct HostReferenceCapture {
     let png: Data
     /// Geometry/filter metadata only. The complete PNG is a separate file.
@@ -64,8 +162,15 @@ final class HostIdleReferenceCoordinator {
         let generation: UInt64
     }
     private var arm: Arm?
+    private var expiredArmID: String?
+    private var invalidatedExportID: UUID?
+    private var lastOutcome = HostIdleReferenceStatus.Outcome.none
+    private var lastReason: HostIdleReferenceReason?
+    private var lastArmID: String?
+    private var changedAtMilliseconds: UInt64?
     private var exportID: UUID?
     private var exportConnectionID: UUID?
+    private var exportArmID: String?
     private let permission: HostCapturePermission
     private let clock: () -> UInt64
     private let conditions: () -> HostIdleReferenceConditions
@@ -85,26 +190,68 @@ final class HostIdleReferenceCoordinator {
 
     var isExporting: Bool { exportID != nil }
 
-    var armedID: String? {
-        guard let arm, clock() < arm.expiresAt else { return nil }
-        return arm.id
+    var armedID: String? { status.armedID }
+
+    var status: HostIdleReferenceStatus {
+        let now = clock()
+        let current = arm.flatMap { now < $0.expiresAt ? $0 : nil }
+        if let arm, current == nil, expiredArmID != arm.id {
+            expiredArmID = arm.id
+            record(.expired, reason: .deadlineElapsed, armID: arm.id, at: arm.expiresAt)
+        }
+        return HostIdleReferenceStatus(state: isExporting ? .exporting : current == nil ? .idle : .armed,
+            armedID: current?.id, remainingMilliseconds: current.map { $0.expiresAt - now } ?? 0,
+            lastOutcome: lastOutcome, lastReason: lastReason, lastArmID: lastArmID,
+            changedAtMilliseconds: changedAtMilliseconds)
+    }
+
+    private func record(_ outcome: HostIdleReferenceStatus.Outcome,
+                        reason: HostIdleReferenceReason?, armID: String?, at: UInt64) {
+        lastOutcome = outcome; lastReason = reason; lastArmID = armID
+        changedAtMilliseconds = at
+    }
+
+    private func rejectionReason(_ current: HostIdleReferenceConditions) -> HostIdleReferenceReason {
+        if !current.activityEligible { return .activityUnavailable }
+        if current.activeLease { return .activeLease }
+        if current.captureReady { return .captureReady }
+        if current.overlayReady { return .overlayReady }
+        if current.anyVisiblePanel { return .visiblePanel }
+        if current.otherCaptureInProgress { return .captureInProgress }
+        return .exportInProgress
     }
 
     @discardableResult
     func armFromHuman() throws -> String {
         let current = conditions(), now = clock()
-        try permission.requireCapture(enabled: current.captureEnabled)
-        guard current.isIdle, !isExporting else { throw HostIdleReferenceError.notIdle }
+        do { try permission.requireCapture(enabled: current.captureEnabled) }
+        catch {
+            record(.rejected, reason: current.captureEnabled ? .permissionUnavailable : .captureDisabled,
+                   armID: nil, at: now)
+            throw error
+        }
+        guard current.isIdle, !isExporting else {
+            record(.rejected, reason: rejectionReason(current), armID: nil, at: now)
+            throw HostIdleReferenceError.notIdle
+        }
         guard now <= UInt64.max - Self.armDurationMilliseconds else {
+            record(.rejected, reason: .clockOverflow, armID: nil, at: now)
             throw HostIdleReferenceError.staleArm
         }
         let id = UUID().uuidString
         arm = Arm(id: id, expiresAt: now + Self.armDurationMilliseconds,
                   revision: current.lifecycleRevision, generation: current.displayGeneration)
+        expiredArmID = nil
+        record(.accepted, reason: nil, armID: id, at: now)
         return id
     }
 
-    func invalidate() {
+    func invalidate(reason: HostIdleReferenceReason = .lifecycleChanged) {
+        let current = status
+        if current.armedID != nil || (exportID != nil && invalidatedExportID != exportID) {
+            record(.invalidated, reason: reason, armID: current.armedID ?? exportArmID, at: clock())
+            invalidatedExportID = exportID
+        }
         arm = nil
         invalidationRevision = UUID()
         // Keep isExporting true until the outstanding async task unwinds. A
@@ -112,7 +259,7 @@ final class HostIdleReferenceCoordinator {
     }
 
     func disconnected(_ connectionID: UUID) {
-        if exportConnectionID == connectionID { invalidate() }
+        if exportConnectionID == connectionID { invalidate(reason: .ownerDisconnected) }
     }
 
     func export(armedID: String, connectionID: UUID,
@@ -121,6 +268,7 @@ final class HostIdleReferenceCoordinator {
         guard let selected = arm else { throw HostIdleReferenceError.notArmed }
         // Consume before every attempted capture, including permission failure.
         arm = nil
+        record(.consumed, reason: .exportRequested, armID: selected.id, at: clock())
         guard selected.id == armedID, clock() < selected.expiresAt else {
             throw HostIdleReferenceError.staleArm
         }
@@ -135,9 +283,11 @@ final class HostIdleReferenceCoordinator {
         let operation = UUID(), startedAt = clock(), operationRevision = invalidationRevision
         guard startedAt < selected.expiresAt else { throw HostIdleReferenceError.staleArm }
         exportID = operation
+        invalidatedExportID = nil
         exportConnectionID = connectionID
+        exportArmID = selected.id
         defer {
-            if exportID == operation { exportID = nil; exportConnectionID = nil }
+            if exportID == operation { exportID = nil; exportConnectionID = nil; exportArmID = nil }
         }
         let image = try await capture()
         let completedAt = clock(), final = conditions()
