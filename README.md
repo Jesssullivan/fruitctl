@@ -17,7 +17,20 @@ verified release, configures a named target, and checks a fresh observation
 before input. If the release does not support your controller and agent, it
 reports the missing prerequisite instead of claiming installation succeeded.
 
-The immutable [v0.1.0-alpha.4 runtime preview](https://github.com/xoxd-ai/fruitctl/releases/tag/v0.1.0-alpha.4)
+The published immutable [v0.1.0-alpha.6 runtime preview](https://github.com/xoxd-ai/fruitctl/releases/tag/v0.1.0-alpha.6)
+uses producer `8653325c6ccc0e058b3e4cf84eb44101cfd270fc`. Its thirteen public
+assets match the reviewed hashes and sizes through anonymous downloads. The
+bootstrap disables user curl configuration and retains explicit install-root
+support, normal-home storage and separate user/project registration choices.
+Source tests and archive structure are verified; packaged installer, installed
+SDK, actual Junie/IDE frontend, desktop and measured service objectives remain
+pending for this release. See the [exact install pins](docs/install.md).
+
+Alpha.5 introduced the explicit install-root contract. Its producer
+`00beadf9a62189c6306f147c7d2aad128ff133d7` and older qualification records remain
+separate from alpha.6; older receipts qualify their recorded releases only.
+
+The historical immutable [v0.1.0-alpha.4 runtime preview](https://github.com/xoxd-ai/fruitctl/releases/tag/v0.1.0-alpha.4)
 ships bundled Node.js 24.21.0, the installer, shared skill and MCP/broker code.
 Its portable source is `e0f4d064b076e58b33856d877e0e1c9266f55177`. The Apple
 Silicon macOS 15+ runtime reuses the unchanged Developer ID-signed VNC
