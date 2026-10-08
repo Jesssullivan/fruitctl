@@ -10,7 +10,7 @@ The curated adoption route currently selects the published
 [v0.1.0-alpha.6 runtime preview](https://github.com/xoxd-ai/fruitctl/releases/tag/v0.1.0-alpha.6),
 producer `8653325c6ccc0e058b3e4cf84eb44101cfd270fc`. Its thirteen public assets
 match the reviewed hashes and sizes through anonymous downloads. It retains
-the [explicit install root](#explicit-install-root-alpha6-preview); its stock Darwin
+the [explicit install root](#explicit-install-root-alpha-6-preview); its stock Darwin
 project bootstrap and installed SDK metadata acceptance remain pending.
 The rendered installation prompt follows this curated preview, rather than
 the newest package version or source checkout. Publication and archive checks
