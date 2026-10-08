@@ -7,8 +7,14 @@ it to qualified status.
 
 ## Platforms
 
+The current alpha.6 installer observations cover the Darwin ARM64 Junie project
+adapter with an explicit root. Existing alpha.4 controller, relay and Linux
+observations below remain historical; they do not qualify alpha.6 runtime or
+frontend behavior. See [current installation evidence](install.md).
+
 | Role | Baseline | Status |
 | --- | --- | --- |
+| Darwin ARM64 runtime installer | Junie project scope; explicit storage root | Alpha.6 stock bootstrap, doctor, reinstall, same-version rollback and owned uninstall verified as components; separate default public uninstall shell from offline-cache setup passed; SDK/frontend/desktop pending |
 | Native controller | Apple Silicon; macOS 15+ | Alpha.4 reuses the signed alpha.3 controller; its original submission is Apple Accepted; alpha.4 synthetic SDK/broker/RFB check passed; physical desktop pending |
 | Public Node relay | Bundled Node.js 24.21.0 | Alpha.4 Darwin synthetic MCP journey and Linux MCP metadata checked; real SSH journey pending |
 | Linux x64 runtime | Rootless preview bundle | Alpha.4 public Junie project bootstrap, CLI lifecycle and four-tool metadata discovery passed; no tool actions or frontend rendering |
@@ -39,8 +45,12 @@ offline Junie project lifecycle through the bundled installer API and an
 installed SDK/shared-broker journey through the unchanged signed controller to
 a loopback RFB fixture. Four complete 96×53 frames, synthetic input/pixel
 checks, one reconnect and releases through `task_complete` and `task_failed`
-passed. This scope is synthetic protocol evidence. The Darwin stock public
-bootstrap remains pending, and earlier alpha.2/alpha.3 proofs stay historical.
+passed. This scope is synthetic protocol evidence. The alpha.4 Darwin stock
+public bootstrap remains unqualified, and earlier alpha.2/alpha.3 proofs stay
+historical. Alpha.6's combined installer/SDK run remained unsuccessful;
+accepted installer components and the separate public uninstall-shell check do
+not qualify its installed SDK terminal status or actual frontend. The fully
+qualified product release count remains zero.
 
 ## Agents
 
@@ -49,7 +59,7 @@ bootstrap remains pending, and earlier alpha.2/alpha.3 proofs stay historical.
 | Codex | Skill plus stdio MCP adapter | Historical preview bootstrap checked; real frontend acceptance pending |
 | Claude Code | Skill plus stdio MCP adapter | Historical alpha.2/alpha.3 bootstrap checked; real frontend acceptance pending |
 | Pi | Shared skill plus native MCP in 0.99.0+ | Configuration documented; runtime experimental |
-| Junie CLI | Shared skill plus supported MCP settings | Alpha.4 project install/lifecycle and MCP metadata checked; actual frontend acceptance pending |
+| Junie CLI | Shared skill plus supported MCP settings | Alpha.6 Darwin project installer components verified; historical alpha.4 install/lifecycle and MCP metadata checked; current SDK terminal and actual frontend acceptance pending |
 | IntelliJ Junie | Standalone IDE plugin MCP settings and instructions | Separate IDE/plugin version qualification pending |
 | OpenCode | Shared skill plus MCP configuration | Configuration documented; runtime experimental |
 | VS Code / GitHub Copilot | Shared skill plus portable MCP configuration | Configuration documented; runtime experimental |

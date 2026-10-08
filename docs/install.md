@@ -10,8 +10,9 @@ The curated adoption route currently selects the published
 [v0.1.0-alpha.6 runtime preview](https://github.com/xoxd-ai/fruitctl/releases/tag/v0.1.0-alpha.6),
 producer `8653325c6ccc0e058b3e4cf84eb44101cfd270fc`. Its thirteen public assets
 match the reviewed hashes and sizes through anonymous downloads. It retains
-the [explicit install root](#explicit-install-root-alpha-6-preview); its stock Darwin
-project bootstrap and installed SDK metadata acceptance remain pending.
+the [explicit install root](#explicit-install-root-alpha-6-preview). Its Darwin
+ARM64 Junie project installer components are verified as described below;
+installed SDK terminal acceptance remains pending.
 The rendered installation prompt follows this curated preview, rather than
 the newest package version or source checkout. Publication and archive checks
 do not qualify a packaged installer, agent frontend or desktop connection.
@@ -31,8 +32,8 @@ Alpha.4 passed an offline Darwin ARM64 Junie project lifecycle through the
 bundled installer API and an installed SDK/shared-broker journey through the
 unchanged signed controller to a loopback RFB fixture. That synthetic check
 verified four complete 96×53 frames, one reconnect and two terminal releases.
-Darwin's stock public bootstrap, desktop and frontend qualification remain
-pending. Earlier Darwin synthetic image exchanges remain historical
+Alpha.4 did not qualify Darwin's stock public bootstrap, desktop or frontend.
+Earlier Darwin synthetic image exchanges remain historical
 alpha.2/alpha.3 evidence.
 
 The canonical docs are live at
@@ -106,9 +107,30 @@ The source fetch ignores user `curlrc` options and checks the pinned script's
 SHA-256 before execution. The bootstrap verifies release bytes and uses the
 bundled Node runtime. This paste uses the ordinary user registration and home
 storage layout. For project registration and separate storage, use the
-explicit-root instructions below. Alpha.6's installation, SDK, frontend and
-desktop acceptance remain pending; structural release checks do not supply
-those receipts.
+explicit-root instructions below. Alpha.6's verified installer observations
+cover Darwin ARM64 Junie project scope with an explicit root. This user-scope
+paste, installed SDK terminal acceptance, actual frontends and desktop behavior
+remain unqualified; structural release checks do not establish those outcomes.
+
+On Darwin ARM64, alpha.6's stock public bootstrap installed the Junie project
+adapter into an explicit root. Installed doctor, same-version reinstall and
+same-version history rollback passed. Owned uninstall and post-uninstall doctor
+were verified separately. The combined installer/SDK run remained unsuccessful
+during its SDK phase; retained metadata does not establish its terminal status
+or qualify SDK runtime behavior.
+
+A separate default public uninstall-shell check passed after a fresh
+installation through the bundled installer API using retained immutable cache
+inputs. With `FRUITCTL_EXECUTABLE` absent, the published uninstall shell returned
+`removed` and retained doctor reported `not-installed`. Original project
+configuration bytes and modes were restored; all 3,673 runtime payload files and
+the root descriptor were retained. This separate check did not repeat the stock
+public bootstrap.
+
+These observations verify installer components. Actual Junie and IntelliJ
+frontend images, actions, release and reconnect, desktop and physical indicator
+behavior, and measured service objectives remain unqualified. The fully
+qualified product release count remains zero.
 
 Historical alpha.4 passed an anonymous Linux x64
 stock Junie project bootstrap, installed help, doctor and reinstall. A
@@ -153,8 +175,9 @@ The runtime producer is
 SHA-256 `d5aae5f89812def9f5e91e80de4fe8779b4f62263f1e331a26e5734b5fc3ecfc`.
 It puts `--disable` first in each bootstrap curl invocation, preserving the
 HTTPS and download bounds while ignoring user curl configuration. Its source
-checks cover the real-curl parser with offline fixtures; they do not qualify a
-packaged installation or a desktop connection.
+checks cover the real-curl parser with offline fixtures. The installer
+observations above separately verify the stated packaged components; neither
+the parser checks nor those components qualify a desktop connection.
 
 The immutable tag is `v0.1.0-alpha.6`, published on 2026-10-08. Its
 `fruitctl-release.json` SHA-256 is
@@ -179,10 +202,10 @@ include the Host prototype.
 The published [v0.1.0-alpha.6 preview](https://github.com/xoxd-ai/fruitctl/releases/tag/v0.1.0-alpha.6)
 implements `--install-root ABSOLUTE_DIRECTORY` for
 `install`, `doctor`, `rollback` and `uninstall`, and the stock bootstrap.
-Its source and archive capability checks are verified; stock Darwin project
-bootstrap/lifecycle and installed SDK metadata acceptance remain pending.
-This is a scoped preview, with real frontend and desktop qualification still
-pending. The published **alpha.4 bootstrap and runtime do not support
+Its source and archive capability checks and the stated Darwin ARM64 Junie
+project installer components are verified. Installed SDK terminal acceptance,
+real frontend and desktop qualification remain pending. The published
+**alpha.4 bootstrap and runtime do not support
 `--install-root`**. The pinned alpha.6 user-scope paste above deliberately keeps
 the normal-home storage behavior by omitting that option.
 

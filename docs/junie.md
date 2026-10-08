@@ -126,9 +126,13 @@ JetBrains XML. Adding this IDE entry is separate from the project JSON install.
 
 Alpha.6 is the current pinned preview. It includes explicit storage roots and
 ambient-curl configuration isolation. The public runtime excludes FruitctlHost
-and the purple indicator. Full stock Darwin lifecycle and real Junie/IntelliJ
-frontend qualification remain pending; the historical alpha.4 observations
-below do not qualify alpha.6. See [current installation evidence](install.md).
+and the purple indicator. Darwin ARM64 Junie project bootstrap, installed doctor,
+same-version reinstall and rollback, and owned uninstall have verified component
+evidence. A separate default public uninstall-shell check used a fresh
+offline-cache installation. The combined installer/SDK run remained unsuccessful;
+installed SDK terminal acceptance and real Junie/IntelliJ frontend qualification
+remain pending. Historical alpha.4 observations below remain specific to alpha.4.
+See [current installation evidence](install.md).
 
 ### Observed alpha.4 installation scope
 
@@ -146,8 +150,8 @@ On Darwin ARM64, alpha.4 separately passed an offline Junie project lifecycle
 through the bundled installer API and an installed SDK/shared-broker journey
 through the unchanged signed controller to a loopback RFB fixture. Four complete
 96×53 frames, one reconnect and releases through `task_complete` and
-`task_failed` passed as synthetic protocol evidence. The Darwin stock public
-bootstrap remains pending.
+`task_failed` passed as synthetic protocol evidence. The alpha.4 Darwin stock
+public bootstrap remains unqualified.
 
 Image rendering, desktop input, release and reconnect in an actual Junie
 conversation remain pending, as does separate IntelliJ acceptance. Historical

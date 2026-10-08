@@ -19,10 +19,12 @@
         "structural-complete-runtime-archive-and-split-producer-provenance",
         "same-tree-node24-tests-358-and-native-input-7-and-release-91",
         "anonymous-all-13-public-asset-bytes",
-        "explicit-install-root-capability-source-and-archive-structure"
+        "explicit-install-root-capability-source-and-archive-structure",
+        "darwin-arm64-stock-public-explicit-root-junie-project-installer-components",
+        "darwin-arm64-default-public-uninstall-shell-offline-cache-project-check"
       ],
       "pendingScopes": [
-        "darwin-arm64-stock-public-explicit-root-project-bootstrap-and-sdk-metadata",
+        "darwin-arm64-installed-sdk-metadata-terminal-acceptance",
         "darwin-arm64-complete-signed-runtime-synthetic-rfb-mcp-image-exchange",
         "linux-x64-runtime-execution",
         "linux-arm64-runtime-execution",
