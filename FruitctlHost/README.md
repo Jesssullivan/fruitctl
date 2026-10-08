@@ -35,6 +35,17 @@ frameworks and has no LibVNC or OpenSSL code dependency. Source builds are
 unsigned; release signing is a separate artifact step. These checks perform
 no GUI launch or live capture, and do not grant screen-recording permission.
 
+### Explicit developer launch tool
+
+The source-only [LaunchServices utility](../scripts/qualification/README.md)
+provides one explicit no-argument launch from an operator-bound private runtime
+request, without recompiling installation paths or previous PIDs. It is not
+included in runtime releases and neither the broker nor installer invokes it.
+Its build runs only pure request/completion checks; actual launch remains a
+separate attended action with caller-owned artifact/signature, kernel identity
+and app-health checks. A timeout or rejected callback is unknown and never
+automatically retried. This utility does not change capture opt-in or TCC.
+
 ## Startup and permissions
 
 The product app identity is `com.xoxd.fruitctl.host`. Release signing and

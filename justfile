@@ -24,6 +24,10 @@ build-native *args:
 build-host *args:
     ./scripts/build-host.sh {{args}}
 
+# Compile and pure-test the explicit Darwin developer launcher; starts no Host.
+build-host-launcher output_dir python clang sdk:
+    /bin/bash scripts/qualification/build_host_launcher.sh --output-dir {{quote(output_dir)}} --python {{quote(python)}} --clang {{quote(clang)}} --sdk {{quote(sdk)}}
+
 verify-native-inputs:
     python3 scripts/release/test_native_input.py
 
