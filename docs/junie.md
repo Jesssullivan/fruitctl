@@ -60,14 +60,15 @@ optional Host application and purple indicator.
 
 Run this in the root of the project you intend to open in Junie. Replace
 `desktop` with your already-configured target profile. This uses the immutable
-alpha.4 runtime preview and checks the pinned bootstrap script before execution.
+alpha.6 runtime preview and checks the pinned bootstrap script before execution.
 The first invocation previews the operation; the second installs it.
 
 ```sh
 (
   FRUITCTL_TARGET_PROFILE='desktop'
-  FRUITCTL_SOURCE_SHA='e0f4d064b076e58b33856d877e0e1c9266f55177'
-  FRUITCTL_RELEASE_TAG='v0.1.0-alpha.4'
+  FRUITCTL_SOURCE_SHA='8653325c6ccc0e058b3e4cf84eb44101cfd270fc'
+  FRUITCTL_RELEASE_TAG='v0.1.0-alpha.6'
+  FRUITCTL_PROJECT_DIR=$(pwd -P)
   FRUITCTL_SCRIPT=$(mktemp)
   trap 'rm -f "$FRUITCTL_SCRIPT"' EXIT
   curl --disable --fail --silent --show-error --location --proto '=https' --proto-redir '=https' \
@@ -78,25 +79,28 @@ The first invocation previews the operation; the second installs it.
   else
     shasum -a 256 "$FRUITCTL_SCRIPT"
   fi) &&
-  [ "${FRUITCTL_ACTUAL_SHA%% *}" = '6e05a7a62f57491cfbda1f8d9212291f6237f04f4ac396bc04d183b88747cd58' ] &&
+  [ "${FRUITCTL_ACTUAL_SHA%% *}" = 'd5aae5f89812def9f5e91e80de4fe8779b4f62263f1e331a26e5734b5fc3ecfc' ] &&
   sh "$FRUITCTL_SCRIPT" --agent junie --scope project \
-    --version "$FRUITCTL_RELEASE_TAG" --target "$FRUITCTL_TARGET_PROFILE" --dry-run &&
+    --project-dir "$FRUITCTL_PROJECT_DIR" --version "$FRUITCTL_RELEASE_TAG" --target "$FRUITCTL_TARGET_PROFILE" --dry-run &&
   sh "$FRUITCTL_SCRIPT" --agent junie --scope project \
-    --version "$FRUITCTL_RELEASE_TAG" --target "$FRUITCTL_TARGET_PROFILE"
+    --project-dir "$FRUITCTL_PROJECT_DIR" --version "$FRUITCTL_RELEASE_TAG" --target "$FRUITCTL_TARGET_PROFILE"
 )
 ```
 
 The bootstrap needs `curl`, `tar`, `awk`, `mktemp`, and `sha256sum` or `shasum`;
 Node.js is bundled. For user scope, replace both `--scope project` occurrences
-with `--scope user`. This bootstrap selects project scope from the current
-directory; it has no `--project-dir` option. The installed CLI supports that
-option when subsequently selecting another project.
+with `--scope user`. The bootstrap supports `--project-dir`; this example
+selects the physical current project path explicitly. It also supports
+`--install-root` for a separate absolute storage root. That option requires
+explicit scope; repeat the same root for doctor, rollback and uninstall.
+See [installation roots](install.md#explicit-install-root-alpha-6-preview) before choosing a root
+for an existing installation.
 
 Use the receipt's recorded project path for subsequent lifecycle commands.
-The bootstrap uses the physical current directory. Alpha.4's installed CLI
-refuses an alternate spelling through a project symlink and names the recorded
+The example selects the physical current directory. Alpha.6's installed CLI
+retains the project-alias refusal introduced in alpha.4 and names the recorded
 path, including during dry-run. Historical alpha.3 could create another receipt
-for that alias; alpha.4 does not migrate those older records automatically.
+for that alias; later releases do not migrate those older records automatically.
 
 Inspect the JSON result. `installed` records the versioned runtime, MCP entry
 and skill link. `declarative-required` means configuration was retained: apply
@@ -118,7 +122,15 @@ using the [documented STDIO JSON surface](https://www.jetbrains.com/help/ai-assi
 then enable **Pass custom MCP servers**. The installer does not edit internal
 JetBrains XML. Adding this IDE entry is separate from the project JSON install.
 
-## Observed alpha.4 installation scope
+## Current preview and historical installation evidence
+
+Alpha.6 is the current pinned preview. It includes explicit storage roots and
+ambient-curl configuration isolation. The public runtime excludes FruitctlHost
+and the purple indicator. Full stock Darwin lifecycle and real Junie/IntelliJ
+frontend qualification remain pending; the historical alpha.4 observations
+below do not qualify alpha.6. See [current installation evidence](install.md).
+
+### Observed alpha.4 installation scope
 
 The anonymous Linux x64 stock Junie project bootstrap passed, followed by
 installed help, doctor and reinstall. A continuation initialized the MCP SDK
