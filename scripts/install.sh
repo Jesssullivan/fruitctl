@@ -57,7 +57,7 @@ case "$work_dir" in ''|/|"$HOME") fail 'Unsafe bootstrap directory';; esac
 trap 'rm -rf "$work_dir"' EXIT
 trap 'exit 130' HUP INT TERM
 download() {
-  curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' --connect-timeout 15 --max-time 120 "$1" -o "$2" || fail "Release asset unavailable at $1; source-only or unpublished tags cannot be installed"
+  curl --disable --fail --silent --show-error --location --proto '=https' --proto-redir '=https' --connect-timeout 15 --max-time 120 "$1" -o "$2" || fail "Release asset unavailable at $1; source-only or unpublished tags cannot be installed"
 }
 download "$base/SHA256SUMS" "$work_dir/SHA256SUMS"
 expected=$(LC_ALL=C awk -v asset="$asset" '$2==asset || $2=="*" asset { if(length($1)!=64 || $1 !~ /^[0-9a-f]+$/) exit 2; value=$1; count++ } END { if(count!=1) exit 1; print value }' "$work_dir/SHA256SUMS") || fail "No unique valid checksum for $asset"
