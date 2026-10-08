@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { execFile } from 'node:child_process';
+import { pathToFileURL } from 'node:url';
 import { install, doctor, uninstall, rollback } from '../lib/install/index.mjs';
 import * as installer from '../lib/install/index.mjs';
 import { renderIntegration, resolveAdapter } from '../lib/install/adapters.mjs';
@@ -703,7 +704,7 @@ test('bootstrap rejects a checksum mismatch before extracting or running the run
   assert.deepEqual(await fs.readdir(f.home), []);
 });
 
-test('shell bootstrap installs a verified fixture end to end without a preinstalled product or agent launch', async t => {
+async function bootstrapFixture(t) {
   const f = { ...await fixture(t), platform: process.platform, arch: process.arch };
   const release = await releaseFixture(f), bundle = path.join(f.root, f.version, 'bundle');
   await fs.cp(new URL('../lib/', import.meta.url), path.join(bundle, 'lib'), { recursive: true });
@@ -725,6 +726,11 @@ test('shell bootstrap installs a verified fixture end to end without a preinstal
   const temp = path.join(f.root, 'bootstrap-temp'); await fs.mkdir(temp);
   // Harness-specific env is intentionally empty: this fixture owns a fresh home.
   const env = { PATH: `${fakeBin}:${process.env.PATH}`, HOME: f.home, TMPDIR: temp };
+  return { f, release, sums, fakeBin, temp, env };
+}
+
+test('shell bootstrap installs a verified fixture end to end without a preinstalled product or agent launch', async t => {
+  const { f, temp, env } = await bootstrapFixture(t);
   const result = await run('sh', [new URL('../scripts/install.sh', import.meta.url).pathname, '--agent', 'claude', '--scope', 'project', '--version', f.version, '--target', f.target], { cwd: f.projectDir, env });
   assert.equal(JSON.parse(result.stdout).status, 'installed');
   assert.equal((await doctor(f)).status, 'configured');
@@ -735,6 +741,67 @@ test('shell bootstrap installs a verified fixture end to end without a preinstal
   assert.match(help.stdout, /Commands: mcp, broker, relay/);
   const inspected = await run(launcher, ['doctor', '--agent', 'claude', '--scope', 'project'], { cwd: f.projectDir, env });
   assert.equal(JSON.parse(inspected.stdout).status, 'configured');
+});
+
+test('shell bootstrap ignores curlrc-added transfers and retains bounded download arguments', async t => {
+  let curl;
+  try {
+    curl = (await run('sh', ['-c', 'command -v curl'], { env: { PATH: process.env.PATH } })).stdout.trim();
+  } catch (error) {
+    if (error.code === 1 || error.code === 127) return t.skip('Real curl is unavailable; parser poisoning coverage requires the bootstrap utility');
+    throw error;
+  }
+  const { f, release, sums, fakeBin, temp, env } = await bootstrapFixture(t);
+  curl = await fs.realpath(curl);
+  env.CURL_HOME = f.home;
+  const version = await run(curl, ['--disable', '--version'], { env, timeout: 5000 });
+  assert.match(version.stdout, /^curl /);
+  t.diagnostic(`Offline parser coverage: ${version.stdout.split('\n')[0]}`);
+
+  const foreign = path.join(f.home, 'operator-owned.txt'), foreignBytes = 'retain operator home bytes\n';
+  const project = path.join(f.projectDir, 'operator-owned.txt');
+  const poison = path.join(f.root, 'curlrc-transfer.txt'), poisonBytes = 'injected curlrc transfer\n';
+  await fs.writeFile(foreign, foreignBytes, { mode: 0o640 });
+  await fs.writeFile(project, 'retain operator project bytes\n', { mode: 0o600 });
+  await fs.writeFile(poison, poisonBytes);
+  const curlrc = path.join(f.home, '.curlrc');
+  await fs.writeFile(curlrc, `url = ${JSON.stringify(pathToFileURL(poison).href)}\noutput = ${JSON.stringify(foreign)}\nconnect-timeout = 0\nmax-time = 0\n`, { mode: 0o600 });
+
+  // Real curl reads this config before parsing later options. Both controls
+  // transfer local files only and prove that a late --disable is insufficient.
+  for (const flags of [[], ['--disable']]) {
+    const output = path.join(f.root, `curlrc-control-${flags.length}.sums`);
+    await run(curl, ['--silent', ...flags, '--show-error', '--proto', '=file', pathToFileURL(sums).href, '-o', output], { env, timeout: 5000 });
+    assert.equal(await fs.readFile(foreign, 'utf8'), poisonBytes);
+    assert.deepEqual(await fs.readFile(output), await fs.readFile(sums));
+    await fs.writeFile(foreign, foreignBytes);
+  }
+  const retained = await Promise.all([foreign, project, curlrc, poison, sums, release.offline.archivePath, release.offline.manifestPath].map(async file =>
+    ({ file, bytes: await fs.readFile(file), mode: (await fs.stat(file)).mode & 0o777 })));
+  const calls = path.join(f.root, 'curl-calls.jsonl');
+  // Keep the bootstrap argv intact for the real option/config parser, replacing
+  // its two known release URLs with fixture files. The final protocol options
+  // allow file only, so this regression cannot contact a release or provider.
+  const assets = { [`https://github.com/xoxd-ai/fruitctl/releases/download/${f.version}/SHA256SUMS`]: pathToFileURL(sums).href,
+    [release.manifest.assets[0].url]: pathToFileURL(release.offline.archivePath).href };
+  await fs.writeFile(path.join(fakeBin, 'curl'), `#!${process.execPath}\nimport fs from 'node:fs';\nimport { spawnSync } from 'node:child_process';\nconst args=process.argv.slice(2), assets=${JSON.stringify(assets)};\nconst urls=args.filter(arg => arg.startsWith('https:'));\nif(urls.length!==1 || !Object.hasOwn(assets,urls[0])) throw new Error('Unexpected fixture download');\nfs.appendFileSync(${JSON.stringify(calls)},JSON.stringify(args)+'\\n');\nconst result=spawnSync(${JSON.stringify(curl)},[...args.map(arg => assets[arg] ?? arg),'--proto','=file','--proto-redir','=file'],{env:process.env,stdio:'inherit'});\nif(result.error) throw result.error;\nprocess.exit(result.status ?? 1);\n`, { mode: 0o755 });
+
+  const result = await run('sh', [new URL('../scripts/install.sh', import.meta.url).pathname, '--agent', 'claude', '--scope', 'project', '--version', f.version, '--target', f.target], { cwd: f.projectDir, env, timeout: 15000 });
+  assert.equal(JSON.parse(result.stdout).status, 'installed');
+  assert.equal((await doctor(f)).status, 'configured');
+  assert.deepEqual(await fs.readdir(temp), []);
+  const downloads = (await fs.readFile(calls, 'utf8')).trim().split('\n').map(line => JSON.parse(line));
+  assert.equal(downloads.length, 2);
+  for (const args of downloads) {
+    assert.equal(args[args.indexOf('--connect-timeout') + 1], '15', 'each transfer retains its connection budget');
+    assert.equal(args[args.indexOf('--max-time') + 1], '120', 'each transfer retains its total budget');
+    assert.equal(args[args.indexOf('--proto') + 1], '=https');
+    assert.equal(args[args.indexOf('--proto-redir') + 1], '=https');
+  }
+  for (const { file, bytes, mode } of retained) {
+    assert.deepEqual(await fs.readFile(file), bytes, `bootstrap retained ${path.basename(file)} bytes`);
+    assert.equal((await fs.stat(file)).mode & 0o777, mode);
+  }
 });
 
 test('rollback rejects a damaged prior runtime before changing the current configuration', async t => {
