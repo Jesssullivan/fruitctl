@@ -121,19 +121,21 @@ An explicit profile `daemonPath` takes priority, followed by
 inside its installed release. Installation does not start a broker, native
 process or service, create a target profile or credential, or grant macOS consent.
 
-## Install root and registration: next-preview source guidance
+## Install root and registration: alpha.5 preview
 
-The next installer interface separates operational storage from adapter
-registration with `--install-root ABSOLUTE_DIRECTORY`. This is source guidance
-for a future published and qualified producer. **Alpha.4 does not support this
-option**; its pinned release instructions above remain unchanged. See the
-[explicit install-root guide](install.md#explicit-install-root-next-preview-source-guidance)
-for the future project bootstrap, storage layout and recovery commands.
+The published [v0.1.0-alpha.5 preview](https://github.com/xoxd-ai/fruitctl/releases/tag/v0.1.0-alpha.5)
+separates operational storage from adapter registration with
+`--install-root ABSOLUTE_DIRECTORY`. Source and archive capability checks are
+verified; stock Darwin project bootstrap/lifecycle and installed SDK metadata
+acceptance remain pending. **Alpha.4 does not support this option**; its pinned
+release instructions above remain unchanged. See the
+[explicit install-root guide](install.md#explicit-install-root-alpha5-preview)
+for the exact alpha.5 bootstrap pin, storage layout and recovery commands.
 
 An explicit-root installation requires an explicit `--scope`. Use
 `--scope project --project-dir <absolute-project-directory>` to choose the
 project's MCP and skill destinations independently of the runtime cache, private
-installer state and launcher beneath the install root. The next bootstrap
+installer state and launcher beneath the install root. The alpha.5 bootstrap
 passes `--project-dir` through; project scope still uses the current directory
 when it is omitted. With `--scope user`, registration still uses the supported
 user configuration and adapter environment rules. Choosing a storage root does
