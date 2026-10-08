@@ -121,6 +121,40 @@ An explicit profile `daemonPath` takes priority, followed by
 inside its installed release. Installation does not start a broker, native
 process or service, create a target profile or credential, or grant macOS consent.
 
+## Install root and registration: next-preview source guidance
+
+The next installer interface separates operational storage from adapter
+registration with `--install-root ABSOLUTE_DIRECTORY`. This is source guidance
+for a future published and qualified producer. **Alpha.4 does not support this
+option**; its pinned release instructions above remain unchanged. See the
+[explicit install-root guide](install.md#explicit-install-root-next-preview-source-guidance)
+for the future project bootstrap, storage layout and recovery commands.
+
+An explicit-root installation requires an explicit `--scope`. Use
+`--scope project --project-dir <absolute-project-directory>` to choose the
+project's MCP and skill destinations independently of the runtime cache, private
+installer state and launcher beneath the install root. The next bootstrap
+passes `--project-dir` through; project scope still uses the current directory
+when it is omitted. With `--scope user`, registration still uses the supported
+user configuration and adapter environment rules. Choosing a storage root does
+not isolate that user profile or reassign `HOME`, `CODEX_HOME` or other adapter
+variables.
+
+Generated MCP entries continue to launch the installed absolute versioned
+executable with the selected target/configuration fields. They do not pass
+`--install-root`, relocate broker configuration or sockets, or create credentials.
+Supply the same install root on subsequent doctor, rollback and uninstall
+commands. Doctor inspects that namespace; recovery uses the receipt's recorded
+registration paths. Another root cannot adopt an existing owned entry or skill.
+Uninstall retains verified cache, root metadata, backups and history; there is
+no automatic discovery, migration or purge.
+
+Explicit-root bootstrap and release selection must reject a runtime without the
+capability before it can fall back to normal-home storage. Alpha.4's older API
+ignores an unknown `installRoot` property; passing it directly does not select
+storage. Omitting the option preserves the existing defaults, legacy receipts
+and older-release compatibility.
+
 ## Configuration destinations
 
 All generated entries launch the installed absolute `bin/fruitctl` path with
@@ -241,7 +275,8 @@ to apply it. Existing unowned or changed launch entries are never adopted silent
 No `AGENTS.md`, instruction override, `.junie/AGENTS.md`, agent binary or IDE
 setting is created or launched.
 
-Private receipts and backups live under `~/.local/state/fruitctl/install` with
+Without an explicit install root, private receipts and backups live under
+`~/.local/state/fruitctl/install` with
 owner-only permissions. Release bundles live under
 `~/.local/share/fruitctl/releases/<tag>/<platform>-<arch>`. The convenience launcher
 is `~/.local/bin/fruitctl`; MCP configurations use the absolute versioned path.

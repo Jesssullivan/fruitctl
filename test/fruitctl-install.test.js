@@ -6,34 +6,76 @@ import path from 'node:path';
 import { promisify } from 'node:util';
 import { execFile } from 'node:child_process';
 import { install, doctor, uninstall, rollback } from '../lib/install/index.mjs';
+import * as installer from '../lib/install/index.mjs';
 import { renderIntegration, resolveAdapter } from '../lib/install/adapters.mjs';
 import { parseJsonc, patchJsonEntry, jsonEntry, patchTomlEntry, tomlEntry, ownedFieldsMatch } from '../lib/install/config.mjs';
 import { sha256, resolveRelease } from '../lib/install/release.mjs';
 
 const run = promisify(execFile);
 async function fixture(t) {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'fruitctl-test-install-'));
+  // TMPDIR may itself be a symlink. Most fixtures need physical registration
+  // paths; deliberate alias cases below keep their requested path separately.
+  const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'fruitctl-test-install-')));
   t.after(() => fs.rm(root, { recursive: true, force: true }));
   const home = path.join(root, 'home'), projectDir = path.join(root, 'project');
   await fs.mkdir(home); await fs.mkdir(projectDir);
   return { root, home, projectDir, agent: 'claude', scope: 'project', version: 'v0.1.0-alpha.1', target: 'lab-desktop', platform: 'linux', arch: 'x64', env: {} };
 }
 
-async function releaseFixture(f, version = f.version, { symlink = false, nativeExecutables = {} } = {}) {
+async function releaseFixture(f, version = f.version, { symlink = false, nativeExecutables = {}, packageJson } = {}) {
   const root = path.join(f.root, version); const bundle = path.join(root, 'bundle');
   const files = ['bin/fruitctl', 'bin/node', 'bin/fruitctl.mjs', 'lib/install/index.mjs', 'lib/broker/runtime-marker.mjs', 'integrations/agents.json', 'skills/fruitctl/SKILL.md', ...Object.keys(nativeExecutables)];
   for (const file of files) {
     const dest = path.join(bundle, file); await fs.mkdir(path.dirname(dest), { recursive: true });
     await fs.writeFile(dest, `${file} fixture for ${version}\n`, { mode: nativeExecutables[file] ?? (file === 'bin/fruitctl' || file === 'bin/node' ? 0o755 : 0o600) });
   }
+  if (packageJson !== undefined) await fs.writeFile(path.join(bundle, 'package.json'), JSON.stringify(packageJson), { mode: 0o600 });
   if (symlink) await fs.symlink('/etc/passwd', path.join(bundle, 'external'));
   const archivePath = path.join(root, 'runtime.tar.gz');
-  await run('tar', ['-czf', archivePath, '-C', bundle, '.']);
+  await run('tar', ['-czf', archivePath, '-C', bundle, '.'], { timeout: 10000 });
   const name = `fruitctl-${version}-${f.platform}-${f.arch}.tar.gz`;
   const manifest = { schema: 'fruitctl.release.v1', repository: 'xoxd-ai/fruitctl', version, assets: [{ kind: 'runtime', os: f.platform, arch: f.arch, name, url: `https://github.com/xoxd-ai/fruitctl/releases/download/${version}/${name}`, sha256: sha256(await fs.readFile(archivePath)) }] };
   const manifestPath = path.join(root, 'fruitctl-release.json');
   await fs.writeFile(manifestPath, JSON.stringify(manifest));
   return { manifest, offline: { manifestPath, archivePath, manifestSha256: sha256(await fs.readFile(manifestPath)) } };
+}
+
+// These are storage/registration tests. Synthetic archives never execute their
+// fixture launchers or agent/native binaries; a capability marker is a checked
+// archive claim, not evidence about an arbitrary executable's behavior.
+const capablePackage = version => ({ name: 'fruitctl', version: version.replace(/^v/, ''), fruitctlInstallerCapabilities: { installRoot: 1 } });
+const capableRelease = (f, version = f.version) => releaseFixture(f, version, { packageJson: capablePackage(version) });
+
+async function treeSnapshot(directory) {
+  const rows = [];
+  async function visit(file, relative) {
+    let stat;
+    try { stat = await fs.lstat(file); }
+    catch (error) { if (error.code === 'ENOENT') return; throw error; }
+    const row = { path: relative, mode: stat.mode & 0o777, uid: stat.uid };
+    if (stat.isSymbolicLink()) rows.push({ ...row, type: 'link', target: await fs.readlink(file) });
+    else if (stat.isFile()) rows.push({ ...row, type: 'file', bytes: (await fs.readFile(file)).toString('base64') });
+    else if (stat.isDirectory()) {
+      rows.push({ ...row, type: 'directory' });
+      for (const name of (await fs.readdir(file)).sort()) await visit(path.join(file, name), relative === '.' ? name : `${relative}/${name}`);
+    } else throw new Error(`Unexpected fixture node: ${file}`);
+  }
+  await visit(directory, '.');
+  return rows;
+}
+
+async function installationSnapshot(f) {
+  return { home: await treeSnapshot(f.home), project: await treeSnapshot(f.projectDir), operational: await treeSnapshot(f.installRoot) };
+}
+
+async function readJson(file) { return JSON.parse(await fs.readFile(file, 'utf8')); }
+async function exists(file) { return fs.lstat(file).then(() => true, error => error.code === 'ENOENT' ? false : Promise.reject(error)); }
+async function writeConfig(f, text = '{\n "mcpServers":{"other":{"command":"operator"}},\n "keep":true\n}\n', mode = 0o640) {
+  const adapter = resolveAdapter(f);
+  await fs.mkdir(path.dirname(adapter.configPath), { recursive: true });
+  await fs.writeFile(adapter.configPath, text, { mode });
+  await fs.chmod(adapter.configPath, mode);
+  return { file: adapter.configPath, text, mode };
 }
 
 test('all seven adapters render their actual native schemas without launching agents', async t => {
@@ -793,4 +835,632 @@ test('a config becoming managed during download stays linked even when its conte
   await assert.rejects(install(f, { fetchImpl }), /managed|changed during release download/);
   assert.equal(await fs.readlink(config), managed);
   assert.equal(await fs.readFile(managed, 'utf8'), original);
+});
+
+test('install root contract: legacy API home keeps v1 paths, identities and recovery', async t => {
+  for (const scope of ['user', 'project']) await t.test(scope, async t => {
+    const f = { ...await fixture(t), scope }, original = await writeConfig(f);
+    const release = await releaseFixture(f), first = await install({ ...f, offline: release.offline });
+    const receipt = await readJson(first.receiptPath);
+    assert.equal(receipt.schema, 'fruitctl.install.v1');
+    assert.equal(receipt.id, `${f.agent}-${scope}-${sha256(scope === 'project' ? f.projectDir : f.home).slice(0, 16)}`);
+    assert.equal(first.prefix, path.join(f.home, '.local/share/fruitctl/releases', f.version, 'linux-x64'));
+    assert.equal(first.launcherPath, path.join(f.home, '.local/bin/fruitctl'));
+    assert.equal(first.receiptPath, path.join(f.home, '.local/state/fruitctl/install/receipts', `${receipt.id}.json`));
+    assert.equal(receipt.operationalRoot, undefined);
+    assert.equal(first.rootSelection, undefined);
+    const next = await releaseFixture(f, 'v0.1.0-alpha.2');
+    const upgraded = await install({ ...f, version: next.manifest.version, offline: next.offline });
+    const history = (await readJson(upgraded.receiptPath)).previousReceipt;
+    assert.equal((await readJson(history)).schema, 'fruitctl.install.v1');
+    assert.equal((await rollback(f)).to, f.version);
+    assert.equal((await uninstall(f)).status, 'removed');
+    assert.equal(await fs.readFile(original.file, 'utf8'), original.text);
+    assert.equal((await fs.stat(original.file)).mode & 0o777, original.mode);
+    assert.equal(await exists(first.prefix), true);
+    assert.equal(await exists(history), true);
+    assert.equal((await uninstall(f)).status, 'not-installed');
+  });
+});
+
+test('install root contract: omitted legacy scope defaults to user while missing selected roots stay read-only', async t => {
+  const f = await fixture(t), release = await releaseFixture(f);
+  const installed = await install({ ...f, scope: undefined, offline: release.offline });
+  assert.equal(installed.scope, 'user');
+  assert.equal(installed.configPath, path.join(f.home, '.claude.json'));
+  assert.equal((await readJson(installed.receiptPath)).schema, 'fruitctl.install.v1');
+  const installRoot = path.join(f.root, 'uncreated ancestor/storage'), beforeHome = await treeSnapshot(f.home), beforeProject = await treeSnapshot(f.projectDir);
+  const absent = await doctor({ ...f, installRoot, agent: undefined });
+  assert.equal(absent.status, 'not-installed');
+  assert.deepEqual(absent.rootSelection, { requestedRoot: installRoot, effectiveRoot: installRoot, layoutVersion: 1 });
+  assert.equal((await uninstall({ ...f, installRoot })).status, 'not-installed');
+  assert.equal((await rollback({ ...f, installRoot })).status, 'no-previous-install');
+  assert.equal(await exists(path.join(f.root, 'uncreated ancestor')), false);
+  assert.deepEqual(await treeSnapshot(f.home), beforeHome);
+  assert.deepEqual(await treeSnapshot(f.projectDir), beforeProject);
+});
+
+test('install root contract: project storage leaves normal home untouched and records private v2 state', async t => {
+  const f = await fixture(t); f.installRoot = path.join(f.root, 'portable storage Ω');
+  await fs.mkdir(path.join(f.home, '.codex'), { recursive: true });
+  await fs.writeFile(path.join(f.home, '.codex/config.toml'), '# untouched normal profile\n', { mode: 0o640 });
+  const normalBefore = await treeSnapshot(f.home), environmentBefore = { HOME: process.env.HOME, CODEX_HOME: process.env.CODEX_HOME };
+  const env = { CODEX_HOME: path.join(f.root, 'unused codex override') }, envBefore = { ...env };
+  const release = await capableRelease(f), preview = await install({ ...f, env, dryRun: true });
+  assert.equal(preview.status, 'planned');
+  assert.deepEqual(preview.rootSelection, { requestedRoot: f.installRoot, effectiveRoot: f.installRoot, layoutVersion: 1 });
+  assert.equal(await exists(f.installRoot), false, 'dry run must not adopt a root');
+  const installed = await install({ ...f, env, offline: release.offline });
+  assert.equal(installed.status, 'installed');
+  assert.equal(installed.prefix, path.join(f.installRoot, 'releases', f.version, 'linux-x64'));
+  assert.equal(installed.launcherPath, path.join(f.installRoot, 'bin/fruitctl'));
+  assert.equal(installed.configPath, path.join(f.projectDir, '.mcp.json'));
+  assert.equal(installed.skillPath, path.join(f.projectDir, '.claude/skills/fruitctl'));
+  assert.deepEqual(await treeSnapshot(f.home), normalBefore);
+  assert.deepEqual(env, envBefore);
+  assert.deepEqual({ HOME: process.env.HOME, CODEX_HOME: process.env.CODEX_HOME }, environmentBefore);
+  const descriptorPath = path.join(f.installRoot, 'state/install/root.json'), descriptor = await readJson(descriptorPath), receipt = await readJson(installed.receiptPath);
+  assert.equal(receipt.schema, 'fruitctl.install.v2');
+  assert.deepEqual(receipt.operationalRoot, descriptor);
+  assert.deepEqual(descriptor, { schema: 'fruitctl.install-root.v1', effectiveRoot: f.installRoot, layoutVersion: 1, ownerUid: process.getuid() });
+  for (const [key, expected] of Object.entries({ home: f.home, projectDir: f.projectDir, configPath: installed.configPath, skillPath: installed.skillPath })) assert.equal(receipt.registration[key], expected);
+  for (const file of [descriptorPath, installed.receiptPath, path.join(installed.prefix, '.fruitctl-runtime.json')]) assert.equal((await fs.stat(file)).mode & 0o777, 0o600, file);
+  for (const directory of ['state', 'state/install', 'state/install/receipts']) assert.equal((await fs.stat(path.join(f.installRoot, directory))).mode & 0o777, 0o700, directory);
+  assert.equal((await fs.stat(path.join(installed.prefix, 'bin/node'))).mode & 0o777, 0o755);
+  assert.equal((await fs.stat(path.join(installed.prefix, 'lib/install/index.mjs'))).mode & 0o777, 0o600);
+  assert.equal((await doctor({ ...f, env })).status, 'configured');
+  assert.equal((await uninstall({ ...f, env })).status, 'removed');
+  assert.deepEqual(await treeSnapshot(f.home), normalBefore);
+});
+
+test('install root contract: user home and adapter override are independent from storage and recorded for recovery', async t => {
+  const f = { ...await fixture(t), agent: 'vscode', scope: 'user' }; f.installRoot = path.join(f.root, 'user runtime');
+  const custom = path.join(f.root, 'selected copilot profile'), unused = path.join(f.root, 'different current profile'), env = { COPILOT_HOME: custom };
+  const original = await writeConfig({ ...f, env });
+  await fs.writeFile(path.join(f.home, 'operator-note'), 'retain user home bytes\n', { mode: 0o640 });
+  const homeBefore = await treeSnapshot(f.home), release = await capableRelease(f), installed = await install({ ...f, env, offline: release.offline });
+  assert.equal(installed.configPath, path.join(custom, 'mcp-config.json'));
+  assert.equal(installed.launcherPath, path.join(f.installRoot, 'bin/fruitctl'));
+  assert.equal((await readJson(installed.receiptPath)).registration.home, f.home);
+  assert.equal(await exists(path.join(f.home, '.local')), false);
+  const afterInstall = await installationSnapshot(f), customBefore = await treeSnapshot(custom), changed = { ...f, env: { COPILOT_HOME: unused } };
+  assert.equal((await install({ ...changed, dryRun: true })).status, 'declarative-required');
+  assert.deepEqual(await installationSnapshot(f), afterInstall);
+  assert.deepEqual(await treeSnapshot(custom), customBefore);
+  assert.equal(await exists(unused), false);
+  assert.equal((await doctor({ ...changed, agent: undefined })).status, 'configured', 'aggregate uses recorded registration destinations');
+  assert.equal((await doctor(changed)).status, 'configured');
+  assert.equal((await uninstall(changed)).status, 'removed');
+  assert.equal(await fs.readFile(original.file, 'utf8'), original.text);
+  assert.equal((await fs.stat(original.file)).mode & 0o777, original.mode);
+  assert.equal(await exists(unused), false);
+  assert.deepEqual((await treeSnapshot(f.home)).filter(row => !row.path.startsWith('.agents')), homeBefore);
+});
+
+test('install root contract: invalid UTF8 unrelated config bytes refuse before adoption and remain byte exact', async t => {
+  const f = await fixture(t); f.installRoot = path.join(f.root, 'invalid encoding root');
+  const original = Buffer.concat([Buffer.from('{"mcpServers":{"other":{"command":"operator"}},"unrelated":"'), Buffer.from([0xff]), Buffer.from('"}\n')]);
+  const configPath = path.join(f.projectDir, '.mcp.json'); await fs.writeFile(configPath, original, { mode: 0o640 });
+  const release = await capableRelease(f), before = await installationSnapshot(f);
+  for (const dryRun of [true, false]) {
+    await assert.rejects(install({ ...f, dryRun, offline: release.offline }), /UTF.?8|encoding|encoded|decode/i);
+    assert.deepEqual(await installationSnapshot(f), before);
+    assert.deepEqual(await fs.readFile(configPath), original);
+    assert.equal(await exists(f.installRoot), false);
+  }
+  // Legacy v1 planning retains its existing decoding contract. This does not
+  // qualify a lossy legacy install or rewrite the operator's original bytes.
+  assert.equal((await install({ ...f, installRoot: undefined, dryRun: true })).status, 'planned');
+  assert.deepEqual(await installationSnapshot(f), before);
+  assert.deepEqual(await fs.readFile(configPath), original);
+});
+
+test('install root contract: valid UTF8 JSONC keeps its BOM, Unicode and exact pristine bytes through recovery', async t => {
+  const f = { ...await fixture(t), agent: 'vscode' }; f.installRoot = path.join(f.root, 'valid encoding root');
+  const text = '\uFEFF{\n // retained Ω comment\n "mcpServers":{"other":{"command":"operator"}},\n "unrelated":"café 日本",\n}\n';
+  const original = await writeConfig(f, text), originalBytes = Buffer.from(text), release = await capableRelease(f);
+  const installed = await install({ ...f, offline: release.offline });
+  const configured = await fs.readFile(installed.configPath);
+  assert.deepEqual(configured.subarray(0, 3), Buffer.from([0xef, 0xbb, 0xbf]), 'strict decoding must not silently strip the BOM');
+  assert.equal(configured.toString('utf8').includes('café 日本'), true);
+  await install({ ...f, offline: release.offline });
+  assert.deepEqual(await fs.readFile(installed.configPath), configured);
+  assert.equal((await doctor(f)).status, 'configured');
+  assert.equal((await uninstall(f)).status, 'removed');
+  assert.deepEqual(await fs.readFile(original.file), originalBytes);
+  assert.equal((await fs.stat(original.file)).mode & 0o777, original.mode);
+});
+
+test('install root contract: isolated umask 0077 preserves original config and archive modes across the lifecycle', async t => {
+  const f = await fixture(t); f.installRoot = path.join(f.root, 'restrictive umask root');
+  const original = await writeConfig(f), release = await capableRelease(f), next = await capableRelease(f, 'v0.1.0-alpha.2');
+  const archivedFiles = {};
+  for (const version of [f.version, next.manifest.version]) archivedFiles[version] = Object.fromEntries((await treeSnapshot(path.join(f.root, version, 'bundle')))
+    .filter(row => row.type === 'file').map(row => [row.path, { mode: row.mode, sha256: sha256(Buffer.from(row.bytes, 'base64')) }]));
+  assert.equal(archivedFiles[f.version]['bin/node'].mode, 0o755, 'the fixture archive has an independently known executable mode');
+  const parentUmask = process.umask(), source = new URL('../lib/install/index.mjs', import.meta.url).href;
+  const script = `
+    import assert from 'node:assert/strict';
+    import fs from 'node:fs/promises';
+    import path from 'node:path';
+    import { createHash } from 'node:crypto';
+    import { install, doctor, rollback, uninstall } from ${JSON.stringify(source)};
+    const options = ${JSON.stringify(f)}, firstOffline = ${JSON.stringify(release.offline)}, nextOffline = ${JSON.stringify(next.offline)};
+    const archivedFiles = ${JSON.stringify(archivedFiles)};
+    const original = Buffer.from(${JSON.stringify(Buffer.from(original.text).toString('base64'))}, 'base64');
+    process.umask(0o077);
+    assert.equal(process.umask(), 0o077);
+    const stages = [], privateFiles = new Set();
+    const check = async (stage, installed) => {
+      assert.equal((await fs.stat(installed.configPath)).mode & 0o777, 0o640, stage + ' original config mode');
+      const receipt = JSON.parse(await fs.readFile(installed.receiptPath, 'utf8'));
+      for (const file of [installed.receiptPath, receipt.config.baseBackupPath, receipt.previousReceipt, path.join(options.installRoot, 'state/install/root.json')].filter(Boolean)) {
+        assert.equal((await fs.stat(file)).mode & 0o777, 0o600, stage + ' private evidence'); privateFiles.add(file);
+      }
+      const expectedFiles = archivedFiles[receipt.version];
+      assert.deepEqual(Object.keys(receipt.runtime.files).sort(), Object.keys(expectedFiles).sort(), stage + ' archived file inventory');
+      for (const [relative, expected] of Object.entries(expectedFiles)) {
+        const file = path.join(receipt.prefix, relative);
+        assert.equal((await fs.stat(file)).mode & 0o777, expected.mode, stage + ' original archived payload mode ' + relative);
+        assert.equal(receipt.runtime.modes[relative], expected.mode, stage + ' mode inventory must describe the archive input');
+        assert.equal(createHash('sha256').update(await fs.readFile(file)).digest('hex'), expected.sha256, stage + ' original archived payload bytes ' + relative);
+      }
+      assert.equal((await fs.stat(path.join(receipt.prefix, '.fruitctl-runtime.json'))).mode & 0o777, 0o600);
+      assert.equal((await doctor(options)).status, 'configured'); stages.push(stage);
+    };
+    const first = await install({ ...options, offline: firstOffline }); await check('install', first);
+    await check('reinstall', await install({ ...options, offline: firstOffline }));
+    const upgraded = await install({ ...options, version: ${JSON.stringify(next.manifest.version)}, offline: nextOffline }); await check('upgrade', upgraded);
+    assert.equal((await rollback(options)).to, options.version); await check('rollback', first);
+    assert.equal((await uninstall(options)).status, 'removed');
+    assert.deepEqual(await fs.readFile(first.configPath), original);
+    assert.equal((await fs.stat(first.configPath)).mode & 0o777, 0o640);
+    for (const file of privateFiles) {
+      if (file === first.receiptPath) continue;
+      assert.equal((await fs.stat(file)).mode & 0o777, 0o600, 'retained private evidence');
+    }
+    for (const [version, expectedFiles] of Object.entries(archivedFiles)) {
+      const prefix = path.join(options.installRoot, 'releases', version, options.platform + '-' + options.arch);
+      for (const [relative, expected] of Object.entries(expectedFiles)) {
+        const file = path.join(prefix, relative);
+        assert.equal((await fs.stat(file)).mode & 0o777, expected.mode, 'retained original archive mode ' + relative);
+        assert.equal(createHash('sha256').update(await fs.readFile(file)).digest('hex'), expected.sha256, 'retained original archive bytes ' + relative);
+      }
+      assert.equal((await fs.stat(path.join(prefix, '.fruitctl-runtime.json'))).mode & 0o777, 0o600);
+    }
+    stages.push('uninstall');
+    process.stdout.write(JSON.stringify({ umask: process.umask(), configMode: (await fs.stat(first.configPath)).mode & 0o777, stages, privateFileCount: privateFiles.size }));
+  `;
+  const { stdout } = await run(process.execPath, ['--input-type=module', '--eval', script], { cwd: f.projectDir, timeout: 20000, maxBuffer: 65536 });
+  const result = JSON.parse(stdout);
+  assert.equal(result.umask, 0o077);
+  assert.equal(result.configMode, 0o640);
+  assert.deepEqual(result.stages, ['install', 'reinstall', 'upgrade', 'rollback', 'uninstall']);
+  assert.equal(result.privateFileCount >= 4, true);
+  assert.equal(process.umask(), parentUmask, 'the shared runner umask remains untouched');
+  assert.deepEqual(await fs.readFile(original.file), Buffer.from(original.text));
+});
+
+test('install root contract: recorded OpenCode custom routing survives ambiguous unused defaults during recovery', async t => {
+  const f = { ...await fixture(t), agent: 'opencode', scope: 'user' }; f.installRoot = path.join(f.root, 'recorded route root');
+  const custom = path.join(f.root, 'custom OpenCode profile/connection.jsonc'), env = { OPENCODE_CONFIG: custom };
+  const original = await writeConfig({ ...f, env }, '{\n // retained custom comment\n "mcp":{"other":{"type":"local","command":["operator"]}},\n "unrelated":"retain",\n}\n');
+  const release = await capableRelease(f), first = await install({ ...f, env, offline: release.offline });
+  const next = await capableRelease(f, 'v0.1.0-alpha.2'); await install({ ...f, env, version: next.manifest.version, offline: next.offline });
+  const defaults = path.join(f.home, '.config/opencode'); await fs.mkdir(defaults, { recursive: true });
+  await fs.writeFile(path.join(defaults, 'opencode.json'), '{"unrelated":"unused JSON"}\n', { mode: 0o640 });
+  await fs.writeFile(path.join(defaults, 'opencode.jsonc'), '{\n // unused JSONC\n "unrelated":"untouched",\n}\n', { mode: 0o600 });
+  const defaultsBefore = await treeSnapshot(defaults), changed = { ...f, env: {} };
+  assert.equal((await doctor(changed)).status, 'configured');
+  assert.equal((await doctor({ ...changed, agent: undefined })).status, 'configured');
+  assert.deepEqual(await treeSnapshot(defaults), defaultsBefore);
+  assert.equal((await rollback(changed)).to, f.version);
+  assert.equal(jsonEntry(await fs.readFile(custom, 'utf8'), ['mcp']).command[0], path.join(first.prefix, 'bin/fruitctl'));
+  assert.deepEqual(await treeSnapshot(defaults), defaultsBefore);
+  assert.equal((await uninstall(changed)).status, 'removed');
+  assert.deepEqual(await fs.readFile(original.file), Buffer.from(original.text));
+  assert.equal((await fs.stat(original.file)).mode & 0o777, original.mode);
+  assert.deepEqual(await treeSnapshot(defaults), defaultsBefore);
+  assert.equal(await exists(path.join(f.home, '.local')), false, 'recorded recovery never falls back to legacy storage');
+});
+
+test('install root contract: spaces, Unicode and canonical root aliases use one namespace', async t => {
+  const f = await fixture(t), physical = path.join(f.root, 'storage Ω with spaces'), alias = path.join(f.root, 'storage alias 日本');
+  await fs.mkdir(physical); await fs.symlink(physical, alias);
+  const release = await capableRelease(f), installed = await install({ ...f, installRoot: alias, offline: release.offline });
+  assert.deepEqual(installed.rootSelection, { requestedRoot: alias, effectiveRoot: physical, layoutVersion: 1 });
+  assert.equal(installed.prefix, path.join(physical, 'releases', f.version, 'linux-x64'));
+  assert.equal(jsonEntry(await fs.readFile(installed.configPath, 'utf8'), ['mcpServers']).command, path.join(installed.prefix, 'bin/fruitctl'));
+  const payloadBefore = await treeSnapshot(installed.prefix), projectBefore = await treeSnapshot(f.projectDir);
+  const repeated = await install({ ...f, installRoot: physical, offline: release.offline });
+  assert.equal(repeated.receiptPath, installed.receiptPath);
+  assert.equal((await fs.readdir(path.dirname(installed.receiptPath))).length, 1);
+  assert.deepEqual(await treeSnapshot(installed.prefix), payloadBefore);
+  assert.deepEqual(await treeSnapshot(f.projectDir), projectBefore);
+  assert.equal((await doctor({ ...f, installRoot: alias })).status, 'configured');
+  assert.equal((await uninstall({ ...f, installRoot: physical })).status, 'removed');
+});
+
+test('install root contract: symlinked parent with an absent suffix records requested and physical roots separately', async t => {
+  const f = await fixture(t), parent = path.join(f.root, 'physical parent Ω'), alias = path.join(f.root, 'parent alias 日本');
+  await fs.mkdir(parent, { mode: 0o700 }); await fs.symlink(parent, alias);
+  const installRoot = path.join(alias, 'new ancestor/storage with spaces'), effectiveRoot = path.join(parent, 'new ancestor/storage with spaces');
+  const options = { ...f, installRoot }, release = await capableRelease(f), homeBefore = await treeSnapshot(f.home);
+  const preview = await install({ ...options, dryRun: true });
+  assert.deepEqual(preview.rootSelection, { requestedRoot: installRoot, effectiveRoot, layoutVersion: 1 });
+  assert.equal(await exists(effectiveRoot), false);
+  const installed = await install({ ...options, offline: release.offline });
+  assert.deepEqual(installed.rootSelection, preview.rootSelection);
+  assert.equal(installed.prefix, path.join(effectiveRoot, 'releases', f.version, 'linux-x64'));
+  assert.equal(installed.launcherPath, path.join(effectiveRoot, 'bin/fruitctl'));
+  assert.equal((await readJson(installed.receiptPath)).operationalRoot.effectiveRoot, effectiveRoot);
+  assert.equal((await readJson(path.join(effectiveRoot, 'state/install/root.json'))).effectiveRoot, effectiveRoot);
+  const payloadBefore = await treeSnapshot(installed.prefix), projectBefore = await treeSnapshot(f.projectDir);
+  const repeated = await install({ ...f, installRoot: effectiveRoot, offline: release.offline });
+  assert.equal(repeated.receiptPath, installed.receiptPath);
+  assert.equal((await fs.readdir(path.dirname(installed.receiptPath))).length, 1);
+  assert.deepEqual(await treeSnapshot(installed.prefix), payloadBefore);
+  assert.deepEqual(await treeSnapshot(f.projectDir), projectBefore);
+  assert.equal((await doctor(options)).status, 'configured');
+  assert.equal((await doctor({ ...f, installRoot: effectiveRoot })).status, 'configured');
+  assert.equal((await uninstall(options)).status, 'removed');
+  const retainedBefore = await treeSnapshot(effectiveRoot);
+  assert.equal((await uninstall({ ...f, installRoot: effectiveRoot })).status, 'not-installed');
+  assert.deepEqual(await treeSnapshot(effectiveRoot), retainedBefore);
+  assert.deepEqual(await treeSnapshot(f.home), homeBefore);
+});
+
+test('install root contract: invalid, read-only and unmarked roots refuse without adoption or registration writes', async t => {
+  const f = await fixture(t), release = await capableRelease(f); await writeConfig(f);
+  const beforeHome = await treeSnapshot(f.home), beforeProject = await treeSnapshot(f.projectDir);
+  for (const installRoot of ['', 'relative root', f.home, path.parse(f.home).root, '/nix/store/fruitctl-unowned-fixture']) {
+    await assert.rejects(install({ ...f, installRoot, dryRun: true }), /root|absolute|managed|immutable/i, JSON.stringify(installRoot));
+    assert.deepEqual(await treeSnapshot(f.home), beforeHome);
+    assert.deepEqual(await treeSnapshot(f.projectDir), beforeProject);
+  }
+  await assert.rejects(install({ ...f, scope: undefined, installRoot: path.join(f.root, 'scope missing'), dryRun: true }), /scope/i);
+  for (const kind of ['nonempty', 'file', 'readonly']) await t.test(kind, async () => {
+    const installRoot = path.join(f.root, `rejected ${kind}`);
+    if (kind === 'file') await fs.writeFile(installRoot, 'operator data\n', { mode: 0o640 });
+    else { await fs.mkdir(installRoot); if (kind === 'nonempty') await fs.writeFile(path.join(installRoot, 'operator data'), 'untouched\n', { mode: 0o640 }); else await fs.chmod(installRoot, 0o500); }
+    const beforeRoot = await treeSnapshot(installRoot);
+    try {
+      await assert.rejects(install({ ...f, installRoot, offline: release.offline }), /root|directory|empty|writ|read.only/i);
+      assert.deepEqual(await treeSnapshot(installRoot), beforeRoot);
+      assert.deepEqual(await treeSnapshot(f.home), beforeHome);
+      assert.deepEqual(await treeSnapshot(f.projectDir), beforeProject);
+    } finally { if (kind === 'readonly') await fs.chmod(installRoot, 0o700); }
+  });
+  if (process.getuid() !== 0 && (await fs.stat('/usr')).uid !== process.getuid()) await assert.rejects(install({ ...f, installRoot: '/usr', dryRun: true }), /root|owner|owned|foreign/i);
+  assert.deepEqual(await treeSnapshot(f.home), beforeHome);
+  assert.deepEqual(await treeSnapshot(f.projectDir), beforeProject);
+});
+
+test('install root contract: root alias swap during download blocks cache and registration commit', async t => {
+  const f = await fixture(t), physical = path.join(f.root, 'first root'), replacement = path.join(f.root, 'replacement root'), alias = path.join(f.root, 'selected alias');
+  await fs.mkdir(physical); await fs.mkdir(replacement); await fs.symlink(physical, alias);
+  const release = await capableRelease(f), homeBefore = await treeSnapshot(f.home), projectBefore = await treeSnapshot(f.projectDir), replacementBefore = await treeSnapshot(replacement);
+  const manifestBytes = await fs.readFile(release.offline.manifestPath), manifestUrl = `https://github.com/xoxd-ai/fruitctl/releases/download/${f.version}/fruitctl-release.json`;
+  let archiveRequests = 0, lockBefore;
+  const fetchImpl = async url => {
+    if (url.startsWith('https://api.github.com/')) return Response.json({ tag_name: f.version, assets: [{ name: 'fruitctl-release.json', digest: `sha256:${sha256(manifestBytes)}`, browser_download_url: manifestUrl }] });
+    if (url === manifestUrl) return new Response(manifestBytes);
+    archiveRequests++; lockBefore = await treeSnapshot(path.join(physical, 'state/install/transaction.lock'));
+    await fs.unlink(alias); await fs.symlink(replacement, alias);
+    return new Response(await fs.readFile(release.offline.archivePath));
+  };
+  await assert.rejects(install({ ...f, installRoot: alias }, { fetchImpl }), /root|identity|changed|alias/i);
+  assert.equal(archiveRequests, 1);
+  assert.deepEqual(await treeSnapshot(f.home), homeBefore);
+  assert.deepEqual(await treeSnapshot(f.projectDir), projectBefore);
+  assert.deepEqual(await treeSnapshot(replacement), replacementBefore);
+  assert.equal(await exists(path.join(physical, 'releases', f.version, 'linux-x64')), false);
+  // A changed requested alias no longer authorizes cleanup through that path.
+  // Retain inspectable owned state instead of purging by a stale physical path.
+  const descriptorPath = path.join(physical, 'state/install/root.json');
+  assert.equal((await readJson(descriptorPath)).effectiveRoot, physical);
+  assert.equal((await fs.stat(descriptorPath)).mode & 0o777, 0o600);
+  assert.deepEqual(await treeSnapshot(path.join(physical, 'state/install/transaction.lock')), lockBefore, 'a lost root alias retains the exact lock evidence');
+  assert.deepEqual((await treeSnapshot(path.join(physical, 'state/install/receipts'))).filter(row => row.type === 'file'), []);
+});
+
+test('install root contract: moving a project during download clears its safe storage lock and permits independent reuse', async t => {
+  const f = await fixture(t); f.installRoot = path.join(f.root, 'unchanged storage root');
+  const movedProject = path.join(f.root, 'moved during download'), independentProject = path.join(f.root, 'independent project');
+  await fs.mkdir(independentProject); await writeConfig(f); await writeConfig({ ...f, projectDir: independentProject });
+  const release = await capableRelease(f), homeBefore = await treeSnapshot(f.home), projectBefore = await treeSnapshot(f.projectDir), independentBefore = await treeSnapshot(independentProject);
+  const projectInode = (await fs.stat(f.projectDir)).ino, manifestBytes = await fs.readFile(release.offline.manifestPath);
+  const manifestUrl = `https://github.com/xoxd-ai/fruitctl/releases/download/${f.version}/fruitctl-release.json`;
+  const lockPath = path.join(f.installRoot, 'state/install/transaction.lock'); let archiveRequests = 0;
+  const fetchImpl = async url => {
+    if (url.startsWith('https://api.github.com/')) return Response.json({ tag_name: f.version, assets: [{ name: 'fruitctl-release.json', digest: `sha256:${sha256(manifestBytes)}`, browser_download_url: manifestUrl }] });
+    if (url === manifestUrl) return new Response(manifestBytes);
+    archiveRequests++;
+    assert.equal((await fs.lstat(lockPath)).uid, process.getuid(), 'the controlled transaction owns the live lock');
+    await fs.rename(f.projectDir, movedProject);
+    return new Response(await fs.readFile(release.offline.archivePath));
+  };
+  await assert.rejects(install(f, { fetchImpl }), /project|registration|identity|moved|missing/i);
+  assert.equal(archiveRequests, 1);
+  assert.equal(await exists(f.projectDir), false, 'the installer must not recreate or adopt the old project path');
+  assert.equal((await fs.stat(movedProject)).ino, projectInode);
+  assert.deepEqual(await treeSnapshot(movedProject), projectBefore, 'the moved registration remains byte/mode exact');
+  assert.deepEqual(await treeSnapshot(independentProject), independentBefore);
+  assert.deepEqual(await treeSnapshot(f.home), homeBefore);
+  assert.equal(await exists(path.join(f.installRoot, 'releases', f.version, 'linux-x64')), false);
+  assert.equal(await exists(lockPath), false, 'a registration move cannot strand the lock on an unchanged owned storage root');
+  assert.deepEqual((await treeSnapshot(path.join(f.installRoot, 'state/install/receipts'))).filter(row => row.type === 'file'), []);
+  const installed = await install({ ...f, projectDir: independentProject, offline: release.offline });
+  assert.equal(installed.status, 'installed', 'a later independent project can use the same selected root');
+  assert.equal((await doctor({ ...f, projectDir: independentProject })).status, 'configured');
+  assert.equal(await exists(lockPath), false);
+  assert.deepEqual(await treeSnapshot(movedProject), projectBefore);
+  assert.deepEqual(await treeSnapshot(f.home), homeBefore);
+  assert.equal(await exists(f.projectDir), false);
+});
+
+test('install root contract: managed registration or an unowned skill refuses before root adoption', async t => {
+  for (const kind of ['symlinked config', 'readonly config', 'unowned skill']) await t.test(kind, async t => {
+    const f = await fixture(t); f.installRoot = path.join(f.root, 'never adopted root');
+    const original = await writeConfig(f), adapter = resolveAdapter(f);
+    if (kind === 'symlinked config') {
+      const target = path.join(f.root, 'managed registration bytes'); await fs.rename(original.file, target); await fs.symlink(target, original.file);
+    } else if (kind === 'readonly config') await fs.chmod(original.file, 0o400);
+    else { await fs.mkdir(adapter.skillPath, { recursive: true }); await fs.writeFile(path.join(adapter.skillPath, 'operator-note'), 'do not adopt\n', { mode: 0o640 }); }
+    const before = await installationSnapshot(f); let requests = 0;
+    const result = await install(f, { fetchImpl: async () => { requests++; throw new Error('managed preflight must not fetch'); } });
+    assert.equal(result.status, 'declarative-required');
+    assert.equal(requests, 0);
+    assert.deepEqual(await installationSnapshot(f), before);
+    assert.equal(await exists(f.installRoot), false);
+  });
+});
+
+test('install root contract: repeated installs preserve payload, registration and descriptor exactly', async t => {
+  const f = await fixture(t); f.installRoot = path.join(f.root, 'reinstall root');
+  const release = await capableRelease(f), installed = await install({ ...f, offline: release.offline });
+  const before = await installationSnapshot(f), nodeInode = (await fs.stat(path.join(installed.prefix, 'bin/node'))).ino;
+  await install({ ...f, offline: release.offline });
+  const after = await installationSnapshot(f), bookkeeping = row => /^state\/install\/(?:backups|history|receipts)(?:\/|$)/.test(row.path);
+  assert.deepEqual(after.home, before.home);
+  assert.deepEqual(after.project, before.project);
+  assert.deepEqual(after.operational.filter(row => !bookkeeping(row)), before.operational.filter(row => !bookkeeping(row)));
+  assert.equal((await fs.stat(path.join(installed.prefix, 'bin/node'))).ino, nodeInode);
+  assert.equal((await fs.readdir(path.dirname(installed.receiptPath))).length, 1);
+  assert.equal((await readJson(installed.receiptPath)).schema, 'fruitctl.install.v2');
+  assert.equal((await doctor(f)).status, 'configured');
+});
+
+test('install root contract: foreign-root entries and same-agent project aliases cannot become a new baseline', async t => {
+  const f = await fixture(t); f.installRoot = path.join(f.root, 'first owned root');
+  const release = await capableRelease(f), installed = await install({ ...f, offline: release.offline });
+  const before = await installationSnapshot(f), secondRoot = path.join(f.root, 'second root'); let requests = 0;
+  await assert.rejects(install({ ...f, installRoot: secondRoot }, { fetchImpl: async () => { requests++; throw new Error('download must not happen'); } }), /owned|changed|foreign|root|refus/i);
+  assert.equal(requests, 0);
+  assert.equal(await exists(secondRoot), false);
+  assert.deepEqual(await installationSnapshot(f), before);
+  const projectAlias = path.join(f.root, 'project alias'); await fs.symlink(f.projectDir, projectAlias);
+  for (const operation of [
+    () => install({ ...f, projectDir: projectAlias, offline: release.offline }),
+    () => doctor({ ...f, projectDir: projectAlias }),
+    () => rollback({ ...f, projectDir: projectAlias }),
+    () => uninstall({ ...f, projectDir: projectAlias }),
+  ]) {
+    await assert.rejects(operation(), /alias|recorded project/i);
+    assert.deepEqual(await installationSnapshot(f), before);
+  }
+  assert.equal((await fs.readdir(path.dirname(installed.receiptPath))).length, 1);
+});
+
+test('install root contract: shared registrations and separate projects audit and transfer within one root', async t => {
+  const f = await fixture(t); f.installRoot = path.join(f.root, 'shared root');
+  const original = await writeConfig(f), release = await capableRelease(f), first = await install({ ...f, offline: release.offline });
+  const second = await install({ ...f, agent: 'vscode', offline: release.offline });
+  await install({ ...f, agent: 'pi', offline: release.offline });
+  const otherProject = path.join(f.root, 'independent project'); await fs.mkdir(otherProject);
+  const third = await install({ ...f, projectDir: otherProject, offline: release.offline }), independentBefore = await treeSnapshot(otherProject);
+  const aggregate = await doctor({ installRoot: f.installRoot, home: path.join(f.root, 'unused invoking home'), platform: 'linux', arch: 'x64', env: {} });
+  assert.equal(aggregate.status, 'configured');
+  assert.equal(aggregate.installations.length, 4);
+  assert.equal((await uninstall(f)).status, 'removed');
+  assert.equal((await doctor({ ...f, agent: 'vscode' })).status, 'configured');
+  assert.deepEqual(await treeSnapshot(otherProject), independentBefore);
+  assert.equal((await uninstall({ ...f, agent: 'vscode' })).status, 'removed');
+  assert.equal(await fs.readFile(original.file, 'utf8'), original.text);
+  assert.equal((await fs.stat(original.file)).mode & 0o777, original.mode);
+  assert.equal(await exists(second.skillPath), true, 'shared skill ownership transfers to Pi');
+  assert.equal((await doctor({ ...f, agent: 'pi' })).status, 'configured');
+  assert.equal((await uninstall({ ...f, agent: 'pi' })).status, 'removed');
+  assert.equal(await exists(second.skillPath), false);
+  assert.equal(await exists(first.skillPath), false);
+  assert.equal((await doctor({ ...f, projectDir: otherProject })).status, 'configured');
+  assert.equal(await exists(third.launcherPath), true, 'one root launcher remains while a different project owns it');
+  assert.equal((await uninstall({ ...f, projectDir: otherProject })).status, 'removed');
+  assert.equal(await exists(third.launcherPath), false);
+  assert.equal((await doctor({ installRoot: f.installRoot, platform: 'linux', arch: 'x64', env: {} })).status, 'not-installed');
+});
+
+test('install root contract: incapable and malformed archive markers refuse explicit storage without legacy fallback', async t => {
+  assert.deepEqual(installer.installerCapabilities, { installRoot: 1 });
+  assert.equal(Object.isFrozen(installer.installerCapabilities), true);
+  for (const [label, packageJson] of [
+    ['alpha4-like package without marker', { name: 'fruitctl', version: '0.1.0-alpha.1' }],
+    ['string version', { fruitctlInstallerCapabilities: { installRoot: '1' } }],
+    ['unsupported version', { fruitctlInstallerCapabilities: { installRoot: 2 } }],
+    ['array marker', { fruitctlInstallerCapabilities: [{ installRoot: 1 }] }],
+    ['missing root feature', { fruitctlInstallerCapabilities: { unrelated: 1 } }],
+  ]) await t.test(label, async t => {
+    const f = await fixture(t); f.installRoot = path.join(f.root, 'unsupported target root');
+    const release = await releaseFixture(f, f.version, { packageJson }), homeBefore = await treeSnapshot(f.home), projectBefore = await treeSnapshot(f.projectDir);
+    await assert.rejects(install({ ...f, offline: release.offline }), /capabilit|installRoot/i);
+    assert.deepEqual(await treeSnapshot(f.home), homeBefore);
+    assert.deepEqual(await treeSnapshot(f.projectDir), projectBefore);
+    assert.equal(await exists(path.join(f.installRoot, 'releases', f.version, 'linux-x64')), false);
+    assert.equal(await exists(path.join(f.installRoot, 'state/install/root.json')), false);
+    const legacy = await install({ ...f, installRoot: undefined, offline: release.offline });
+    assert.equal(legacy.status, 'installed', 'an older target still supports the legacy storage route');
+    assert.equal((await readJson(legacy.receiptPath)).schema, 'fruitctl.install.v1');
+    assert.equal(legacy.prefix, path.join(f.home, '.local/share/fruitctl/releases', f.version, 'linux-x64'));
+  });
+});
+
+test('install root contract: v2 recovery metadata cannot redirect or downgrade ownership checks', async t => {
+  const mutations = [
+    ['legacy schema in explicit namespace', receipt => { receipt.schema = 'fruitctl.install.v1'; }],
+    ['different operational root', (receipt, f) => { receipt.operationalRoot.effectiveRoot = path.join(f.root, 'foreign root'); }],
+    ['unknown layout', receipt => { receipt.operationalRoot.layoutVersion = 2; }],
+    ['foreign registration home', (receipt, f) => { receipt.registration.home = path.join(f.root, 'foreign home'); }],
+    ['foreign config destination', (receipt, f) => { receipt.registration.configPath = path.join(f.root, 'foreign config'); }],
+    ['foreign skill destination', (receipt, f) => { receipt.registration.skillPath = path.join(f.root, 'foreign skill'); }],
+    ['coordinated config and registration redirect', async (receipt, f) => {
+      const file = path.join(f.root, 'unrelated destination/config.json'); await fs.mkdir(path.dirname(file));
+      await fs.copyFile(receipt.config.path, file); await fs.chmod(file, 0o600);
+      receipt.registration.configPath = receipt.config.path = file;
+    }],
+    ['coordinated skill and registration redirect', async (receipt, f) => {
+      const file = path.join(f.root, 'unrelated destination/fruitctl'); await fs.mkdir(path.dirname(file));
+      await fs.symlink(receipt.skill.target, file);
+      receipt.registration.skillPath = receipt.skill.path = file;
+    }],
+    ['foreign runtime prefix', (receipt, f) => { receipt.prefix = path.join(f.root, 'foreign runtime'); }],
+    ['foreign launcher path', (receipt, f) => { receipt.launcher.path = path.join(f.home, '.local/bin/fruitctl'); }],
+    ['foreign launcher target', (receipt, f) => { receipt.launcher.target = path.join(f.root, 'foreign/bin/fruitctl'); }],
+    ['foreign backup path', (receipt, f) => { receipt.config.baseBackupPath = path.join(f.root, 'foreign backup'); }],
+    ['foreign history path', (receipt, f) => { receipt.previousReceipt = path.join(f.root, 'foreign history'); }],
+    ['stripped mode inventory', receipt => { delete receipt.runtime.modes; }],
+  ];
+  for (const [label, mutate] of mutations) await t.test(label, async t => {
+    const f = await fixture(t); f.installRoot = path.join(f.root, 'metadata root'); await writeConfig(f);
+    const release = await capableRelease(f), installed = await install({ ...f, offline: release.offline }), receipt = await readJson(installed.receiptPath);
+    await mutate(receipt, f); await fs.writeFile(installed.receiptPath, JSON.stringify(receipt));
+    const before = await installationSnapshot(f), outsideBefore = await treeSnapshot(path.join(f.root, 'unrelated destination'));
+    await assert.rejects(uninstall(f), /receipt|root|registration|identity|mode|layout|configuration|launcher|history/i);
+    assert.deepEqual(await installationSnapshot(f), before);
+    assert.deepEqual(await treeSnapshot(path.join(f.root, 'unrelated destination')), outsideBefore);
+    await assert.rejects(rollback(f), /receipt|root|registration|identity|mode|layout|configuration|launcher|history/i);
+    assert.deepEqual(await installationSnapshot(f), before);
+    assert.deepEqual(await treeSnapshot(path.join(f.root, 'unrelated destination')), outsideBefore);
+  });
+});
+
+test('install root contract: descriptor tampering and stale transaction locks preserve registration', async t => {
+  for (const kind of ['effectiveRoot', 'ownerUid', 'mode', 'symlink', 'lock']) await t.test(kind, async t => {
+    const f = await fixture(t); f.installRoot = path.join(f.root, 'descriptor root');
+    const release = await capableRelease(f), installed = await install({ ...f, offline: release.offline }), file = path.join(f.installRoot, 'state/install/root.json');
+    if (kind === 'mode') await fs.chmod(file, 0o644);
+    else if (kind === 'symlink') {
+      const outside = path.join(f.root, 'copied descriptor'); await fs.copyFile(file, outside);
+      await fs.unlink(file); await fs.symlink(outside, file);
+    } else if (kind === 'lock') await fs.mkdir(path.join(f.installRoot, 'state/install/transaction.lock'));
+    else { const descriptor = await readJson(file); descriptor[kind] = kind === 'ownerUid' ? process.getuid() + 1 : path.join(f.root, 'other'); await fs.writeFile(file, JSON.stringify(descriptor)); }
+    const before = await installationSnapshot(f);
+    await assert.rejects(uninstall(f), /root|descriptor|owner|mode|lock|transaction/i);
+    assert.deepEqual(await installationSnapshot(f), before);
+    assert.equal(await exists(installed.receiptPath), true);
+  });
+});
+
+test('install root contract: private receipt and backup tamper refuses recovery with original state preserved', async t => {
+  for (const kind of ['receipt mode', 'receipt symlink', 'backup bytes', 'backup mode', 'backup symlink']) await t.test(kind, async t => {
+    const f = await fixture(t); f.installRoot = path.join(f.root, 'private recovery root'); await writeConfig(f);
+    const release = await capableRelease(f), installed = await install({ ...f, offline: release.offline }), receipt = await readJson(installed.receiptPath);
+    const selected = kind.startsWith('receipt') ? installed.receiptPath : receipt.config.baseBackupPath;
+    if (kind.endsWith('mode')) await fs.chmod(selected, 0o644);
+    else if (kind.endsWith('bytes')) await fs.appendFile(selected, 'unowned backup bytes\n');
+    else {
+      const copied = path.join(f.root, 'unrelated recovery bytes'); await fs.copyFile(selected, copied);
+      await fs.unlink(selected); await fs.symlink(copied, selected);
+    }
+    const before = await installationSnapshot(f), outsideBefore = await treeSnapshot(path.join(f.root, 'unrelated recovery bytes'));
+    await assert.rejects(uninstall(f), /receipt|regular|mode|backup|changed|ELOOP|symbolic/i);
+    assert.deepEqual(await installationSnapshot(f), before);
+    assert.deepEqual(await treeSnapshot(path.join(f.root, 'unrelated recovery bytes')), outsideBefore);
+  });
+});
+
+test('install root contract: previous cache byte, mode and capability drift blocks rollback without mutation', async t => {
+  for (const kind of ['bytes', 'mode', 'capability']) await t.test(kind, async t => {
+    const f = await fixture(t); f.installRoot = path.join(f.root, 'rollback root');
+    const firstRelease = await capableRelease(f), first = await install({ ...f, offline: firstRelease.offline });
+    const next = await capableRelease(f, 'v0.1.0-alpha.2'), current = await install({ ...f, version: next.manifest.version, offline: next.offline });
+    if (kind === 'mode') await fs.chmod(path.join(first.prefix, 'bin/node'), 0o644);
+    else if (kind === 'bytes') await fs.appendFile(path.join(first.prefix, 'lib/broker/runtime-marker.mjs'), 'tampered\n');
+    else await fs.writeFile(path.join(first.prefix, 'package.json'), JSON.stringify({ name: 'fruitctl' }));
+    const before = await installationSnapshot(f);
+    await assert.rejects(rollback(f), /runtime|changed|capabilit|installRoot/i);
+    assert.deepEqual(await installationSnapshot(f), before);
+    assert.equal((await readJson(current.receiptPath)).version, next.manifest.version);
+    await assert.rejects(install({ ...f, offline: firstRelease.offline }), /runtime|changed|cache|capabilit/i);
+    assert.deepEqual(await installationSnapshot(f), before);
+  });
+});
+
+test('install root contract: current cache drift is diagnosed without rewriting state', async t => {
+  const f = await fixture(t); f.installRoot = path.join(f.root, 'doctor root');
+  const release = await capableRelease(f), installed = await install({ ...f, offline: release.offline });
+  await fs.chmod(path.join(installed.prefix, 'bin/node'), 0o644);
+  const before = await installationSnapshot(f), result = await doctor(f);
+  assert.equal(result.status, 'drift');
+  assert.equal(result.checks.some(check => !check.ok && /bin\/node/.test(check.name)), true);
+  assert.deepEqual(await installationSnapshot(f), before);
+});
+
+test('install root contract: physical root moves, copied roots and project relocation cannot be adopted', async t => {
+  for (const kind of ['moved root', 'copied root', 'moved project', 'replaced project']) await t.test(kind, async t => {
+    const f = await fixture(t); f.installRoot = path.join(f.root, 'original root');
+    const release = await capableRelease(f), installed = await install({ ...f, offline: release.offline });
+    let relocated;
+    if (kind === 'moved project' || kind === 'replaced project') {
+      const movedProject = path.join(f.root, 'moved project'); await fs.rename(f.projectDir, movedProject);
+      if (kind === 'replaced project') { await fs.cp(movedProject, f.projectDir, { recursive: true, dereference: false, verbatimSymlinks: true }); relocated = f; }
+      else relocated = { ...f, projectDir: movedProject };
+    } else {
+      const movedRoot = path.join(f.root, kind);
+      if (kind === 'moved root') await fs.rename(f.installRoot, movedRoot);
+      else await fs.cp(f.installRoot, movedRoot, { recursive: true, dereference: false, verbatimSymlinks: true });
+      relocated = { ...f, installRoot: movedRoot };
+    }
+    const before = await installationSnapshot(relocated), originalRootBefore = await treeSnapshot(f.installRoot);
+    const diagnosis = await doctor(relocated).then(value => value, error => ({ refused: error.message }));
+    assert.notEqual(diagnosis.status, 'configured');
+    for (const operation of [
+      () => install({ ...relocated, offline: release.offline }),
+      () => uninstall(relocated),
+      () => rollback(relocated),
+    ]) {
+      await assert.rejects(operation(), /root|identity|recorded|project|owned|changed|receipt|refus/i);
+      assert.deepEqual(await installationSnapshot(relocated), before);
+      assert.deepEqual(await treeSnapshot(f.installRoot), originalRootBefore);
+    }
+    assert.equal(await fs.readlink(installed.launcherPath).catch(error => error.code === 'ENOENT' ? undefined : Promise.reject(error)), kind === 'moved root' ? undefined : path.join(installed.prefix, 'bin/fruitctl'));
+  });
+});
+
+test('install root contract: uninstall then new root restores bytes/modes and retains old cache/history', async t => {
+  const f = await fixture(t); f.installRoot = path.join(f.root, 'old storage');
+  const original = await writeConfig(f), release = await capableRelease(f), first = await install({ ...f, offline: release.offline });
+  const next = await capableRelease(f, 'v0.1.0-alpha.2'), latest = await install({ ...f, version: next.manifest.version, offline: next.offline });
+  const historyPath = (await readJson(latest.receiptPath)).previousReceipt, payloadBefore = await treeSnapshot(path.join(f.installRoot, 'releases'));
+  const descriptorBefore = await fs.readFile(path.join(f.installRoot, 'state/install/root.json')), historyBefore = await fs.readFile(historyPath);
+  await fs.chmod(latest.configPath, 0o600);
+  assert.equal((await uninstall(f)).status, 'removed');
+  assert.equal(await fs.readFile(original.file, 'utf8'), original.text);
+  assert.equal((await fs.stat(original.file)).mode & 0o777, original.mode);
+  assert.deepEqual(await treeSnapshot(path.join(f.installRoot, 'releases')), payloadBefore);
+  assert.deepEqual(await fs.readFile(path.join(f.installRoot, 'state/install/root.json')), descriptorBefore);
+  assert.deepEqual(await fs.readFile(historyPath), historyBefore);
+  assert.equal(await exists(latest.receiptPath), false);
+  assert.equal(await exists(first.skillPath), false);
+  assert.equal(await exists(first.launcherPath), false);
+  const oldAfterRemoval = await treeSnapshot(f.installRoot);
+  assert.equal((await uninstall(f)).status, 'not-installed');
+  assert.deepEqual(await treeSnapshot(f.installRoot), oldAfterRemoval);
+  const moved = { ...f, installRoot: path.join(f.root, 'new independently owned storage') }, second = await install({ ...moved, offline: release.offline });
+  assert.notEqual(second.prefix, first.prefix);
+  assert.equal(jsonEntry(await fs.readFile(second.configPath, 'utf8'), ['mcpServers']).command, path.join(second.prefix, 'bin/fruitctl'));
+  assert.deepEqual(await treeSnapshot(f.installRoot), oldAfterRemoval);
+  assert.equal((await uninstall(moved)).status, 'removed');
+  assert.equal(await fs.readFile(original.file, 'utf8'), original.text);
+  assert.equal((await fs.stat(original.file)).mode & 0o777, original.mode);
+  assert.deepEqual(await treeSnapshot(f.installRoot), oldAfterRemoval);
 });

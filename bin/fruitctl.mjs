@@ -30,8 +30,8 @@ try {
   target: { type: 'string', default: 'default' }, socket: { type: 'string' },
   config: { type: 'string' }, bridge: { type: 'string' },
   'remote-socket': { type: 'string' }, 'remote-command': { type: 'string' },
-  agent: { type: 'string' }, scope: { type: 'string', default: 'user' }, version: { type: 'string' },
-  'dry-run': { type: 'boolean' }, 'project-dir': { type: 'string' },
+  agent: { type: 'string' }, scope: { type: 'string' }, version: { type: 'string' },
+  'dry-run': { type: 'boolean' }, 'project-dir': { type: 'string' }, 'install-root': { type: 'string' },
   mux: { type: 'boolean' }, stdio: { type: 'boolean' }, json: { type: 'boolean' },
   help: { type: 'boolean' }, 'manifest-url': { type: 'string' },
 } }));
@@ -40,13 +40,22 @@ socketPath = values.socket || defaultSocketPath();
 configPath = values.config || defaultConfigPath();
 
   if (positionals.length > 1) throw new Error('Unexpected positional arguments; use --help');
+  if (values['install-root'] !== undefined && !['install', 'doctor', 'rollback', 'uninstall'].includes(command)) {
+    throw new Error('--install-root is supported only by install, doctor, rollback and uninstall');
+  }
+  if (command === 'install' && values['install-root'] !== undefined && !['user', 'project'].includes(values.scope)) {
+    throw new Error('Installation with --install-root requires explicit --scope user|project');
+  }
   if (values.help || !command) {
     process.stdout.write('Fruitctl\n\nCommands: mcp, broker, relay, attach, install, doctor, rollback, uninstall\n' +
       '  mcp --target PROFILE [--socket PATH]\n' +
       '  broker [--config PATH] [--socket PATH]\n' +
       '  relay --bridge USER@HOST [--socket PATH] [--remote-socket PATH]\n' +
-      '  install --agent AGENT --scope user|project --version TAG --target PROFILE [--dry-run]\n' +
-      '  doctor --json\n');
+      '  install --agent AGENT --scope user|project --version TAG --target PROFILE [--project-dir PATH] [--install-root ABSOLUTE_DIRECTORY] [--dry-run]\n' +
+      '  doctor [--agent AGENT] [--scope user|project] [--project-dir PATH] [--install-root ABSOLUTE_DIRECTORY] --json\n' +
+      '  rollback|uninstall --agent AGENT [--scope user|project] [--project-dir PATH] [--install-root ABSOLUTE_DIRECTORY]\n' +
+      '\n--install-root selects Fruitctl runtime/state/launcher storage; registration still follows scope and project/user configuration.\n' +
+      'Repeat the selected root for doctor, rollback and uninstall. Explicit-root installation requires explicit scope; omitted root preserves legacy paths.\n');
   } else if (command === 'broker') {
     const { createBroker } = await import('../lib/broker/server.mjs');
     const config = await loadConfig(configPath);
@@ -84,6 +93,7 @@ configPath = values.config || defaultConfigPath();
     const result = await installer[command]({ agent: values.agent, scope: values.scope,
       version: values.version || await packageVersion(), target: values.target,
       dryRun: Boolean(values['dry-run']), projectDir: values['project-dir'],
+      installRoot: values['install-root'],
       configPath: values.config || process.env.FRUITCTL_CONFIG_PATH,
       manifestUrl: values['manifest-url'] });
     process.stdout.write(JSON.stringify(result, null, 2) + '\n');
