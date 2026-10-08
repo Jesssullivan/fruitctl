@@ -128,19 +128,21 @@ would need its own attended consent and permission qualification; no managed
 or headless Screen Capture grant is provided. [Apple's ScreenCaptureKit sample](https://developer.apple.com/documentation/screencapturekit/capturing-screen-content-in-macos)
 requires user permission and an app restart before capture.
 
-## Explicit install root: next-preview source guidance
+## Explicit install root: alpha.5 preview
 
-The next installer interface adds `--install-root ABSOLUTE_DIRECTORY` to
-`install`, `doctor`, `rollback` and `uninstall`, and to the stock bootstrap.
-This section describes that source contract. It requires a new immutable
-producer that has been published and qualified for the capability. The
-published **alpha.4 bootstrap and runtime do not support `--install-root`**;
-the pinned alpha.4 installation above keeps its existing behavior.
+The published [v0.1.0-alpha.5 preview](https://github.com/xoxd-ai/fruitctl/releases/tag/v0.1.0-alpha.5)
+implements `--install-root ABSOLUTE_DIRECTORY` for
+`install`, `doctor`, `rollback` and `uninstall`, and the stock bootstrap.
+Its source and archive capability checks are verified; stock Darwin project
+bootstrap/lifecycle and installed SDK metadata acceptance remain pending.
+This is a scoped preview, with real frontend and desktop qualification still
+pending. The published **alpha.4 bootstrap and runtime do not support
+`--install-root`**; the pinned alpha.4 installation above keeps its existing behavior.
 
 An install root selects Fruitctl's operational storage. Registration remains a
 separate choice: an explicit-root installation must also specify `--scope user`
 or `--scope project`. `--project-dir` selects the registration project and is
-passed through by the next bootstrap; when omitted, project scope uses the
+passed through by the alpha.5 bootstrap; when omitted, project scope uses the
 current directory. Choose project scope and an explicit project directory when
 you want registration confined to an owned project.
 
@@ -163,16 +165,18 @@ executable and existing target/configuration fields; they do not pass
 `--install-root`. That storage option is rejected on `mcp`, `broker`, `relay` and
 `attach`.
 
-For a future qualified producer, replace every placeholder below. Use an
+For alpha.5, replace every pathname/profile placeholder below. Use an
 absolute project path and a dedicated absolute root you own; quote paths that
-contain spaces. Obtain and verify the next bootstrap through its exact producer
-source and checksum before running it:
+contain spaces. Obtain the [exact producer's bootstrap](https://raw.githubusercontent.com/xoxd-ai/fruitctl/00beadf9a62189c6306f147c7d2aad128ff133d7/scripts/install.sh)
+and verify SHA-256 `3df67983783f68f64ca67afeaf248a0ced78144cb07efdbb7b029dee1885aee6`
+before running it. These pins identify alpha.5's bytes; they do not qualify an
+arbitrary frontend, profile or desktop:
 
 ```text
-sh <verified-next-install.sh> --agent junie --scope project \
+sh <verified-alpha5-install.sh> --agent junie --scope project \
   --project-dir <absolute-project-directory> \
   --install-root <absolute-install-root> \
-  --version <new-qualified-exact-tag> --target <configured-profile> --dry-run
+  --version v0.1.0-alpha.5 --target <configured-profile> --dry-run
 
 <absolute-install-root>/bin/fruitctl doctor --agent junie --scope project \
   --project-dir <absolute-project-directory> --install-root <absolute-install-root>
@@ -224,7 +228,7 @@ migration and purge are unsupported.
 
 ### Older runtimes must refuse explicit-root requests
 
-The updated bootstrap must verify the selected runtime's install-root capability
+The alpha.5 bootstrap verifies the selected runtime's install-root capability
 before calling its installer API. The executing installer must also verify that
 capability in the target release before committing its cache or registration,
 including when installing or rolling back to an older version. Missing or
