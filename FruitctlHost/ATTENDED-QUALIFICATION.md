@@ -58,6 +58,15 @@ actual document fullscreen before drawing; losing fullscreen or changing native
 geometry ends the changing scene. A reused page keeps its old run ID, so generate
 a new file instead of relabeling an old tab as the current episode.
 
+New pages declare a 50 ms marker schedule (20 Hz). At each animation callback,
+the sequence selects the current elapsed-time slot; missed paints skip slots
+instead of replaying them. This supports prospective 100 ms capture spacing
+for the separate 600-frame/60-second gate, while the 30-frame/at-least-30-second
+episode below stays unchanged. Browser throttling or an unchanged painted
+sequence still fails the oracle. The schedule is not a measured browser paint
+rate or Host capture SLO. Freeze the new page's hash and declared cadence;
+earlier 250 ms pages and their results remain historical.
+
 The `fruitctl.scene.v1` format uses seven fixed-position, native-pixel markers.
 Every marker binds format, marker ID, run ID, dimensions and changing sequence
 with CRC32. Freeze the expected display dimensions and run ID independently of

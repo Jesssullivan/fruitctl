@@ -167,9 +167,18 @@ test('CRC-valid high-bit chunk names cannot alias an IHDR or ancillary name', ()
   }
 });
 
-function browserSandbox({ webkit = false } = {}) {
+function browserSandbox({ webkit = false, raster = false } = {}) {
   const html = generateHTML(expected.runId), script = html.match(/<script>([\s\S]*)<\/script>/i)[1];
-  const canvas = { getContext: () => ({ fillRect() {}, fillStyle: '' }) }, status = {}, handlers = {}, scheduled = [], events = new Map(), timers = new Map();
+  let pixels;
+  const context = { fillStyle: '', fillRect(x, y, width, height) {
+    if (!raster) return;
+    pixels ??= new Uint8Array(canvas.width * canvas.height * 4);
+    const color = [...this.fillStyle.match(/^rgb\((\d+),(\d+),(\d+)\)$/).slice(1).map(Number), 255];
+    const row = new Uint8Array(width * 4);
+    for (let i = 0; i < width; i++) row.set(color, i * 4);
+    for (let iy = y; iy < y + height; iy++) pixels.set(row, (iy * canvas.width + x) * 4);
+  } };
+  const canvas = { getContext: () => context }, status = {}, handlers = {}, scheduled = [], events = new Map(), timers = new Map();
   const button = { disabled: false, addEventListener(name, callback) { handlers[name] = callback; } };
   let requests = 0, nextTimer = 1;
   const document = { fullscreenElement: null, webkitFullscreenElement: null, body: { classList: { add() {}, remove() {} } },
@@ -179,8 +188,54 @@ function browserSandbox({ webkit = false } = {}) {
   const sandbox = { document, innerWidth: 960, innerHeight: 640, devicePixelRatio: 1, performance: { now: () => 100 }, requestAnimationFrame: callback => scheduled.push(callback),
     setTimeout(callback, delay) { const id = nextTimer++; timers.set(id, { callback, delay }); return id; }, clearTimeout(id) { timers.delete(id); } };
   vm.runInNewContext(script, sandbox);
-  return { html, canvas, status, handlers, scheduled, document, sandbox, button, events, timers, requestCount: () => requests };
+  return { html, canvas, status, handlers, scheduled, document, sandbox, button, events, timers, requestCount: () => requests,
+    frame: () => ({ width: canvas.width, height: canvas.height, pixels: pixels.slice() }) };
 }
+
+test('generated marker schedule advances at 100 ms captures with complete seven-marker raster evidence', async () => {
+  const browser = browserSandbox({ raster: true });
+  await browser.handlers.click();
+  assert.match(browser.status.textContent, /marker schedule 50 ms/);
+  let previousSequence;
+  // Exercise consecutive 10 Hz observations and the end of a prospective 60s window.
+  // These are simulated paints, not 600 measured browser or Host captures.
+  for (const offset of [0, 100, 200, 300, 400, 500, 59_800, 59_900]) {
+    browser.scheduled.shift()(100 + offset);
+    const image = browser.frame(), result = analyzeFrame(image, { ...expected, previousSequence });
+    assert.equal(result.sceneValid, true, JSON.stringify(result.errors));
+    assert.equal(result.strictRasterEqual, true);
+    assert.equal(result.markers.length, 7);
+    for (const marker of result.markers) {
+      assert.deepEqual(marker.failures, []);
+      assert.equal(marker.sequence, result.sequence);
+    }
+    const duplicate = analyzeFrame(image, { ...expected, previousSequence: result.sequence });
+    assert.equal(duplicate.sceneValid, false);
+    assert.ok(duplicate.markers.every(marker => marker.failures.includes('sequence_not_advancing')));
+    previousSequence = result.sequence;
+    assert.equal(browser.scheduled.length, 1, 'missed paints are not queued or replayed');
+  }
+});
+
+test('generated marker schedule keeps low-rate observations and rejects an unchanged schedule slot', async () => {
+  const browser = browserSandbox({ raster: true });
+  await browser.handlers.click();
+  browser.scheduled.shift()(100);
+  const first = analyzeFrame(browser.frame(), expected);
+  browser.scheduled.shift()(149);
+  const unchanged = analyzeFrame(browser.frame(), { ...expected, previousSequence: first.sequence });
+  assert.equal(unchanged.sceneValid, false);
+  assert.ok(unchanged.markers.every(marker => marker.failures.includes('sequence_not_advancing')));
+  let previousSequence = first.sequence;
+  for (const offset of [1_000, 2_000, 30_000]) {
+    browser.scheduled.shift()(100 + offset);
+    const result = analyzeFrame(browser.frame(), { ...expected, previousSequence });
+    assert.equal(result.sceneValid, true);
+    assert.equal(result.strictRasterEqual, true);
+    assert.ok(result.markers.every(marker => marker.failures.length === 0));
+    previousSequence = result.sequence;
+  }
+});
 
 test('self-contained browser page starts only after fullscreen and stops on a geometry change', async () => {
   const { html, status, handlers, canvas, scheduled, sandbox, events, timers } = browserSandbox();
