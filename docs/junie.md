@@ -44,7 +44,7 @@ Before installing, have these prerequisites ready:
 - A writable project configuration, or the owning Home Manager configuration
   surface for store-managed files. Existing settings must remain intact.
 
-For a custom model, Junie uses `baseUrl` as the complete API endpoint.
+For a Junie CLI custom model, `baseUrl` is the complete API endpoint.
 For `OpenAICompletion`, use the provider's full chat-completions URL,
 typically ending in `/v1/chat/completions`. Keep model selection,
 authentication and provider configuration under their existing owner;
@@ -125,10 +125,47 @@ installed-CLI `--config` value becomes a `FRUITCTL_CONFIG_PATH` pathname; no
 profile contents or VNC password are embedded in MCP configuration. Junie's
 mutable enabled/disabled state is preserved on an owned entry update.
 
-For AI Chat, copy the returned `ideSettingsSnippet` into the IDE's MCP settings
-using the [documented STDIO JSON surface](https://www.jetbrains.com/help/ai-assistant/mcp.html),
-then enable **Pass custom MCP servers**. The installer does not edit internal
-JetBrains XML. Adding this IDE entry is separate from the project JSON install.
+## Connect IntelliJ AI Chat
+
+JetBrains recommends AI Assistant's AI Chat for Junie. Select **Junie by
+JetBrains** there; the IDE downloads the agent automatically. The separate
+Junie plugin is needed only for its own tool window. See the [Junie IDE
+plugin guide](https://junie.jetbrains.com/docs/junie-ide-plugin.html).
+
+Use your existing supported activation. Integrated Junie supports JetBrains AI
+or API keys issued directly by OpenAI or Anthropic. Configuring an arbitrary
+OpenAI-compatible endpoint in AI Assistant does not establish Junie activation;
+the CLI custom-model configuration above is separate. See [agent
+activation](https://www.jetbrains.com/help/ai-assistant/activate-agents.html).
+Fruitctl does not select or change that account, provider or model.
+
+After the Fruitctl installer returns `ideSettingsSnippet`:
+
+1. Open Settings → Tools → AI Assistant → Model Context Protocol (MCP), click
+   **Add**, choose STDIO and paste that JSON. Retain its absolute command and
+   the arguments for your configured target.
+2. Select project-level availability and set the working directory to the same
+   physical project path used for installation. Click **OK**, then **Apply**;
+   applying the entry starts its MCP subprocess.
+3. Check the connection's **Status** and open its tool list. Confirm
+   `vnc_command`, `action_queue`, `task_complete` and `task_failed`.
+4. In Settings → Tools → AI Assistant → Agents, enable **Pass custom MCP
+   servers** and click **OK**. Select Junie in AI Chat and follow the real
+   frontend journey below using your existing tool-approval settings.
+
+These steps follow the [AI Assistant MCP
+configuration](https://www.jetbrains.com/help/ai-assistant/mcp.html) and [Junie
+external-tool settings](https://www.jetbrains.com/help/ai-assistant/junie-agent.html).
+The installer does not edit internal JetBrains XML; this IDE entry is separate
+from the project JSON install. A connection and tool listing establish
+configuration discovery, not image handling or desktop-control acceptance.
+
+For the separate Junie tool window, install a compatible **Junie** build from
+Settings → Plugins → Marketplace, then open View → Tool Windows → Junie.
+Open the project whose `.junie/mcp/mcp.json` Fruitctl installed, and retain
+its existing authentication. The [standalone plugin
+guide](https://junie.jetbrains.com/docs/junie-ide-plugin.html) documents this
+route; verify the MCP surface available in that exact build as described above.
 
 ## Current preview and historical installation evidence
 
