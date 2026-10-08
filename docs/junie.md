@@ -51,6 +51,14 @@ authentication and provider configuration under their existing owner;
 Fruitctl does not configure them. See [Junie custom
 models](https://junie.jetbrains.com/docs/custom-llm-models.html).
 
+Static inspection of Junie CLI nightlies 3703.1 and 3731.1 found that startup
+can migrate a saved global model default before per-run `--model` selection
+when the migration has not yet been applied. `--model` selects the task's
+model; it does not restore the saved global choice after migration.
+Fruitctl's installer does not select models or providers or alter
+authentication. Keep normal Junie model and authentication settings under
+their existing owner. Real Junie CLI and IntelliJ adoption remains unqualified.
+
 The bootstrap installs the runtime and configuration. It does not install Junie
 or IntelliJ, create the target profile or credentials, start the broker/relay,
 enable Screen Sharing, or grant macOS consent. The public preview excludes the
