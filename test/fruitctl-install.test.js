@@ -1131,7 +1131,20 @@ test('install root contract: invalid, read-only and unmarked roots refuse withou
       assert.deepEqual(await treeSnapshot(f.projectDir), beforeProject);
     } finally { if (kind === 'readonly') await fs.chmod(installRoot, 0o700); }
   });
-  if (process.getuid() !== 0 && (await fs.stat('/usr')).uid !== process.getuid()) await assert.rejects(install({ ...f, installRoot: '/usr', dryRun: true }), /root|owner|owned|foreign/i);
+  let foreignRoot;
+  for (const candidate of ['/usr', '/etc', '/proc']) {
+    let stat;
+    try { stat = await fs.lstat(candidate); }
+    catch (error) { if (error.code === 'ENOENT') continue; throw error; }
+    if (!stat.isDirectory() || stat.isSymbolicLink() || stat.uid === process.getuid()) continue;
+    let physical;
+    try { physical = await fs.realpath(candidate); }
+    catch (error) { if (error.code === 'ENOENT') continue; throw error; }
+    if (physical === '/nix/store' || physical.startsWith('/nix/store/')) continue;
+    foreignRoot = candidate; break;
+  }
+  if (foreignRoot) await assert.rejects(install({ ...f, installRoot: foreignRoot, dryRun: true }), /owned by another user|foreign|owner/i);
+  else t.diagnostic('No existing foreign-owned non-store directory is available; foreign ownership was not exercised in this environment');
   assert.deepEqual(await treeSnapshot(f.home), beforeHome);
   assert.deepEqual(await treeSnapshot(f.projectDir), beforeProject);
 });
