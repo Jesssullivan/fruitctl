@@ -3,7 +3,11 @@ import { writeFile } from 'node:fs/promises';
 import { pathToFileURL } from 'node:url';
 import { scene, sceneKernel } from './scene.mjs';
 
-function browserFixture(scene, runId) {
+// A 20 Hz elapsed-time schedule leaves room between 100 ms qualification captures.
+// Actual paints depend on requestAnimationFrame; missed slots are not replayed.
+export const MARKER_CADENCE_MS = 50;
+
+function browserFixture(scene, runId, cadenceMilliseconds) {
   const canvas = document.querySelector('canvas'), status = document.querySelector('#status');
   const button = document.querySelector('button'), context = canvas.getContext('2d', { alpha: false });
   let started = false, entering = false, startTime, frozen, lastSequence;
@@ -38,7 +42,7 @@ function browserFixture(scene, runId) {
     if (!started) return;
     const current = dimensions();
     if (fullscreen() !== document.documentElement || current.width !== frozen.width || current.height !== frozen.height) { fail('Fullscreen or native geometry changed; end this trial.'); return; }
-    const sequence = Math.floor((now - startTime) / 250);
+    const sequence = Math.floor((now - startTime) / cadenceMilliseconds);
     if (sequence !== lastSequence) {
       scene.draw({ ...frozen, runId, sequence }, (x, y, w, h, rgba) => {
         context.fillStyle = `rgb(${rgba[0]},${rgba[1]},${rgba[2]})`; context.fillRect(x, y, w, h);
@@ -59,7 +63,7 @@ function browserFixture(scene, runId) {
     } catch (error) { fail(error.message); }
     finally { entering = false; button.disabled = false; }
   });
-  status.textContent = `Format ${scene.format}; run ${runId}. Set zoom to 100%, start fullscreen, then park the visible pointer at 50% across / 82% down. Keep it there during frames; use the local Stop menu afterward.`;
+  status.textContent = `Format ${scene.format}; run ${runId}; marker schedule ${cadenceMilliseconds} ms. Set zoom to 100%, start fullscreen, then park the visible pointer at 50% across / 82% down. Keep it there during frames; use the local Stop menu afterward.`;
 }
 
 export function generateHTML(runId) {
@@ -67,11 +71,11 @@ export function generateHTML(runId) {
   return `<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Fruitctl versioned qualification fixture</title>
 <style>html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#404040;color:white;font:18px system-ui}canvas{display:none;width:100vw;height:100vh}.running canvas{display:block}.running #prepare{display:none}#prepare{max-width:60em;margin:2em}button{font:inherit;padding:1em}</style>
 <body><div id="prepare"><p id="status"></p><button type="button">Start full-screen markers</button><p>Seven changing CRC-bound markers. The visible pointer stays included. A fullscreen or geometry change ends this scene; reusing this page does not create a new run identity.</p></div><canvas></canvas>
-<script>const scene=(${sceneKernel.toString()})();(${browserFixture.toString()})(scene,${JSON.stringify(runId)});</script></body></html>\n`;
+<script>const scene=(${sceneKernel.toString()})();(${browserFixture.toString()})(scene,${JSON.stringify(runId)},${MARKER_CADENCE_MS});</script></body></html>\n`;
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const [output, suppliedRunId] = process.argv.slice(2), runId = suppliedRunId ?? randomBytes(16).toString('hex');
   if (!output || process.argv.length > 4) { process.stderr.write('Usage: node test/qualification/generate.mjs OUTPUT.html [RUN_ID]\n'); process.exitCode = 2; }
-  else { await writeFile(output, generateHTML(runId), { flag: 'wx', mode: 0o600 }); process.stdout.write(`${JSON.stringify({ format: scene.format, runId, output })}\n`); }
+  else { await writeFile(output, generateHTML(runId), { flag: 'wx', mode: 0o600 }); process.stdout.write(`${JSON.stringify({ format: scene.format, runId, output, markerCadenceMilliseconds: MARKER_CADENCE_MS })}\n`); }
 }
