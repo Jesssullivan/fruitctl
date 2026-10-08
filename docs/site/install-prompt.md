@@ -68,6 +68,17 @@ controller has no stapled ticket; Gatekeeper may use its online notarization
 ticket and require normal user approval. Do not remove protections or re-sign
 the controller to bypass approval.
 
+Choose registration scope explicitly. For the ordinary user installation,
+preserve the existing home layout and supported user configuration destinations.
+For a project installation, select an owned absolute `--project-dir`. On a
+release with verified install-root capability, `--install-root` may select a
+separate owned storage root; it still requires `--scope user` or `--scope project`
+and does not relocate `HOME`, `CODEX_HOME`, user configuration or broker paths.
+Use that same root, scope and recorded project for doctor, rollback and
+uninstall. Check capability in both the bootstrap/installer and selected
+runtime; older releases must refuse an explicit-root request rather than fall
+back to home storage. Follow the pinned installation guide for those options.
+
 If no compatible immutable preview asset or required controller exists, report the missing artifact or
 qualification and stop before substituting an unreviewed source build. Once
 installed, check capabilities and health, obtain a complete fresh frame, and

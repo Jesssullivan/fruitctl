@@ -6,7 +6,17 @@ appropriate adapter, and qualify the connection. Supply host names and secrets
 through local configuration and the controller's credential provider, not this
 prompt or a checked-in MCP file.
 
-The [v0.1.0-alpha.4 runtime preview](https://github.com/xoxd-ai/fruitctl/releases/tag/v0.1.0-alpha.4)
+The curated adoption route currently selects the published
+[v0.1.0-alpha.6 runtime preview](https://github.com/xoxd-ai/fruitctl/releases/tag/v0.1.0-alpha.6),
+producer `8653325c6ccc0e058b3e4cf84eb44101cfd270fc`. Its thirteen public assets
+match the reviewed hashes and sizes through anonymous downloads. It retains
+the [explicit install root](#explicit-install-root-alpha6-preview); its stock Darwin
+project bootstrap and installed SDK metadata acceptance remain pending.
+The rendered installation prompt follows this curated preview, rather than
+the newest package version or source checkout. Publication and archive checks
+do not qualify a packaged installer, agent frontend or desktop connection.
+
+The historical [v0.1.0-alpha.4 runtime preview](https://github.com/xoxd-ai/fruitctl/releases/tag/v0.1.0-alpha.4)
 is immutable and source-pinned to
 `e0f4d064b076e58b33856d877e0e1c9266f55177`. It installs the bundled Node.js 24.21.0
 runtime, skill and adapter. On Apple Silicon macOS 15+, that runtime also
@@ -65,7 +75,7 @@ The current broker provider is an owner-only private credential file. Configure
 that path on the Darwin controller; the installer does not create a target
 password or copy it into the agent configuration.
 
-## One terminal paste
+## One terminal paste: published alpha.6
 
 This pins both the bootstrap source and immutable runtime preview. Choose your
 adapter from the [agent guide](agents.md), replace `default` with your configured
@@ -73,11 +83,12 @@ profile, and preserve any Home Manager-owned configuration through its owner:
 
 ```sh
 (
-  FRUITCTL_SOURCE_SHA='e0f4d064b076e58b33856d877e0e1c9266f55177'
-  FRUITCTL_RELEASE_TAG='v0.1.0-alpha.4'
+  FRUITCTL_SOURCE_SHA='8653325c6ccc0e058b3e4cf84eb44101cfd270fc'
+  FRUITCTL_RELEASE_TAG='v0.1.0-alpha.6'
   FRUITCTL_SCRIPT=$(mktemp)
   trap 'rm -f "$FRUITCTL_SCRIPT"' EXIT
   curl --disable --fail --silent --show-error --location --proto '=https' --proto-redir '=https' \
+    --connect-timeout 10 --max-time 120 \
     "https://raw.githubusercontent.com/xoxd-ai/fruitctl/$FRUITCTL_SOURCE_SHA/scripts/install.sh" \
     -o "$FRUITCTL_SCRIPT" &&
   FRUITCTL_ACTUAL_SHA=$(if command -v sha256sum >/dev/null 2>&1; then
@@ -85,15 +96,21 @@ profile, and preserve any Home Manager-owned configuration through its owner:
   else
     shasum -a 256 "$FRUITCTL_SCRIPT"
   fi) &&
-  [ "${FRUITCTL_ACTUAL_SHA%% *}" = '6e05a7a62f57491cfbda1f8d9212291f6237f04f4ac396bc04d183b88747cd58' ] &&
+  [ "${FRUITCTL_ACTUAL_SHA%% *}" = 'd5aae5f89812def9f5e91e80de4fe8779b4f62263f1e331a26e5734b5fc3ecfc' ] &&
   sh "$FRUITCTL_SCRIPT" --agent codex --scope user \
     --version "$FRUITCTL_RELEASE_TAG" --target default
 )
 ```
 
 The source fetch ignores user `curlrc` options and checks the pinned script's
-SHA-256 before execution. The bootstrap verifies release
-bytes and uses the bundled Node runtime. Alpha.4 passed an anonymous Linux x64
+SHA-256 before execution. The bootstrap verifies release bytes and uses the
+bundled Node runtime. This paste uses the ordinary user registration and home
+storage layout. For project registration and separate storage, use the
+explicit-root instructions below. Alpha.6's installation, SDK, frontend and
+desktop acceptance remain pending; structural release checks do not supply
+those receipts.
+
+Historical alpha.4 passed an anonymous Linux x64
 stock Junie project bootstrap, installed help, doctor and reinstall. A
 continuation initialized the MCP SDK against Junie's installed MCP launcher
 and called `listTools`, discovering four tool schemas without tool actions. An
@@ -128,21 +145,51 @@ would need its own attended consent and permission qualification; no managed
 or headless Screen Capture grant is provided. [Apple's ScreenCaptureKit sample](https://developer.apple.com/documentation/screencapturekit/capturing-screen-content-in-macos)
 requires user permission and an app restart before capture.
 
-## Explicit install root: alpha.5 preview
+## Published alpha.6 pins and qualification
 
-The published [v0.1.0-alpha.5 preview](https://github.com/xoxd-ai/fruitctl/releases/tag/v0.1.0-alpha.5)
+The runtime producer is
+`8653325c6ccc0e058b3e4cf84eb44101cfd270fc`. Its exact bootstrap is
+[scripts/install.sh at that revision](https://raw.githubusercontent.com/xoxd-ai/fruitctl/8653325c6ccc0e058b3e4cf84eb44101cfd270fc/scripts/install.sh),
+SHA-256 `d5aae5f89812def9f5e91e80de4fe8779b4f62263f1e331a26e5734b5fc3ecfc`.
+It puts `--disable` first in each bootstrap curl invocation, preserving the
+HTTPS and download bounds while ignoring user curl configuration. Its source
+checks cover the real-curl parser with offline fixtures; they do not qualify a
+packaged installation or a desktop connection.
+
+The immutable tag is `v0.1.0-alpha.6`, published on 2026-10-08. Its
+`fruitctl-release.json` SHA-256 is
+`0cf5e6f713276da0559ec0761b46696ec0f66c363f01279ac1491e93be9bf749`.
+The [curated inventory](site/versions.json) records the names, sizes and hashes
+of all thirteen published assets, their signed tag and producer bindings.
+The producer-binding asset preserves its build-time candidate status; separate
+publication and public-byte receipts establish delivery. Its pending runtime
+qualification fields are unchanged.
+
+The producer revision is separate from the documentation build revision.
+Installer, installed SDK, actual Junie/IDE frontend,
+desktop, physical indicator exclusion and measurements for service objectives
+must name the exact release. Historical alpha.4/alpha.5 receipts are
+not transferred to alpha.6. The native controller retains its original
+`e00fcc86bbac4247d5a0847d7e656369c52cc15f` producer and corresponding GPL source;
+the original controller-ZIP acceptance does not notarize a complete runtime or
+include the Host prototype.
+
+## Explicit install root: alpha.6 preview
+
+The published [v0.1.0-alpha.6 preview](https://github.com/xoxd-ai/fruitctl/releases/tag/v0.1.0-alpha.6)
 implements `--install-root ABSOLUTE_DIRECTORY` for
 `install`, `doctor`, `rollback` and `uninstall`, and the stock bootstrap.
 Its source and archive capability checks are verified; stock Darwin project
 bootstrap/lifecycle and installed SDK metadata acceptance remain pending.
 This is a scoped preview, with real frontend and desktop qualification still
 pending. The published **alpha.4 bootstrap and runtime do not support
-`--install-root`**; the pinned alpha.4 installation above keeps its existing behavior.
+`--install-root`**. The pinned alpha.6 user-scope paste above deliberately keeps
+the normal-home storage behavior by omitting that option.
 
 An install root selects Fruitctl's operational storage. Registration remains a
 separate choice: an explicit-root installation must also specify `--scope user`
 or `--scope project`. `--project-dir` selects the registration project and is
-passed through by the alpha.5 bootstrap; when omitted, project scope uses the
+passed through by the alpha.6 bootstrap; when omitted, project scope uses the
 current directory. Choose project scope and an explicit project directory when
 you want registration confined to an owned project.
 
@@ -165,18 +212,18 @@ executable and existing target/configuration fields; they do not pass
 `--install-root`. That storage option is rejected on `mcp`, `broker`, `relay` and
 `attach`.
 
-For alpha.5, replace every pathname/profile placeholder below. Use an
+For alpha.6, replace every pathname/profile placeholder below. Use an
 absolute project path and a dedicated absolute root you own; quote paths that
-contain spaces. Obtain the [exact producer's bootstrap](https://raw.githubusercontent.com/xoxd-ai/fruitctl/00beadf9a62189c6306f147c7d2aad128ff133d7/scripts/install.sh)
-and verify SHA-256 `3df67983783f68f64ca67afeaf248a0ced78144cb07efdbb7b029dee1885aee6`
-before running it. These pins identify alpha.5's bytes; they do not qualify an
+contain spaces. Obtain the [exact producer's bootstrap](https://raw.githubusercontent.com/xoxd-ai/fruitctl/8653325c6ccc0e058b3e4cf84eb44101cfd270fc/scripts/install.sh)
+and verify SHA-256 `d5aae5f89812def9f5e91e80de4fe8779b4f62263f1e331a26e5734b5fc3ecfc`
+before running it. These pins identify alpha.6's bytes; they do not qualify an
 arbitrary frontend, profile or desktop:
 
 ```text
-sh <verified-alpha5-install.sh> --agent junie --scope project \
+sh <verified-alpha6-install.sh> --agent junie --scope project \
   --project-dir <absolute-project-directory> \
   --install-root <absolute-install-root> \
-  --version v0.1.0-alpha.5 --target <configured-profile> --dry-run
+  --version v0.1.0-alpha.6 --target <configured-profile> --dry-run
 
 <absolute-install-root>/bin/fruitctl doctor --agent junie --scope project \
   --project-dir <absolute-project-directory> --install-root <absolute-install-root>
@@ -228,7 +275,7 @@ migration and purge are unsupported.
 
 ### Older runtimes must refuse explicit-root requests
 
-The alpha.5 bootstrap verifies the selected runtime's install-root capability
+The alpha.6 bootstrap verifies the selected runtime's install-root capability
 before calling its installer API. The executing installer must also verify that
 capability in the target release before committing its cache or registration,
 including when installing or rolling back to an older version. Missing or
