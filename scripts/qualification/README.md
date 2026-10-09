@@ -128,3 +128,55 @@ Apple's primary API contracts: [openApplication](https://developer.apple.com/doc
 [prompts](https://developer.apple.com/documentation/appkit/nsworkspace/openconfiguration/promptsuserifneeded),
 [running app metadata](https://developer.apple.com/documentation/appkit/nsrunningapplication),
 and [launch date](https://developer.apple.com/documentation/appkit/nsrunningapplication/launchdate).
+
+## Streaming scene file oracle
+
+`scene_stream.mjs` checks a prepared series of complete PNG files using the
+tracked fixture generator and unchanged full-raster oracle. It reads files and
+NDJSON only; it does not launch, connect to, capture from or send input to a
+desktop. It is a source developer command, absent from runtime release bundles.
+
+Generate a fixture with `node test/qualification/generate.mjs OUTPUT.html RUN_ID`.
+Use its 32-character lowercase hexadecimal run ID and the SHA256 of those exact
+HTML bytes in the first input line. The series directory must be an existing
+canonical directory owned by the current POSIX user with mode `0700`.
+
+```json
+{"directory":"/absolute/owned/frames","runId":"0123456789abcdef0123456789abcdef","width":1920,"height":1080,"maximumFrames":30,"fixtureSha256":"REPLACE_WITH_EXACT_64_CHARACTER_SHA256"}
+{"file":"/absolute/owned/frames/frame-01.png","number":1}
+```
+
+Supply one numbered line for every requested frame, through 30 or 600, followed
+by EOF. `maximumFrames` selects the complete requested series, not an allowance
+for a shorter successful series. Names are `frame-01.png` through `frame-30.png`
+or `frame-600.png`, with at least two decimal digits. Each file must be owned by
+the same user, mode `0600`, regular, singly linked and at most 12 MiB. Finish
+writing each file before submitting its line; do not replace or edit submitted
+files. Strict UTF8 input is limited to 8192 bytes per line and 4 MiB in total.
+
+```sh
+just qualification-scene-stream /absolute/existing/node24 < series.ndjson > scene-results.ndjson
+just test-qualification /absolute/existing/node24
+```
+
+Output is one prepared record followed by serial per-frame records, including
+the PNG hash, all seven marker checks, advancing sequence and full-raster
+diagnostics. The command waits for each output write before processing the next
+record; input streams can buffer ahead. Its caller must drain output and
+supervise any interactive wait.
+Exit `0` means the complete requested series passed. Exit `1` follows the first
+emitted `failed-scene` record and stops further processing. Exit `2` means
+malformed, oversized, inaccessible, changed or incomplete input, including an
+early interactive EOF or malformed PNG. Existing private workers can have
+different exit semantics; this command does not replace them automatically.
+
+The directory stays open and its named/descriptor identity, ownership and mode
+are renewed around each frame. Frame descriptor/named metadata and complete
+reads are bracketed; final symlinks are refused. Directory timestamps may
+change as the caller supplies new files. These checks are not an atomic
+filesystem snapshot: the caller must control concurrent writers and directory
+ancestry. Neither simulated fixture timing nor a passing file series proves
+600 actual captures in 60 seconds, Host identity, permission, physical Stop,
+input revocation, cursor attribution or capture-indicator exclusion. The oracle
+keeps complete pixels and the existing narrow pointer diagnostic; it applies
+no masking, cropping or color repair.

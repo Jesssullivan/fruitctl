@@ -9,6 +9,14 @@ deps:
 test:
     npm run test:offline
 
+# Offline full-raster fixture and streaming-oracle checks; contacts no desktop.
+test-qualification node="node":
+    {{quote(node)}} --test --test-concurrency=1 test/qualification.test.js test/qualification-stream.test.js
+
+# Developer file-only NDJSON oracle; its private prepared series arrives on stdin.
+qualification-scene-stream node="node":
+    {{quote(node)}} scripts/qualification/scene_stream.mjs
+
 docs-build:
     npm run docs:build
 
