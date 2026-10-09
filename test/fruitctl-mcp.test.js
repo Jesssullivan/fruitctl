@@ -136,7 +136,8 @@ test('queue is one executor operation and first daemon error reports completed a
   const session = new McpSession({ async execute(actions, options) {
     invocations++;
     assert.equal(actions.length, 3);
-    assert.equal(options.timeoutMs, 30000);
+    assert.ok(options.timeoutMs > 0 && options.timeoutMs < 30000,
+      'the executor budget leaves a return margin inside the 30-second tool deadline');
     return [success({ detail: 'clicked' }), { error: { code: -32000, message: 'key refused' } }];
   } });
   const result = await session.queue({ actions: [
@@ -316,7 +317,7 @@ test('real MCP task outcomes await ownership release and refuse completion when 
 test('MCP ownership release has an ordinary deadline and cancellation cannot report completion', async () => {
   let aborted = false;
   const executor = { execute() {}, release({ signal, timeoutMs }) {
-    assert.equal(timeoutMs, 20);
+    assert.ok(timeoutMs > 0 && timeoutMs < 20, 'release leaves a return margin inside the tool deadline');
     signal.addEventListener('abort', () => { aborted = true; }, { once: true });
     return new Promise(() => {});
   } };

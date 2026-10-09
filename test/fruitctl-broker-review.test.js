@@ -237,7 +237,9 @@ test('100 broker fixture cycles preserve exclusive ownership and confirmed clean
         }), /cancel/i);
       }
       if (mode === 4) {
-        await assert.rejects(a.execute([{ action: 'hold' }], { timeoutMs: 10 }), /deadline|timeout/i);
+        // This cycle proves handoff after a confirmed 2ms close, not a 10ms
+        // wall-clock SLO. Leave cleanup time inside the request's total budget.
+        await assert.rejects(a.execute([{ action: 'hold' }], { timeoutMs: 40 }), /deadline|timeout/i);
       }
 
       await waitUntil(() => lane.owner === null && live === 0,

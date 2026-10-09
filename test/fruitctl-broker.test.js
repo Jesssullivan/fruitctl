@@ -141,8 +141,9 @@ test('queue expiry cannot dispatch timed-out actions', async () => {
   }));
   const first = lane.execute([{ action: 'first' }]);
   const expired = lane.execute([{ action: 'expired' }], { timeoutMs: 5 });
+  const rejected = assert.rejects(expired, /deadline/);
   await first;
-  await assert.rejects(expired, /deadline/);
+  await rejected;
   assert.deepEqual(inputs, ['first']);
   await lane.close();
 });

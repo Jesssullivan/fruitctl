@@ -22,9 +22,11 @@ uses producer `8653325c6ccc0e058b3e4cf84eb44101cfd270fc`. Its thirteen public
 assets match the reviewed hashes and sizes through anonymous downloads. The
 bootstrap disables user curl configuration and retains explicit install-root
 support, normal-home storage and separate user/project registration choices.
-Source tests and archive structure are verified; packaged installer, installed
-SDK, actual Junie/IDE frontend, desktop and measured service objectives remain
-pending for this release. See the [exact install pins](docs/install.md).
+Source tests, archive structure and Darwin ARM64 Junie project installer
+components are verified. The combined installer/SDK run was unsuccessful;
+installed SDK terminal acceptance, actual Junie/IDE frontend, desktop and
+measured service objectives remain pending. See the
+[exact install pins and component evidence](docs/install.md).
 
 Alpha.5 introduced the explicit install-root contract. Its producer
 `00beadf9a62189c6306f147c7d2aad128ff133d7` and older qualification records remain
