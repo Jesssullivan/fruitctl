@@ -115,10 +115,11 @@ test('cancellation cannot reset failed-operation retirement to a fresh default b
   assert.throws(() => lane.acquire('successor'), /unconfirmed/);
 });
 
-test('queue wait consumes the original release budget within finite retirement grace', { timeout: 5000 }, async t => {
+test('queue wait forwards only the original remaining release budget', { timeout: 5000 }, async t => {
   const priorStarted = deferred(), finishPrior = deferred();
-  const releaseStarted = deferred(), finishRelease = deferred();
+  const releaseStarted = deferred();
   let now = 10000;
+  let closes = 0;
   t.mock.method(performance, 'now', () => now);
   const releaseOptions = [], dispatched = [];
   const lane = new TargetLane({}, async () => ({
@@ -131,11 +132,11 @@ test('queue wait consumes the original release budget within finite retirement g
       }
       throw new Error('Synthetic uncertain operation');
     },
-    async release(options) { releaseOptions.push(options); releaseStarted.resolve(); await finishRelease.promise; },
-    async close() {},
+    async release(options) { releaseOptions.push(options); releaseStarted.resolve(); },
+    async close() { closes++; },
   }));
   lane.acquire('first');
-  t.after(async () => { finishPrior.resolve(); finishRelease.resolve(); await lane.tail; await closeLane(lane); });
+  t.after(async () => { finishPrior.resolve(); await lane.tail; await closeLane(lane); });
   const prior = lane.execute([{ action: 'prior-action' }], { timeoutMs: 10000 });
   await priorStarted.promise;
   const requestedAt = now;
@@ -148,8 +149,11 @@ test('queue wait consumes the original release budget within finite retirement g
   assert.equal(releaseOptions[0].timeoutMs, 500);
   assert.equal(now + releaseOptions[0].timeoutMs, requestedAt + 5000,
     'queue wait does not grant a new operation-sized retirement deadline');
-  await assert.rejects(bounded(failed), error => error.code === 'release_unconfirmed');
+  await assert.rejects(failed, /Synthetic uncertain operation/);
   assert.deepEqual(dispatched, ['prior-action', 'failed-input']);
+  assert.equal(closes, 1);
+  assert.equal(lane.cleanupFailure, undefined, 'queue accounting does not require unconfirmed cleanup');
+  assert.equal(lane.executor, null, 'promptly confirmed cleanup detaches the failed executor');
 });
 
 test('a late cancelled success is refused while promptly confirmed cleanup permits handoff', { timeout: 3000 }, async t => {
