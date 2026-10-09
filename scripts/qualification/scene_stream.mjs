@@ -10,8 +10,10 @@ const maximumPNG = 12 * 1024 * 1024, maximumLine = 8192, maximumInput = 4 * 1024
 const require = (condition, reason) => { if (!condition) throw new Error(reason); };
 const digest = bytes => createHash('sha256').update(bytes).digest('hex');
 const same = (a, b, keys) => keys.every(key => a[key] === b[key]);
-const directoryKeys = ['dev', 'ino', 'mode', 'uid', 'nlink'];
-const fileKeys = [...directoryKeys, 'size', 'mtimeNs', 'ctimeNs'];
+// A held directory is identified by device/inode plus owner and mode. Its link count is not
+// identity: APFS counts every entry, so each frame the caller supplies changes it.
+const directoryKeys = ['dev', 'ino', 'mode', 'uid'];
+const fileKeys = [...directoryKeys, 'nlink', 'size', 'mtimeNs', 'ctimeNs'];
 
 // Serial file evidence only. The caller owns capture, timing and concurrent writers.
 export async function runSceneStream(input, output) {
