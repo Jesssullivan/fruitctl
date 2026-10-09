@@ -172,8 +172,9 @@ different exit semantics; this command does not replace them automatically.
 
 The directory stays open and its named/descriptor identity, ownership and mode
 are renewed around each frame. Frame descriptor/named metadata and complete
-reads are bracketed; final symlinks are refused. Directory timestamps may
-change as the caller supplies new files. These checks are not an atomic
+reads are bracketed; final symlinks are refused. Directory timestamps and link
+counts may change as the caller supplies new files (APFS counts every entry in
+a directory's link count). These checks are not an atomic
 filesystem snapshot: the caller must control concurrent writers and directory
 ancestry. Neither simulated fixture timing nor a passing file series proves
 600 actual captures in 60 seconds, Host identity, permission, physical Stop,

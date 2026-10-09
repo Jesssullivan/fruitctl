@@ -314,3 +314,19 @@ test('queued Readable records process the next frame only after the prepared out
   assert.equal(result.code, 2); assert.equal(result.error, 'scene_incomplete_series');
   assert.deepEqual(result.values.map(value => value.status), ['prepared', 'passed']);
 });
+
+test('directory renewal binds identity, owner and mode, not entry link counts that change as frames arrive', async () => {
+  // APFS counts every directory entry in the directory link count, so each supplied frame changes it;
+  // Linux counts subdirectories. A subdirectory exercises the same renewal on both platforms.
+  const { pngs } = await fixtures();
+  const result = await series(pngs.slice(0, 3), {
+    setup({ requests }) { for (const request of requests.slice(1)) rmSync(request.file); },
+    async written(value, { directory, requests }) {
+      if (value.status === 'prepared') mkdirSync(path.join(directory, 'caller-staging'), { mode: 0o700 });
+      const next = requests[(value.number ?? 0) + 1];
+      if (next) writeFileSync(next.file, pngs[next.number - 1], { flag: 'wx', mode: 0o600 });
+    },
+  });
+  assert.equal(result.code, 2); assert.equal(result.error, 'scene_incomplete_series');
+  assert.deepEqual(result.values.map(value => value.status), ['prepared', 'passed', 'passed', 'passed']);
+});
