@@ -142,13 +142,13 @@ test('queue wait forwards only the original remaining release budget', { timeout
   const requestedAt = now;
   const failed = lane.execute([{ action: 'failed-input' }], { timeoutMs: 5000 });
   failed.catch(() => {});
-  now += 4500;
+  now += 2500;
   finishPrior.resolve();
   await prior;
   await releaseStarted.promise;
   assert.equal(releaseOptions[0].timeoutMs, 500);
-  assert.equal(now + releaseOptions[0].timeoutMs, requestedAt + 5000,
-    'queue wait does not grant a new operation-sized retirement deadline');
+  assert.equal(now + releaseOptions[0].timeoutMs, requestedAt + 3000,
+    'queue wait leaves 500ms before the work cutoff, retaining 2s for cleanup inside the original total');
   await assert.rejects(failed, /Synthetic uncertain operation/);
   assert.deepEqual(dispatched, ['prior-action', 'failed-input']);
   assert.equal(closes, 1);

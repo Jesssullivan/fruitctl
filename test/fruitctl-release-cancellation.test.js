@@ -218,7 +218,10 @@ test('explicit release deadline includes an uncooperative active queue and revok
   await owned.natives[0].closed;
   await assert.rejects(owned.b.execute([{ action: 'health' }]), /unconfirmed/);
   assert.deepEqual(owned.dispatched, ['health', 'hold']);
-  assert.equal(owned.releaseOptions.length, 0, 'expired queue cannot begin a new release request');
+  assert.equal(owned.releaseOptions.length, 1, 'interrupted execution starts safety retirement once');
+  assert.ok(owned.releaseOptions[0].timeoutMs > 0 && owned.releaseOptions[0].timeoutMs <= 60,
+    'active retirement inherits the tighter explicit release budget');
+  assert.equal(owned.releaseOptions[0].signal.aborted, true);
   assert.equal(owned.natives.length, 1);
 });
 
