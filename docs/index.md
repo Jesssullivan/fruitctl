@@ -43,6 +43,25 @@ milestones and the distinction between Lab targets and public best-effort suppor
 
 ## Current status
 
+The curated current preview is immutable
+[v0.1.0-alpha.6](https://github.com/xoxd-ai/fruitctl/releases/tag/v0.1.0-alpha.6),
+runtime producer `8653325c6ccc0e058b3e4cf84eb44101cfd270fc`.
+Use the [current installation guide](install.md) or
+[rendered agent prompt](https://fruitctl.clients.xoxd.ai/install-prompt.md) for
+the exact bootstrap and release checksums. The runtime bundles Node.js 24.21.0;
+Darwin ARM64 also bundles the unchanged signed VNC controller from
+`e00fcc86bbac4247d5a0847d7e656369c52cc15f`.
+
+Alpha.6 has anonymous public asset verification and scoped Darwin ARM64 Junie
+project installer evidence. Its complete installed SDK journey, real agent
+frontend and desktop behavior remain unqualified. Six runtime previews are
+published; zero fully qualified product releases are available. The optional
+Host and purple indicator have no public binary or automatic setup. Profiles,
+controller-local credentials, broker and SSH setup, target Screen Sharing and
+any macOS consent remain operator prerequisites.
+
+## Historical preview evidence
+
 The immutable [v0.1.0-alpha.4 runtime preview](https://github.com/xoxd-ai/fruitctl/releases/tag/v0.1.0-alpha.4)
 pins portable source `e0f4d064b076e58b33856d877e0e1c9266f55177` and bundles
 Node.js 24.21.0. Its macOS 15+ ARM64 runtime reuses the signed VNC controller

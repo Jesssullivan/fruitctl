@@ -14,17 +14,26 @@ it does not mean a desktop session or native binary has been qualified.
 
 ## Install a pinned release
 
-The immutable [v0.1.0-alpha.4 controller runtime preview](https://github.com/xoxd-ai/fruitctl/releases/tag/v0.1.0-alpha.4)
-is pinned to portable source commit `e0f4d064b076e58b33856d877e0e1c9266f55177`.
+The curated current preview is immutable
+[v0.1.0-alpha.6](https://github.com/xoxd-ai/fruitctl/releases/tag/v0.1.0-alpha.6),
+pinned to runtime producer `8653325c6ccc0e058b3e4cf84eb44101cfd270fc`.
 It provides the runtime, skill and adapters. The Darwin arm64 runtime includes
 the Developer ID-signed controller at `bin/claude-kvm-daemon`. Apple accepted
 its original controller-ZIP submission, produced from
-`e00fcc86bbac4247d5a0847d7e656369c52cc15f`. Alpha.4 reuses those unchanged
+`e00fcc86bbac4247d5a0847d7e656369c52cc15f`. Alpha.6 reuses those unchanged
 native bytes; the complete runtime archive is separate and is not covered by
 that acceptance. Linux uses the separately configured SSH bridge to Darwin. The broker, target
 profile, credential provider, target Screen Sharing and any macOS consent remain
 operator-owned. The Host application and purple indicator remain source
 prototypes with private lab binaries and are not distributed in this preview.
+
+Alpha.6 has anonymous public asset verification and scoped Darwin ARM64 Junie
+project installer evidence. Its installed SDK terminal acceptance, Linux
+runtime execution and real frontend/desktop journeys remain pending. Use the
+[current installation guide](install.md) for the exact scope of each receipt;
+older-release evidence below does not qualify alpha.6.
+
+### Historical installation evidence
 
 Alpha.4 passed an anonymous Linux x64 stock Junie project bootstrap, installed
 help/doctor/reinstall, alternate-project-alias dry-run refusal and uninstall. A
@@ -64,9 +73,11 @@ remains pinned to `7064d349890a9b18717b62a142452363629681ee` and requires an
 existing Darwin native controller. Its earlier anonymous Codex user and Claude
 project bootstrap checks remain historical evidence for that release.
 
+### Current install and recovery commands
+
 ```sh
-fruitctl install --agent codex --scope user --version v0.1.0-alpha.4 --target <profile> --dry-run
-fruitctl install --agent codex --scope user --version v0.1.0-alpha.4 --target <profile>
+fruitctl install --agent codex --scope user --version v0.1.0-alpha.6 --target <profile> --dry-run
+fruitctl install --agent codex --scope user --version v0.1.0-alpha.6 --target <profile>
 fruitctl doctor --agent codex --scope user
 fruitctl doctor --json
 fruitctl rollback --agent codex --scope user
@@ -88,28 +99,13 @@ identity, platform and archive checksum again. Missing assets or a missing
 manifest digest fail explicitly. No agent or GUI is launched and no root access
 or package-manager install scripts are needed.
 
-This block pins the published source and runtime preview and can be pasted as
-one terminal operation. Replace `default` with your configured profile:
-
-```sh
-(
-  FRUITCTL_SOURCE_SHA='e0f4d064b076e58b33856d877e0e1c9266f55177'
-  FRUITCTL_RELEASE_TAG='v0.1.0-alpha.4'
-  FRUITCTL_SCRIPT=$(mktemp)
-  trap 'rm -f "$FRUITCTL_SCRIPT"' EXIT
-  curl --disable --fail --silent --show-error --location --proto '=https' --proto-redir '=https' \
-    "https://raw.githubusercontent.com/xoxd-ai/fruitctl/$FRUITCTL_SOURCE_SHA/scripts/install.sh" \
-    -o "$FRUITCTL_SCRIPT" &&
-  FRUITCTL_ACTUAL_SHA=$(if command -v sha256sum >/dev/null 2>&1; then
-    sha256sum "$FRUITCTL_SCRIPT"
-  else
-    shasum -a 256 "$FRUITCTL_SCRIPT"
-  fi) &&
-  [ "${FRUITCTL_ACTUAL_SHA%% *}" = '6e05a7a62f57491cfbda1f8d9212291f6237f04f4ac396bc04d183b88747cd58' ] &&
-  sh "$FRUITCTL_SCRIPT" --agent codex --scope user \
-    --version "$FRUITCTL_RELEASE_TAG" --target default
-)
-```
+For one terminal operation, use the
+[published alpha.6 paste](install.md#one-terminal-paste-published-alpha-6).
+For installation by an agent, copy the
+[rendered prompt](https://fruitctl.clients.xoxd.ai/install-prompt.md).
+Replace `default` with your configured profile. Those routes select the same
+curated release and bootstrap pins; the ordinary user-scope paste remains an
+unqualified installation scope.
 
 The GitHub HTTPS origin authenticates the script and checksum inventory. SHA-256
 detects differing release bytes; it is not a substitute for Apple signing,
@@ -121,21 +117,21 @@ An explicit profile `daemonPath` takes priority, followed by
 inside its installed release. Installation does not start a broker, native
 process or service, create a target profile or credential, or grant macOS consent.
 
-## Install root and registration: alpha.5 preview
+## Install root and registration: alpha.6 preview
 
-The published [v0.1.0-alpha.5 preview](https://github.com/xoxd-ai/fruitctl/releases/tag/v0.1.0-alpha.5)
+The published [v0.1.0-alpha.6 preview](https://github.com/xoxd-ai/fruitctl/releases/tag/v0.1.0-alpha.6)
 separates operational storage from adapter registration with
 `--install-root ABSOLUTE_DIRECTORY`. Source and archive capability checks are
-verified; stock Darwin project bootstrap/lifecycle and installed SDK metadata
-acceptance remain pending. **Alpha.4 does not support this option**; its pinned
-release instructions above remain unchanged. See the
-[explicit install-root guide](install.md#explicit-install-root-alpha5-preview)
-for the exact alpha.5 bootstrap pin, storage layout and recovery commands.
+verified, with scoped Darwin ARM64 Junie project installer evidence; installed
+SDK terminal acceptance remains pending. **Alpha.4 does not support this option.**
+See the
+[explicit install-root guide](install.md#explicit-install-root-alpha-6-preview)
+for the exact alpha.6 bootstrap pin, storage layout and recovery commands.
 
 An explicit-root installation requires an explicit `--scope`. Use
 `--scope project --project-dir <absolute-project-directory>` to choose the
 project's MCP and skill destinations independently of the runtime cache, private
-installer state and launcher beneath the install root. The alpha.5 bootstrap
+installer state and launcher beneath the install root. The alpha.6 bootstrap
 passes `--project-dir` through; project scope still uses the current directory
 when it is omitted. With `--scope user`, registration still uses the supported
 user configuration and adapter environment rules. Choosing a storage root does

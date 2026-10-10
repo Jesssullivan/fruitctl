@@ -11,7 +11,7 @@ MCP tool, and signed application identities remain compatibility surfaces.
 
 ## Install with your agent
 
-Copy the [installation prompt](docs/site/install-prompt.md) into your agent and
+Copy the [rendered installation prompt](https://fruitctl.clients.xoxd.ai/install-prompt.md) into your agent and
 follow the [installation guide](docs/install.md). The prompt resolves a pinned,
 verified release, configures a named target, and checks a fresh observation
 before input. If the release does not support your controller and agent, it
