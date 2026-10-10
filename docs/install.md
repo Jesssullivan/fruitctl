@@ -1,6 +1,6 @@
 # Install Fruitctl
 
-Copy the [installation prompt](site/install-prompt.md) into your agent. It asks
+Copy the [rendered installation prompt](https://fruitctl.clients.xoxd.ai/install-prompt.md) into your agent. It asks
 the agent to inspect its platform, resolve a verified release, install the
 appropriate adapter, and qualify the connection. Supply host names and secrets
 through local configuration and the controller's credential provider, not this
