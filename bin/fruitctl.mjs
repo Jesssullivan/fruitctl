@@ -55,7 +55,8 @@ configPath = values.config || defaultConfigPath();
       '  doctor [--agent AGENT] [--scope user|project] [--project-dir PATH] [--install-root ABSOLUTE_DIRECTORY] --json\n' +
       '  rollback|uninstall --agent AGENT [--scope user|project] [--project-dir PATH] [--install-root ABSOLUTE_DIRECTORY]\n' +
       '\n--install-root selects Fruitctl runtime/state/launcher storage; registration still follows scope and project/user configuration.\n' +
-      'Repeat the selected root for doctor, rollback and uninstall. Explicit-root installation requires explicit scope; omitted root preserves legacy paths.\n');
+      'Repeat the selected root for doctor, rollback and uninstall. Explicit-root installation requires explicit scope; omitted root preserves legacy paths.\n' +
+      'Install requires explicit --version TAG. Doctor writes JSON: exit 1 for drift, 0 for configured or not-installed.\n');
   } else if (command === 'broker') {
     const { createBroker } = await import('../lib/broker/server.mjs');
     const config = await loadConfig(configPath);
@@ -89,6 +90,9 @@ configPath = values.config || defaultConfigPath();
     lifecycle({ close: async () => { await server.close(); await executor.close(); } });
     process.stdin.once('end', () => executor.close());
   } else if (['install', 'doctor', 'uninstall', 'rollback'].includes(command)) {
+    if (command === 'install' && !values.version) {
+      throw new Error('Installation requires explicit --version TAG; use the exact published release tag');
+    }
     const installer = await import('../lib/install/index.mjs');
     const result = await installer[command]({ agent: values.agent, scope: values.scope,
       version: values.version || await packageVersion(), target: values.target,
@@ -97,6 +101,7 @@ configPath = values.config || defaultConfigPath();
       configPath: values.config || process.env.FRUITCTL_CONFIG_PATH,
       manifestUrl: values['manifest-url'] });
     process.stdout.write(JSON.stringify(result, null, 2) + '\n');
+    if (command === 'doctor' && result.status === 'drift') process.exitCode = 1;
   } else throw new Error('Unknown Fruitctl command; use --help');
 } catch (error) {
   process.stderr.write(`Fruitctl: ${error.message}\n`);

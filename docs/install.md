@@ -327,6 +327,109 @@ through operator configuration when different addresses refer to the same
 machine; Fruitctl does not infer those aliases or create an independent control
 lane for them.
 
+### First run without Home Manager
+
+Install the pinned alpha.6 preview above on the controller and, when needed,
+the Linux seat. These examples assume explicit roots `/Users/alex/Tools/fruitctl`
+and `/home/alex/Tools/fruitctl`, with the agent registered for profile `default`.
+Replace all example accounts, roots, project paths, SSH aliases and the reserved
+example address with your operator-selected values. For the ordinary layout,
+substitute the installed receipt's versioned `prefix` only in executable and
+daemon paths. Omit `--install-root` from doctor and retain the recorded agent,
+scope and project; the doctor example below uses explicit-root storage.
+Keep your real `HOME`.
+
+**Darwin controller.** Use Apple Silicon macOS 15+ and the unchanged bundled
+signed controller. The target owner enables Screen Sharing and handles any
+normal Apple approval. Provision the target's existing credential through your
+secret manager into a controller-local regular file, readable by the broker
+account, with mode `0600` or `0400`. The credential must be nonempty UTF-8,
+without NUL, at most 4,096 bytes; the provider file may be at most 4,097 bytes
+and one final newline is removed. Keep its contents out of commands, agent
+configuration and the Linux seat.
+
+Save this operator-owned JSON as
+`/Users/alex/.config/fruitctl/controller.json` (mode `0600`):
+
+```json
+{
+  "schema": "fruitctl.config.v1",
+  "targets": {
+    "default": {
+      "targetId": "office-desktop",
+      "vnc": { "host": "192.0.2.10", "port": 5900, "username": "alex" },
+      "credentialFile": "/Users/alex/.config/fruitctl/secrets/desktop",
+      "daemonPath": "/Users/alex/Tools/fruitctl/releases/v0.1.0-alpha.6/darwin-arm64/bin/claude-kvm-daemon"
+    }
+  }
+}
+```
+
+Run your own broker in a dedicated terminal and leave it running:
+
+```sh
+"/Users/alex/Tools/fruitctl/releases/v0.1.0-alpha.6/darwin-arm64/bin/fruitctl" \
+  broker --config "/Users/alex/.config/fruitctl/controller.json"
+```
+
+Its default socket is
+`/Users/alex/Library/Application Support/fruitctl/run/broker.sock`. The launcher
+creates a private `0700` socket directory and `0600` socket. If an existing
+service owns that socket, use its owner-managed setup; do not remove its socket
+or restart another session's broker. No persistent service is installed by
+this foreground command.
+
+**Linux seat, including Rocky.** Keep the Darwin broker running. Configure an
+existing SSH alias `desktop-controller` for that controller account, with its
+host key trusted and authentication usable without interaction. Start your own
+foreground relay in a dedicated Linux terminal:
+
+```sh
+"/home/alex/Tools/fruitctl/releases/v0.1.0-alpha.6/linux-x64/bin/fruitctl" \
+  relay --bridge desktop-controller \
+  --remote-command "/Users/alex/Tools/fruitctl/releases/v0.1.0-alpha.6/darwin-arm64/bin/fruitctl" \
+  --remote-socket "/Users/alex/Library/Application Support/fruitctl/run/broker.sock"
+```
+
+Use the `linux-arm64` prefix instead on an ARM Linux seat. The relay attaches
+to the existing Darwin broker; it supplies neither a VNC profile nor credentials
+on Linux. Its default local socket is `$XDG_RUNTIME_DIR/fruitctl/relay.sock`,
+or `~/.local/state/fruitctl/relay.sock` when that variable is absent. Broker,
+relay and agent must agree on each local socket: if an existing
+`FRUITCTL_SOCKET_PATH` or explicit `--socket` selects another path, carry that
+choice through the supported agent configuration and `--remote-socket`.
+
+**Installed agent next steps.** In a second terminal, inspect the same root,
+agent, scope and project recorded by your installation. For a Linux Claude
+project installation, the concrete doctor command is:
+
+```sh
+"/home/alex/Tools/fruitctl/releases/v0.1.0-alpha.6/linux-x64/bin/fruitctl" \
+  doctor --agent claude --scope project --project-dir "/home/alex/Projects/desktop-task" \
+  --install-root "/home/alex/Tools/fruitctl" --json
+```
+
+On the Darwin seat, use its `darwin-arm64` executable, `/Users/alex` project
+path and install root. Select your actual adapter/scope from the installer
+receipt. Doctor checks registration and runtime files; it does not test the
+broker, target or frontend. The installed MCP entry must use that seat's
+versioned absolute `bin/fruitctl` with arguments `mcp --target default` and
+connect to the local broker or relay socket. Inspect it through your agent's
+supported settings; do not launch another agent as an installation probe.
+
+In the chosen frontend, discover the four real tools, run `vnc_command` health
+then screenshot, and inspect the complete fresh image before authorized input.
+Follow [qualification](#qualification) for an authorized reversible action
+and inspect its fresh result. Finish with `task_complete` and a `summary`, or
+`task_failed` and a `reason`; each releases this client's owned session. Report
+unconfirmed release as failure. After reconnect, take and inspect a fresh
+screenshot before further input; never replay uncertain input. Report the exact
+release and observed outcome; registration and these commands alone do not
+qualify a frontend or desktop. Public alpha.6 supplies no Host app or purple
+indicator. Installation grants no Screen Recording/Accessibility permission
+or headless TCC provisioning; any independently installed Host requires its
+own consent and capture qualification. Preserve the signed controller bytes.
+
 ## Qualification
 
 The release CLI uses these interfaces. Replace the placeholders with the listed
@@ -347,6 +450,13 @@ when that project is not the current directory. Review the concrete dry-run
 changes, then perform the already requested installation without `--dry-run`.
 The scoped doctor inspects installation/configuration without launching an
 agent or driving a desktop. It cannot prove image rendering or remote input.
+
+The current source CLI requires explicit `--version TAG` for `install`, including
+`--dry-run`, and uses the tag verbatim. `doctor` writes its JSON result and exits
+1 for `drift`, 0 for `configured` or `not-installed`. `not-installed` means the
+inspection found no receipt; it does not certify an installed runtime. Thrown
+errors exit 1 with an error on stderr. These source changes require a new runtime
+release; the immutable published alpha.6 runtime retains its earlier behavior.
 
 The Darwin service is `fruitctl broker --config <config-path>`. A Linux seat
 attaches with `fruitctl relay --bridge <ssh-alias>`; its agent then uses
