@@ -123,6 +123,11 @@ The target-side indicator draws an edge-feathered deep purple pulse with the
 centered message: “Machine under FuzzyBot spell, courtesy xoxd.ai)”. It accepts
 no pointer or keyboard input and respects a reduced-motion setting. Human stop
 remains available through an accessible local control.
+Local Stop revokes agent control for the running FruitctlHost session and stays
+in force through controller reconnect or wake. Restarting FruitctlHost allows
+control again; Stop is not persisted across app restarts. Capture opt-in,
+macOS capture consent and fresh controller lease checks remain separate
+requirements.
 The intended animation has a 72 BPM pulse cycle. Qualification records physical
 pulse rate and timing uncertainty; reduced-motion static indication is a
 separate case. A renderer timer or a ready acknowledgement alone cannot prove
