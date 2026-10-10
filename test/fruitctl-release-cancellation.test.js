@@ -122,10 +122,35 @@ async function ownedBroker(t, mode, { holdMs = 0, failReleaseAfterAck = false } 
   const b = new BrokerExecutor({ socketPath: owned.socketPath, target: 'desktop' });
   const lane = broker.lanes.get('desktop');
   t.after(async () => {
-    await a.close(); await b.close();
-    await Promise.all(natives.map(native => native.close({ graceful: false })));
-    if (lane.cleanupFailure) await assert.rejects(broker.close(), /unconfirmed/);
-    else await broker.close();
+    // Start every owned cleanup before validating sticky close results. A
+    // rejected retirement receipt must not skip the actual listener closure.
+    const listenerClosed = new Promise(resolve => broker.server.once('close', resolve));
+    const clientClosures = Promise.allSettled([a.close(), b.close()]);
+    const nativeClosures = Promise.allSettled(natives.map(native =>
+      Promise.resolve().then(() => native.close({ graceful: false }))));
+    const brokerClosure = Promise.allSettled([Promise.resolve().then(() => broker.close())]);
+    const [clientResults, nativeResults, [brokerResult]] = await Promise.all([
+      clientClosures, nativeClosures, brokerClosure,
+    ]);
+    await Promise.all(natives.map(native => native.closed));
+    await listenerClosed;
+    for (const result of clientResults) assert.equal(result.status, 'fulfilled');
+    for (const [index, result] of nativeResults.entries()) {
+      const native = natives[index];
+      if (result.status === 'rejected') {
+        assert.equal(result.reason, native.closeState.failure);
+        assert.equal(result.reason.code, 'release_unconfirmed');
+      } else assert.equal(native.closeState.failure, undefined);
+      await assert.rejects(fs.stat(`/proc/${native.child.pid}`), { code: 'ENOENT' });
+    }
+    if (lane.cleanupFailure) {
+      assert.equal(brokerResult.status, 'rejected');
+      assert.equal(brokerResult.reason.code, 'release_unconfirmed');
+    } else assert.equal(brokerResult.status, 'fulfilled');
+    t.diagnostic(JSON.stringify({ event: 'owned-fixture-cleanup',
+      ownedNativeChildren: natives.length, actualNativeClosed: true,
+      recordedPidsAbsent: true, listenerClosed: true,
+      stickyNativeCloseRejections: nativeResults.filter(result => result.status === 'rejected').length }));
   });
   await Promise.all([a.opened, b.opened]);
   await a.execute([{ action: 'health' }]);
@@ -134,7 +159,7 @@ async function ownedBroker(t, mode, { holdMs = 0, failReleaseAfterAck = false } 
 }
 
 for (const trigger of ['abort', 'deadline', 'wire-cancel']) {
-  test(`explicit release ${trigger} reaches owned cleanup promptly and stays unconfirmed after late exit`, ownedLinux, async t => {
+  test(`explicit release ${trigger} reaches owned cleanup promptly and stays unconfirmed after observed exit`, ownedLinux, async t => {
     const owned = await ownedBroker(t, 'slow-exit');
     const controller = new AbortController();
     const startedAt = performance.now();
@@ -153,16 +178,16 @@ for (const trigger of ['abort', 'deadline', 'wire-cancel']) {
     }
     await rejected;
     const terminalMs = performance.now() - (trigger === 'deadline' ? startedAt : cancelledAt);
-    assert.ok(terminalMs < 300, 'release must not wait for the fresh native default or the owned late exit');
+    assert.ok(terminalMs < 300, 'release must not wait for the fresh native default budget');
     await waitUntil(() => Boolean(owned.lane.cleanupFailure) && owned.releaseOptions[0].signal.aborted, 'server release controller did not retain cancellation');
     const sticky = owned.lane.cleanupFailure;
-    assert.ok((await fs.stat(`/proc/${owned.pid}`)).isDirectory(), 'prompt rejection must not claim that the owned child already exited');
+    const actualCloseAlreadyObservedAtRejection = owned.natives[0].closeState?.closedObserved === true;
     if (trigger === 'wire-cancel') assert.equal(owned.a.closed, false, 'wire cancellation must work without relying on client disconnect');
     await assert.rejects(owned.b.execute([{ action: 'key_tap', key: 'tab' }]), /unconfirmed/);
     await owned.natives[0].closed;
     await assert.rejects(fs.stat(`/proc/${owned.pid}`), { code: 'ENOENT' });
     await assert.rejects(owned.b.execute([{ action: 'health' }]), /unconfirmed/);
-    assert.equal(owned.lane.cleanupFailure, sticky, 'actual late exit cannot erase unconfirmed input cleanup');
+    assert.equal(owned.lane.cleanupFailure, sticky, 'observed exit cannot erase unconfirmed input cleanup');
     assert.equal(owned.natives.length, 1);
     assert.deepEqual(owned.dispatched, ['health']);
     assert.deepEqual((await owned.events()).filter(event => event.event.startsWith('request:')).map(event => event.event),
@@ -170,7 +195,8 @@ for (const trigger of ['abort', 'deadline', 'wire-cancel']) {
     assert.equal(owned.a.pending.size, 0);
     t.diagnostic(JSON.stringify({ trigger, pid: owned.pid, terminalMs,
       requestedBudgetMs: trigger === 'deadline' ? 100 : 1000, nativeRemainingMs: owned.releaseOptions[0].timeoutMs,
-      lateExitConfirmed: true, successorStarts: 0, cleanupSticky: true }));
+      actualCloseAlreadyObservedAtRejection, actualExitConfirmed: true,
+      successorStarts: 0, cleanupSticky: true }));
   });
 }
 
@@ -186,7 +212,7 @@ test('executor-originated release failure aborts its shared retirement before th
   assert.equal(owned.releaseOptions[0].signal.aborted, true, 'executor failure must revoke shared retirement without waiting for another timer');
   assert.equal(owned.releaseOptions[0].signal.reason, failure);
   assert.equal(owned.natives[0].shutdownAcknowledged, true);
-  assert.ok((await fs.stat(`/proc/${owned.pid}`)).isDirectory(), 'unconfirmed acknowledgement must not claim owned exit');
+  const actualCloseAlreadyObservedAtRejection = owned.natives[0].closeState?.closedObserved === true;
   await assert.rejects(owned.b.execute([{ action: 'key_tap', key: 'tab' }]), /unconfirmed/);
   await owned.natives[0].closed;
   await assert.rejects(fs.stat(`/proc/${owned.pid}`), { code: 'ENOENT' });
@@ -198,7 +224,8 @@ test('executor-originated release failure aborts its shared retirement before th
     ['request:health', 'request:shutdown']);
   t.diagnostic(JSON.stringify({ trigger: 'executor-originated', pid: owned.pid,
     terminalMs, requestedBudgetMs: 1000,
-    signalAborted: true, failureBoundAsSignalReason: true, lateExitConfirmed: true,
+    signalAborted: true, failureBoundAsSignalReason: true,
+    actualCloseAlreadyObservedAtRejection, actualExitConfirmed: true,
     successorStarts: 0, cleanupSticky: true }));
 });
 
