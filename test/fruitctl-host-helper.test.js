@@ -378,6 +378,47 @@ test('idle heartbeat loss closes the owner and refuses future calls without reac
   assert.equal(host.requests.filter(request => request.action === 'capture').length, 1);
 });
 
+test('permit expiry between timer samples retires the owned executor without reacquisition',
+  { timeout: 2000 }, async t => {
+    const initialClock = 1000;
+    const until = initialClock + 1;
+    let crossExpiry = false;
+    const samples = [];
+    const { executor, vnc, host } = await fixture({ now() {
+      if (!crossExpiry) return initialClock;
+      const value = samples.length === 0 ? until - 0.1 : until;
+      samples.push(value);
+      return value;
+    } });
+    t.after(() => executor.close());
+    await executor.execute([{ action: 'screenshot' }]);
+    const ownedClosure = Promise.withResolvers();
+    const close = vnc.close.bind(vnc);
+    vnc.close = async options => {
+      await close(options);
+      ownedClosure.resolve();
+    };
+    executor.refreshPermit(until);
+    crossExpiry = true;
+    // The watchdog's first sample precedes expiry; refresh's next sample
+    // reaches that same cutoff. Wait for owned closure, not a timing margin.
+    await ownedClosure.promise;
+    assert.deepEqual(samples.slice(0, 2), [until - 0.1, until]);
+    const failure = executor.failed;
+    assert.match(failure.message, /Host-helper input permit expired/);
+    assert.equal(executor.permitUntil, until);
+    assert.deepEqual(vnc.closes, [{ graceful: false }]);
+    await assert.rejects(executor.execute([{ action: 'screenshot' }]), error => error === failure);
+    await executor.close();
+    assert.equal(executor.failed, failure);
+    assert.equal(vnc.closes.length, 1);
+    assert.deepEqual(vnc.calls, []);
+    assert.deepEqual(vnc.permitControls, []);
+    assert.equal(host.requests.filter(request => request.action === 'begin_activity').length, 1);
+    assert.equal(host.requests.filter(request => request.action === 'capture').length, 1);
+    assert.deepEqual(host.child.kills, ['SIGTERM']);
+  });
+
 test('human stop during a thinking gap revokes the owner before another input', async () => {
   let stopped = false;
   const { executor, vnc, host } = await fixture({ config: { ...configuration(), mapping },
@@ -604,9 +645,17 @@ for (const event of ['concurrent close', 'lost readiness']) {
 test('native clean-release failure is propagated rather than relabeled as clean ownership release', async () => {
   const { executor, vnc } = await fixture({ nativeOptions: {
     releaseError: new Error('Native shutdown acknowledgement unavailable') } });
-  await assert.rejects(executor.release(), /shutdown acknowledgement unavailable/);
+  const startedAt = performance.now();
+  await assert.rejects(executor.release({ timeoutMs: 1000 }), /shutdown acknowledgement unavailable/);
   assert.equal(vnc.releases.length, 1);
-  assert.deepEqual(vnc.closes, [{ graceful: false }]);
+  assert.equal(vnc.closes.length, 1);
+  assert.equal(vnc.closes[0].graceful, false);
+  assert.ok(Number.isFinite(vnc.closes[0].deadline));
+  assert.ok(vnc.closes[0].deadline >= startedAt + 1000);
+  assert.ok(vnc.closes[0].deadline <= performance.now() + 1000);
+  assert.ok(vnc.releases[0].timeoutMs <= 1000);
+  assert.equal(vnc.closes[0].signal, vnc.releases[0].signal);
+  assert.equal(vnc.closes[0].signal.aborted, true);
   assert.equal(executor.released, undefined);
 });
 
@@ -640,5 +689,69 @@ test('unconfirmed owned SSH close fails clean release and remains failed', async
   assert.equal(vnc.releases.length, 1);
   assert.equal(vnc.closes.length, 1);
   assert.deepEqual(host.child.kills, ['SIGTERM', 'SIGKILL']);
+  await assert.rejects(executor.close(), /owned SSH exit unconfirmed/);
+});
+
+test('helper close forwards one deadline and signal while retaining late owned native closure', async () => {
+  const { executor, vnc, host } = await fixture({ helperOptions: { ignoreTerm: true, ignoreKill: true } });
+  let finishNative;
+  const nativeGate = new Promise(resolve => { finishNative = resolve; });
+  vnc.close = async options => { vnc.closes.push(options); await nativeGate; };
+  const controller = new AbortController();
+  const deadline = performance.now() + 40;
+  const closing = executor.close({ deadline, signal: controller.signal });
+  const tracked = executor.nativeClosing;
+  assert.equal(vnc.closes.length, 1);
+  assert.equal(vnc.closes[0].deadline, deadline);
+  assert.equal(vnc.closes[0].signal, controller.signal);
+  assert.equal(vnc.closes[0].graceful, false);
+  await assert.rejects(closing, error => error.code === 'release_unconfirmed');
+  assert.deepEqual(host.child.kills, ['SIGTERM', 'SIGKILL']);
+  const sticky = executor.failed;
+  finishNative();
+  host.child.emit('close', null, 'SIGKILL');
+  await tracked;
+  assert.equal(executor.nativeClosing, tracked);
+  assert.equal(executor.failed, sticky);
+  await assert.rejects(executor.execute([{ action: 'mouse_click', x: 1, y: 1 }]), /executor closed/);
+  assert.deepEqual(vnc.calls, []);
+  await assert.rejects(executor.close(), /owned SSH exit unconfirmed/);
+});
+
+test('helper close shortens existing owned cleanup without replacing its original promises', async () => {
+  const { executor, vnc, host } = await fixture({ helperOptions: { ignoreTerm: true, ignoreKill: true } });
+  let finishNative;
+  const nativeGate = new Promise(resolve => { finishNative = resolve; });
+  vnc.close = async options => { vnc.closes.push(options); await nativeGate; };
+  const originalFailure = new Error('owned prior input failure');
+  executor.fail(originalFailure);
+  const nativeClosing = executor.nativeClosing, helperClosing = executor.helperClosing;
+  const controller = new AbortController();
+  const deadline = performance.now() + 40;
+  const closing = executor.close({ deadline, signal: controller.signal });
+  assert.equal(executor.nativeClosing, nativeClosing);
+  assert.equal(executor.helperClosing, helperClosing);
+  assert.deepEqual(vnc.closes[0], { graceful: false });
+  assert.equal(vnc.closes[1].deadline, deadline);
+  assert.equal(vnc.closes[1].signal, controller.signal);
+  await assert.rejects(closing, /owned SSH exit unconfirmed/);
+  finishNative();
+  host.child.emit('close', null, 'SIGKILL');
+  await Promise.all([nativeClosing, executor.nativeClosingUpdate]);
+  assert.equal(executor.failed, originalFailure);
+  await assert.rejects(executor.close(), /owned SSH exit unconfirmed/);
+});
+
+test('helper SSH shutdown uses the remaining clean-release budget after native release', async () => {
+  let now = 1000;
+  const { executor, vnc, host } = await fixture({ now: () => now,
+    nativeOptions: { releaseRun: async () => { now += 30; } },
+    helperOptions: { ignoreTerm: true, ignoreKill: true } });
+  await assert.rejects(executor.release({ timeoutMs: 40 }), /owned SSH exit unconfirmed/);
+  assert.equal(executor.channel.closeDeadline, 1040);
+  assert.equal(vnc.closes[0].deadline, 1040);
+  assert.equal(executor.released, undefined);
+  assert.deepEqual(host.child.kills, ['SIGTERM', 'SIGKILL']);
+  host.child.emit('close', null, 'SIGKILL');
   await assert.rejects(executor.close(), /owned SSH exit unconfirmed/);
 });

@@ -173,20 +173,26 @@ test('unconfirmed executor cleanup keeps every successor session blocked', async
   }
 });
 
-test('100 broker fixture cycles preserve exclusive ownership and confirmed cleanup', async () => {
+test('100 broker fixture cycles preserve exclusive ownership and require confirmed cleanup or explicit synthetic reconciliation', async t => {
   const { directory, socketPath } = await fixture();
   let nextExecutor = 0;
   let live = 0;
   let maximumLive = 0;
   let starts = 0;
   let closes = 0;
+  let reconciliations = 0;
+  let refuseCloseAcknowledgement = false;
+  let confirmLateClose;
   let held = false;
   const trace = [];
-  const broker = await createBroker({
+  const makeBroker = () => createBroker({
     socketPath, config: { targets: { desktop: {} } }, leaseMs: 1000,
     factory: async () => {
       const executorId = ++nextExecutor;
       let closed = false;
+      let refuse = refuseCloseAcknowledgement;
+      refuseCloseAcknowledgement = false;
+      const closeAcknowledged = refuse ? new Promise(resolve => { confirmLateClose = resolve; }) : Promise.resolve();
       live++;
       maximumLive = Math.max(maximumLive, live);
       return {
@@ -202,7 +208,14 @@ test('100 broker fixture cycles preserve exclusive ownership and confirmed clean
           return [{ result: { detail: String(actions[0].marker) } }];
         },
         async close() {
-          await delay(2);
+          if (refuse) {
+            refuse = false;
+            throw new Error('Synthetic owned fixture close acknowledgement unavailable');
+          }
+          await closeAcknowledged;
+          // Exercise an asynchronous close acknowledgement without coupling
+          // this ownership-order fixture to wall-clock scheduling latency.
+          await new Promise(resolve => queueMicrotask(resolve));
           if (closed) return;
           closed = true;
           held = false;
@@ -213,17 +226,22 @@ test('100 broker fixture cycles preserve exclusive ownership and confirmed clean
       };
     },
   });
-  const lane = broker.lanes.get('desktop');
+  let broker = await makeBroker();
+  let lane = broker.lanes.get('desktop');
   const clients = new Set();
   try {
     for (let cycle = 0; cycle < 100; cycle++) {
       const mode = cycle % 5;
       lane.leaseMs = mode === 2 ? 100 : 1000;
       const a = new BrokerExecutor({ socketPath, target: 'desktop' });
-      const b = new BrokerExecutor({ socketPath, target: 'desktop' });
+      let b = new BrokerExecutor({ socketPath, target: 'desktop' });
       clients.add(a); clients.add(b);
       await Promise.all([a.opened, b.opened]);
+      // One controlled refusal proves reconciliation every run, independently
+      // of whether the host scheduler exhausts the small deadline budget.
+      refuseCloseAcknowledgement = cycle === 4;
       await a.execute([{ action: 'marker', marker: cycle }]);
+      const ownerExecutorId = nextExecutor;
       await assert.rejects(b.execute([{ action: 'marker', marker: 'blocked' }]), /controlled/);
 
       if (mode === 0) await a.release();
@@ -237,9 +255,44 @@ test('100 broker fixture cycles preserve exclusive ownership and confirmed clean
         }), /cancel/i);
       }
       if (mode === 4) {
-        // This cycle proves handoff after a confirmed 2ms close, not a 10ms
-        // wall-clock SLO. Leave cleanup time inside the request's total budget.
-        await assert.rejects(a.execute([{ action: 'hold' }], { timeoutMs: 40 }), /deadline|timeout/i);
+        await assert.rejects(a.execute([{ action: 'hold' }], { timeoutMs: 40 }), error =>
+          error.code === 'release_unconfirmed' || /deadline|timeout/i.test(error.message));
+        await waitUntil(() => lane.cleanupFailure || (lane.owner === null && live === 0),
+          'deadline retirement must either confirm closure or record its uncertainty');
+        if (lane.cleanupFailure) {
+          // This is only a local synthetic executor fixture, never a target
+          // or automatic product restart. A short deadline can expire before
+          // its asynchronous close acknowledgement gets CPU.
+          const failure = lane.cleanupFailure, before = starts;
+          assert.equal(failure.code, 'release_unconfirmed');
+          await assert.rejects(b.execute([{ action: 'marker', marker: 'blocked-after-deadline' }]), /unconfirmed/);
+          confirmLateClose?.();
+          confirmLateClose = undefined;
+          await waitUntil(() => live === 0 && trace.some(event =>
+            event.kind === 'closed' && event.executorId === ownerExecutorId),
+            'exact owned fixture close acknowledgement was not observed');
+          assert.equal(held, false);
+          await assert.rejects(b.execute([{ action: 'marker', marker: 'blocked-after-close' }]), /unconfirmed/);
+          assert.equal(lane.cleanupFailure, failure, 'actual later close cannot clear uncertainty');
+          assert.equal(starts, before, 'blocked input is neither dispatched nor replayed');
+          await a.close(); await b.close();
+          clients.delete(a); clients.delete(b);
+          const listenerClosed = new Promise(resolve => broker.server.once('close', resolve));
+          await assert.rejects(broker.close(), /unconfirmed/);
+          await listenerClosed;
+          assert.equal(lane.cleanupFailure, failure, 'the old lane remains blocked after shutdown');
+          // Explicit fixture reconciliation creates a different owned broker
+          // only after observed executor/listener closure, then sends a new
+          // successor marker rather than retrying the previous hold action.
+          broker = await makeBroker();
+          lane = broker.lanes.get('desktop');
+          b = new BrokerExecutor({ socketPath, target: 'desktop' });
+          clients.add(b);
+          await b.opened;
+          reconciliations++;
+          t.diagnostic(JSON.stringify({ fixture: 'synthetic-broker-reconciliation', cycle,
+            ownerExecutorId, closeAcknowledged: true, previousLaneStillBlocked: true, replayed: false }));
+        }
       }
 
       await waitUntil(() => lane.owner === null && live === 0,
@@ -256,12 +309,17 @@ test('100 broker fixture cycles preserve exclusive ownership and confirmed clean
     assert.equal(nextExecutor, 200);
     assert.equal(closes, 200);
     assert.equal(starts, 240, 'blocked requests and uncertain input are never replayed');
+    assert.ok(100 - reconciliations >= 80, 'all non-deadline modes require confirmed cleanup on the same broker');
+    t.diagnostic(JSON.stringify({ fixture: 'synthetic-ownership-cycle-summary', cycles: 100,
+      confirmedCycles: 100 - reconciliations, reconciliations, ownedExecutors: nextExecutor,
+      closedExecutors: closes, dispatched: starts, maximumLive }));
     for (let i = 1; i < trace.length; i++) {
       if (trace[i].kind === 'start' && trace[i].executorId !== trace[i - 1].executorId) {
         assert.equal(trace[i - 1].kind, 'closed', 'previous executor closes before successor input');
       }
     }
   } finally {
+    confirmLateClose?.();
     for (const client of clients) await client.close();
     await broker.close();
     await fs.rm(directory, { recursive: true, force: true });

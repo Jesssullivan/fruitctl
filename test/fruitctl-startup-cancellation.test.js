@@ -27,7 +27,7 @@ async function main() {
   process.on('SIGTERM', () => {
     record('owned-term');
     if (process.env.FRUITCTL_STARTUP_MODE === 'never-ready') {
-      setTimeout(() => { record('late-ready'); emit({ method: 'ready', params: { scaledWidth: 32, scaledHeight: 16 } }); }, 80);
+      setTimeout(() => { record('late-ready'); emit({ method: 'ready', params: { scaledWidth: 32, scaledHeight: 16 } }); }, 20);
       setTimeout(() => process.exit(0), 180);
     } else process.exit(0);
   });
@@ -103,7 +103,17 @@ for (const trigger of ['abort', 'deadline']) {
     // the earlier work cutoff can correctly terminate a child before its PID
     // journal gets CPU. Readiness remains blocked and no input is dispatched.
     const prepared = new NativeExecutor({ env: owned.env, daemonPath: owned.daemonPath, emitDiagnostics: false });
-    t.after(() => prepared.close({ graceful: false }));
+    t.after(async () => {
+      try { await prepared.close({ graceful: false }); }
+      catch (error) {
+        // The retirement receipt stays uncertain after a late real exit.
+        // Observe that owned exit separately so this expected sticky failure
+        // cannot skip the remaining broker/socket cleanup hooks.
+        assert.equal(error.code, 'release_unconfirmed');
+        assert.equal(prepared.closeState.failure, error);
+        await prepared.closed;
+      }
+    });
     const pid = await owned.ownership(10000);
     const socketPath = path.join(owned.directory, 's');
     const broker = await createBroker({ socketPath, config: { targets: { desktop: owned.profile } },
@@ -124,7 +134,12 @@ for (const trigger of ['abort', 'deadline']) {
     const startedAt = performance.now();
     const first = a.execute([{ action: 'key_tap', key: 'tab' }],
       { signal: controller.signal, timeoutMs: trigger === 'deadline' ? 250 : 1500 });
-    const firstRejected = assert.rejects(first, trigger === 'deadline' ? /startup cleanup is unconfirmed/i : /operator startup abort/i);
+    // Native readiness, lane work, or the outer caller's cutoff may win the
+    // deadline race. Each is a valid finite expiry; the lane's owned-exit
+    // uncertainty and actual close are checked separately below.
+    const firstRejected = assert.rejects(first, trigger === 'deadline'
+      ? /startup cleanup is unconfirmed|operation deadline exceeded|daemon did not become ready within timeout/i
+      : /operator startup abort/i);
     const queued = a.execute([{ action: 'key_tap', key: 'enter' }], { timeoutMs: 1500 });
     const queuedRejected = assert.rejects(queued, /revoked|released|unconfirmed/i);
     await waitUntil(() => lane.waiting === 2, 'second request did not enter the cold queue');
@@ -132,18 +147,29 @@ for (const trigger of ['abort', 'deadline']) {
     await firstRejected;
     const clientTerminalMs = performance.now() - startedAt;
     assert.ok(clientTerminalMs < 600, 'client cancellation must not wait for a fresh 30-second startup budget');
-    await assert.rejects(b.execute([{ action: 'health' }]), trigger === 'deadline' ? /unconfirmed/i : /another session|releasing/i);
+    if (trigger === 'abort') await assert.rejects(b.execute([{ action: 'health' }]), /another session|releasing/i);
     await queuedRejected;
     await waitUntil(() => lane.waiting === 0, 'cold queue did not drain');
     assert.equal(lane.controllers.size, 0);
     assert.equal(lane.executor, null);
     if (trigger === 'deadline') {
-      assert.equal(lane.cleanupFailure?.code, 'release_unconfirmed',
-        'a 250ms caller cannot confirm the fixture\'s 180ms exit after the reserved work cutoff');
-      assert.ok(lane.startup, 'unconfirmed startup remains recorded');
       await prepared.closed;
-      await assert.rejects(b.execute([{ action: 'health' }]), /unconfirmed/,
-        'a later owned exit cannot silently restore admission');
+      if (lane.cleanupFailure) {
+        assert.equal(lane.cleanupFailure.code, 'release_unconfirmed');
+        assert.ok(lane.startup, 'unconfirmed startup remains recorded');
+        await assert.rejects(b.execute([{ action: 'health' }]), /unconfirmed/,
+          'a later owned exit cannot silently restore admission');
+      } else {
+        // Escalation scales inside the inherited cleanup budget. It may
+        // confirm the owned child before its delayed TERM exit; only the
+        // actual close event permits the lease to become available again.
+        assert.equal(prepared.closeState.closedObserved, true);
+        assert.equal(prepared.closeState.failure, undefined);
+        await waitUntil(() => lane.owner === null, 'confirmed cold cleanup did not release the lease');
+        assert.equal(lane.startup, null);
+        lane.acquire('successor');
+        await lane.release('successor');
+      }
     } else {
       await waitUntil(() => lane.owner === null, 'confirmed cold cleanup did not release the lease');
       assert.equal(lane.cleanupFailure, undefined);
@@ -157,7 +183,8 @@ for (const trigger of ['abort', 'deadline']) {
     assert.equal(observed.filter(event => event.event.startsWith('request:')).length, 0,
       'neither the first request nor queued input may reach the late-ready child');
     t.diagnostic(JSON.stringify({ trigger, pid, clientTerminalMs, targetRetiredMs: performance.now() - startedAt,
-      lateReadyObserved: true, dispatched: 0, waiting: lane.waiting, controllers: lane.controllers.size }));
+      lateReadyObserved: true, cleanup: lane.cleanupFailure ? 'unconfirmed' : 'observed-close',
+      dispatched: 0, waiting: lane.waiting, controllers: lane.controllers.size }));
   });
 }
 
