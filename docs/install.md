@@ -6,16 +6,15 @@ appropriate adapter, and qualify the connection. Supply host names and secrets
 through local configuration and the controller's credential provider, not this
 prompt or a checked-in MCP file.
 
-The curated adoption route currently selects the published
-[v0.1.0-alpha.6 runtime preview](https://github.com/xoxd-ai/fruitctl/releases/tag/v0.1.0-alpha.6),
-producer `8653325c6ccc0e058b3e4cf84eb44101cfd270fc`. Its thirteen public assets
-match the reviewed hashes and sizes through anonymous downloads. It retains
-the [explicit install root](#explicit-install-root-alpha-6-preview). Its Darwin
-ARM64 Junie project installer components are verified as described below;
-installed SDK terminal acceptance remains pending.
-The rendered installation prompt follows this curated preview, rather than
-the newest package version or source checkout. Publication and archive checks
-do not qualify a packaged installer, agent frontend or desktop connection.
+The curated adoption route selects the published
+[v0.1.0-alpha.7 runtime preview](https://github.com/xoxd-ai/fruitctl/releases/tag/v0.1.0-alpha.7),
+producer `cd34bbcdcc9e70bf25f77cbcfd1f129e1eac30db`. Its thirteen public assets match
+the reviewed hashes and sizes through anonymous downloads. Its accepted public
+installer lifecycle is limited to Linux x64 stock public bootstrap and Claude project configuration lifecycle: dry-run, install, doctor, reinstall, same-version prior-receipt rollback and uninstall; the existing populated project configuration was restored exactly, including mode 0640.
+This does not qualify a complete platform, actual agent frontend or desktop.
+The rendered prompt follows this curated preview, rather than a moving package
+version or source checkout. Existing alpha.6 evidence and explicitly alpha.6-pinned
+examples below remain historical and are not transferred to alpha.7.
 
 The historical [v0.1.0-alpha.4 runtime preview](https://github.com/xoxd-ai/fruitctl/releases/tag/v0.1.0-alpha.4)
 is immutable and source-pinned to
@@ -76,7 +75,7 @@ The current broker provider is an owner-only private credential file. Configure
 that path on the Darwin controller; the installer does not create a target
 password or copy it into the agent configuration.
 
-## One terminal paste: published alpha.6
+## One terminal paste: published alpha.7
 
 This pins both the bootstrap source and immutable runtime preview. Choose your
 adapter from the [agent guide](agents.md), replace `default` with your configured
@@ -84,8 +83,8 @@ profile, and preserve any Home Manager-owned configuration through its owner:
 
 ```sh
 (
-  FRUITCTL_SOURCE_SHA='8653325c6ccc0e058b3e4cf84eb44101cfd270fc'
-  FRUITCTL_RELEASE_TAG='v0.1.0-alpha.6'
+  FRUITCTL_SOURCE_SHA='cd34bbcdcc9e70bf25f77cbcfd1f129e1eac30db'
+  FRUITCTL_RELEASE_TAG='v0.1.0-alpha.7'
   FRUITCTL_SCRIPT=$(mktemp)
   trap 'rm -f "$FRUITCTL_SCRIPT"' EXIT
   curl --disable --fail --silent --show-error --location --proto '=https' --proto-redir '=https' \

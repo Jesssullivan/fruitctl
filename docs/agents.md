@@ -15,25 +15,29 @@ it does not mean a desktop session or native binary has been qualified.
 ## Install a pinned release
 
 The curated current preview is immutable
-[v0.1.0-alpha.6](https://github.com/xoxd-ai/fruitctl/releases/tag/v0.1.0-alpha.6),
-pinned to runtime producer `8653325c6ccc0e058b3e4cf84eb44101cfd270fc`.
+[v0.1.0-alpha.7](https://github.com/xoxd-ai/fruitctl/releases/tag/v0.1.0-alpha.7),
+pinned to runtime producer `cd34bbcdcc9e70bf25f77cbcfd1f129e1eac30db`.
 It provides the runtime, skill and adapters. The Darwin arm64 runtime includes
 the Developer ID-signed controller at `bin/claude-kvm-daemon`. Apple accepted
 its original controller-ZIP submission, produced from
-`e00fcc86bbac4247d5a0847d7e656369c52cc15f`. Alpha.6 reuses those unchanged
+`e00fcc86bbac4247d5a0847d7e656369c52cc15f`. Alpha.7 reuses those unchanged
 native bytes; the complete runtime archive is separate and is not covered by
 that acceptance. Linux uses the separately configured SSH bridge to Darwin. The broker, target
 profile, credential provider, target Screen Sharing and any macOS consent remain
 operator-owned. The Host application and purple indicator remain source
 prototypes with private lab binaries and are not distributed in this preview.
 
-Alpha.6 has anonymous public asset verification and scoped Darwin ARM64 Junie
-project installer evidence. Its installed SDK terminal acceptance, Linux
-runtime execution and real frontend/desktop journeys remain pending. Use the
-[current installation guide](install.md) for the exact scope of each receipt;
-older-release evidence below does not qualify alpha.6.
+Alpha.7 public installer evidence is limited to
+Linux x64 stock public bootstrap and Claude project configuration lifecycle: dry-run, install, doctor, reinstall, same-version prior-receipt rollback and uninstall; the existing populated project configuration was restored exactly, including mode 0640. Complete platform,
+real frontend and target desktop qualification remain pending. Use the
+[current installation guide](install.md); alpha.6 and older evidence below is
+historical and does not qualify alpha.7.
 
 ### Historical installation evidence
+
+Historical alpha.6 has anonymous public asset verification and scoped Darwin
+ARM64 Junie project installer evidence; it does not qualify alpha.7 or any real
+frontend.
 
 Alpha.4 passed an anonymous Linux x64 stock Junie project bootstrap, installed
 help/doctor/reinstall, alternate-project-alias dry-run refusal and uninstall. A
@@ -76,8 +80,8 @@ project bootstrap checks remain historical evidence for that release.
 ### Current install and recovery commands
 
 ```sh
-fruitctl install --agent codex --scope user --version v0.1.0-alpha.6 --target <profile> --dry-run
-fruitctl install --agent codex --scope user --version v0.1.0-alpha.6 --target <profile>
+fruitctl install --agent codex --scope user --version v0.1.0-alpha.7 --target <profile> --dry-run
+fruitctl install --agent codex --scope user --version v0.1.0-alpha.7 --target <profile>
 fruitctl doctor --agent codex --scope user
 fruitctl doctor --json
 fruitctl rollback --agent codex --scope user
@@ -119,7 +123,7 @@ process or service, create a target profile or credential, or grant macOS consen
 
 ## Install root and registration: alpha.6 preview
 
-The published [v0.1.0-alpha.6 preview](https://github.com/xoxd-ai/fruitctl/releases/tag/v0.1.0-alpha.6)
+The historical [v0.1.0-alpha.6 preview](https://github.com/xoxd-ai/fruitctl/releases/tag/v0.1.0-alpha.6)
 separates operational storage from adapter registration with
 `--install-root ABSOLUTE_DIRECTORY`. Source and archive capability checks are
 verified, with scoped Darwin ARM64 Junie project installer evidence; installed
