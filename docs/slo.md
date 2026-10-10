@@ -79,8 +79,12 @@ uncertain input outcomes. Test keyboard/button release on abort. Perform 100
 connect/disconnect/cancel cycles and prove that the owned process set does not
 grow. Indicator evidence must pair physical visibility with full harness
 captures during the pulse, including display reconfiguration and client death.
-Verify the host's human Stop control revokes readiness during a thinking gap,
-prevents successor input, and stays latched until the human allows activity.
+Verify the current Host prototype's human Stop control revokes readiness during
+a thinking gap and prevents successor input for that Host process. Stop remains
+latched through sleep/wake and controller reconnect. Local Allow or restarting
+Host permits a fresh activity request; neither creates a lease nor bypasses
+session/display checks, capture opt-in or macOS capture consent. Qualification
+of these process-scoped behaviors remains pending.
 
 Use monotonic timestamps at the client boundary. Receipts contain release/source
 identity, pseudonymous test-target identity, OS/architecture, frontend version,
