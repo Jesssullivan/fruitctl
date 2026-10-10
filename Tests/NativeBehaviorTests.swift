@@ -130,6 +130,158 @@ final class NativeBehaviorTests: XCTestCase {
         XCTAssertFalse(released)
     }
 
+    func testTextLineEndingsAndTabEmitCompleteKeyPairs() async throws {
+        var events: [String] = []
+        let input = InputController(vnc: VNCBridge(config: .init()), keySender: { key, down, _, release in
+            events.append("\(key):\(down):\(release)")
+        }, sleeper: { _ in })
+        try await input.typeText("a\nb\rc\r\nd\te")
+        let expected: [UInt32] = [97, 0xFF0D, 98, 0xFF0D, 99, 0xFF0D, 100, 0xFF09, 101]
+        XCTAssertEqual(events, expected.flatMap { ["\($0):true:false", "\($0):false:false"] })
+        XCTAssertTrue(input.heldKeys.isEmpty)
+    }
+
+    func testTextPreservesDecomposedJoinerSelectorAndSupplementaryScalarOrder() async throws {
+        var events: [String] = []
+        let input = InputController(vnc: VNCBridge(config: .init()), keySender: { key, down, _, release in
+            events.append("\(key):\(down):\(release)")
+        }, sleeper: { _ in })
+        // Explicit scalar spelling avoids Swift Character grouping or Unicode
+        // canonical equivalence hiding lost combining marks and joiners.
+        try await input.typeText("\u{00E9} e\u{0301}\u{1F469}\u{1F3FD}\u{200D}\u{1F4BB}\u{2764}\u{FE0F}\u{1F1FA}\u{1F1F3}")
+        let expected: [UInt32] = [0xE9, 0x20, 0x65, 0x01000301, 0x0101F469,
+            0x0101F3FD, 0x0100200D, 0x0101F4BB, 0x01002764, 0x0100FE0F,
+            0x0101F1FA, 0x0101F1F3]
+        XCTAssertEqual(events, expected.flatMap { ["\($0):true:false", "\($0):false:false"] })
+        XCTAssertTrue(input.heldKeys.isEmpty)
+        // These are exact protocol symbols; no target or keyboard layout is connected.
+    }
+
+    func testUnsupportedTextControlAfterValidPrefixRejectsBeforeAnyEmitterOrPause() async throws {
+        var calls: [String] = []
+        let input = InputController(vnc: VNCBridge(config: .init()), pointerSender: { _, _, _, _, _ in
+            calls.append("pointer")
+        }, keySender: { _, _, _, _ in
+            calls.append("key")
+        }, sleeper: { _ in calls.append("pause") })
+        let unsupported = Array(UInt32(0)...UInt32(0x1F)) + Array(UInt32(0x7F)...UInt32(0x9F))
+        for code in unsupported where code != 0x09 && code != 0x0A && code != 0x0D {
+            let suffix = String(try XCTUnwrap(Unicode.Scalar(code)))
+            do {
+                try await input.typeText("A\u{00E9}e\u{0301}\u{1F469}\u{200D}\u{1F4BB}" + suffix)
+                XCTFail("unsupported control \(code) succeeded")
+            } catch TextInputPlanError.unsupportedControl(let rejected) {
+                XCTAssertEqual(rejected, code)
+            } catch { XCTFail("wrong rejection for \(code): \(error)") }
+            XCTAssertTrue(calls.isEmpty, "control \(code) caused side effects")
+            XCTAssertTrue(input.heldKeys.isEmpty)
+        }
+    }
+
+    func testInvalidPlanDoesNotReleaseOrAlterAlreadyHeldInput() async throws {
+        var events: [String] = []
+        let input = InputController(vnc: VNCBridge(config: .init()), keySender: { key, down, _, release in
+            events.append("\(key):\(down):\(release)")
+        }, sleeper: { _ in })
+        try await input.emitKey(key: KeySym.ctrlLeft, down: true)
+        events.removeAll()
+        do { try await input.typeText("valid prefix\u{0000}"); XCTFail("invalid text succeeded") }
+        catch TextInputPlanError.unsupportedControl(0) {}
+        catch { XCTFail("unexpected error: \(error)") }
+        XCTAssertTrue(events.isEmpty)
+        XCTAssertEqual(input.heldKeys, [KeySym.ctrlLeft])
+        // Cleanup remains an explicit caller decision for a refused plan.
+        let released = await input.releaseHeldInput()
+        XCTAssertTrue(released)
+        XCTAssertEqual(events, ["65507:false:true"])
+    }
+
+    func testTextByteLimitRejectsDirectCallBeforeAnyEmitter() async throws {
+        let maximum = String(repeating: "a", count: TextInputPlan.maximumUTF8Bytes)
+        let exactPlan = try TextInputPlan(maximum, timing: .init())
+        XCTAssertEqual(exactPlan.strokes.count, TextInputPlan.maximumUTF8Bytes)
+        var calls: [String] = []
+        let input = InputController(vnc: VNCBridge(config: .init()), keySender: { _, _, _, _ in
+            calls.append("key")
+        }, sleeper: { _ in calls.append("pause") })
+        // A multibyte suffix proves the bound measures UTF-8 bytes, not Characters.
+        do { try await input.typeText(maximum + "\u{00E9}"); XCTFail("oversize text succeeded") }
+        catch TextInputPlanError.textTooLarge {}
+        catch { XCTFail("unexpected error: \(error)") }
+        XCTAssertTrue(calls.isEmpty)
+        XCTAssertTrue(input.heldKeys.isEmpty)
+    }
+
+    func testTextUncertainWriteReleasesHeldScalarAndDoesNotReplayOrReportSuccess() async {
+        var events: [String] = []
+        let input = InputController(vnc: VNCBridge(config: .init()), keySender: { key, down, _, release in
+            events.append("\(key):\(down):\(release)")
+            if key == 0xE9 && down { throw VNCError.sendFailed("synthetic uncertain text write") }
+        }, sleeper: { _ in })
+        do { try await input.typeText("A\u{00E9}x"); XCTFail("partial text returned success") }
+        catch VNCError.sendFailed(let reason) { XCTAssertEqual(reason, "synthetic uncertain text write") }
+        catch { XCTFail("unexpected error: \(error)") }
+        XCTAssertEqual(events, ["65505:true:false", "65:true:false", "65:false:false", "65505:false:false",
+            "233:true:false", "233:false:true"])
+        XCTAssertTrue(input.heldKeys.isEmpty)
+    }
+
+    func testTextCancellationDuringShiftReleasesOnlyTheHeldModifier() async {
+        var events: [String] = []
+        let input = InputController(vnc: VNCBridge(config: .init()), keySender: { key, down, _, release in
+            events.append("\(key):\(down):\(release)")
+        }, sleeper: { _ in throw CancellationError() })
+        do { try await input.typeText("Ab"); XCTFail("cancelled text succeeded") }
+        catch is CancellationError {}
+        catch { XCTFail("unexpected error: \(error)") }
+        XCTAssertEqual(events, ["65505:true:false", "65505:false:true"])
+        XCTAssertTrue(input.heldKeys.isEmpty)
+    }
+
+    func testTextFailedReleaseRetainsHeldStateAndReportsFailure() async {
+        var events: [String] = []
+        let input = InputController(vnc: VNCBridge(config: .init()), keySender: { key, down, _, release in
+            events.append("\(key):\(down):\(release)")
+            throw VNCError.sendFailed("synthetic disconnected text channel")
+        }, sleeper: { _ in })
+        do { try await input.typeText("ab"); XCTFail("unconfirmed release returned success") }
+        catch VNCError.sendFailed(let reason) {
+            XCTAssertEqual(reason, "Input failed and held-state release could not be confirmed")
+        } catch { XCTFail("unexpected error: \(error)") }
+        XCTAssertEqual(events, ["97:true:false", "97:false:true"])
+        XCTAssertEqual(input.heldKeys, [97])
+    }
+
+    func testTextPlanKeepsItsCapturedTimingForTheWholeSequence() async throws {
+        var timing = InputTiming()
+        timing.typeKeyUs = 11; timing.typeInterKeyUs = 13; timing.typeShiftUs = 17
+        var pauses: [UInt32] = []
+        var input: InputController!
+        input = InputController(vnc: VNCBridge(config: .init()), timing: timing,
+            keySender: { _, _, _, _ in }, sleeper: { duration in
+                pauses.append(duration)
+                input.timing.typeKeyUs = 101
+                input.timing.typeInterKeyUs = 103
+                input.timing.typeShiftUs = 107
+            })
+        try await input.typeText("Ab")
+        XCTAssertEqual(pauses, [17, 11, 17, 13, 11, 13])
+        XCTAssertTrue(input.heldKeys.isEmpty)
+    }
+
+    func testNamedSingleKeyCannotSilentlyTruncateUnicodeOrAdmitAnUnsupportedControl() throws {
+        XCTAssertNil(namedKeyToKeysym("e\u{0301}"))
+        XCTAssertNil(namedKeyToKeysym("\u{1F469}\u{200D}\u{1F4BB}"))
+        XCTAssertNil(namedKeyToKeysym("\u{0085}"))
+        XCTAssertNil(namedKeyToKeysym("\u{0000}"))
+        XCTAssertEqual(namedKeyToKeysym("\u{00E9}"), 0xE9)
+        let scaling = DisplayScaling(nativeWidth: 1920, nativeHeight: 1080)
+        for key in ["e\u{0301}", "\u{1F469}\u{200D}\u{1F4BB}", "\u{0085}"] {
+            let params = try XCTUnwrap(String(data: JSONEncoder().encode(["key": key]), encoding: .utf8))
+            XCTAssertThrowsError(try request("key_tap", params).validate(scaling: scaling))
+        }
+    }
+
     func testExternalObservationRequiresCompleteBindingAndExactRoundedScale() throws {
         let scaling = DisplayScaling(nativeWidth: 1920, nativeHeight: 1080)
         let valid = "{\"nativeWidth\":1920,\"nativeHeight\":1081,\"scaledWidth\":1280,\"scaledHeight\":721,\"connectionGeneration\":2,\"allocation\":3}"
@@ -262,6 +414,30 @@ final class NativeBehaviorTests: XCTestCase {
         input.context = binding.context // Even a fresh observation cannot clear the terminal permit.
         do { try await input.keyTap(98); XCTFail("successor succeeded") } catch {}
         XCTAssertEqual(events, ["97:true:false", "97:false:true"])
+    }
+
+    func testChangedTextObservationOnlyReleasesIntoTheOriginalContext() async throws {
+        let binding = permitBinding()
+        let changed = VNCInputContext(width: 1920, height: 1081, connectionGeneration: 3, allocation: 5)
+        let permit = NativeInputPermit(now: { 0 }, watchdogEnabled: false)
+        try permit.qualifyObservation(context: binding.context,
+            scaledWidth: binding.scaledWidth, scaledHeight: binding.scaledHeight)
+        let challenge = try permit.begin(binding: binding, sequence: 1)
+        _ = try permit.grant(binding: binding, sequence: 1, challenge: challenge.challenge,
+                             leaseRemainingMilliseconds: 3_000)
+        var events: [String] = []
+        var input: InputController!
+        input = InputController(vnc: VNCBridge(config: .init()), keySender: { key, down, context, release in
+            XCTAssertEqual(context, binding.context)
+            events.append("\(key):\(down):\(release)")
+        }, sleeper: { _ in input.context = changed }, inputPermit: permit)
+        input.context = binding.context
+        do { try await input.typeText("ab"); XCTFail("changed observation returned success") }
+        catch VNCError.sendFailed(let reason) { XCTAssertTrue(reason.contains("Native input permit"), reason) }
+        catch { XCTFail("unexpected error: \(error)") }
+        XCTAssertEqual(events, ["97:true:false", "97:false:true"])
+        XCTAssertTrue(input.heldKeys.isEmpty)
+        XCTAssertThrowsError(try permit.check(context: binding.context))
     }
 
     func testActualNativeQueueChecksPointerKeyAndClipboardPermits() async throws {

@@ -2,34 +2,34 @@ import Foundation
 
 extension InputController {
 
-    /// Type text character by character. Fixed timing, zero randomness.
-    /// Per char: [shift down 10ms] → key down 20ms → key up → [10ms shift up] → 20ms inter-key.
+    /// Validate and plan the whole text before input or failure cleanup can
+    /// mutate held state. Execution keeps cancellation/observation checks on
+    /// every key and pause, and never substitutes a clipboard operation.
     func typeText(_ text: String) async throws {
+        let plan = try TextInputPlan(text, timing: timing)
         try await releasingOnFailure {
-            for ch in text {
-                let (keysym, needsShift) = charToKeysym(ch)
-                guard keysym != 0 else { continue }
-
-                if needsShift {
+            try checkInputAdmission()
+            for stroke in plan.strokes {
+                if stroke.shift {
                     try await emitKey(key: KeySym.shiftLeft, down: true)
-                    try await pause(timing.typeShiftUs)
+                    try await pause(plan.timing.typeShiftUs)
                 }
 
-                try await emitKey(key: keysym, down: true)
-                try await pause(timing.typeKeyUs)
-                try await emitKey(key: keysym, down: false)
+                try await emitKey(key: stroke.keysym, down: true)
+                try await pause(plan.timing.typeKeyUs)
+                try await emitKey(key: stroke.keysym, down: false)
 
-                if needsShift {
-                    try await pause(timing.typeShiftUs)
+                if stroke.shift {
+                    try await pause(plan.timing.typeShiftUs)
                     try await emitKey(key: KeySym.shiftLeft, down: false)
                 }
 
-                try await pause(timing.typeInterKeyUs)
+                try await pause(plan.timing.typeInterKeyUs)
             }
         }
     }
 
-    /// Paste via VNC clipboard + combo. Always preferred over typeText.
+    /// Explicit VNC clipboard + combo operation; typing never selects it automatically.
     /// clientCutText → 30ms → cmd+v (macOS) or ctrl+v (other).
     func pasteText(_ text: String) async throws {
         try checkInputAdmission()
