@@ -5,7 +5,13 @@ import { EventEmitter } from 'node:events';
 import { randomUUID } from 'node:crypto';
 import { PassThrough, Writable } from 'node:stream';
 import { deflateSync } from 'node:zlib';
-import { createHostHelperExecutor } from '../lib/broker/host-helper.mjs';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { createHostHelperExecutor, HostHelperExecutor, hostHelperRefusalMessage } from '../lib/broker/host-helper.mjs';
+import { createBroker, TargetLane } from '../lib/broker/server.mjs';
+import { BrokerExecutor } from '../lib/broker/client.mjs';
+import { McpSession } from '../lib/mcp/server.js';
 import { ResponseBudget } from '../lib/mcp/protocol.js';
 
 function crc32(bytes) {
@@ -122,6 +128,248 @@ async function fixture({ config = configuration(), nativeOptions, helperOptions,
     ...(responseBudgetFactory ? { responseBudgetFactory } : {}) });
   return { executor, vnc, host };
 }
+
+const captureDiagnostic = (overrides = {}) => ({ schema: 'fruitctl.host-capture-error.v1',
+  phase: 'capture_image', apple_domain: 'SCStreamErrorDomain', apple_code: -1, ...overrides });
+const refused = (request, message = 'capture_failed', data) => ({ id: request.id, success: false,
+  error: { code: -32000, message, ...(data === undefined ? {} : { data }) } });
+
+test('only locally sanitized refusals supply diagnostic causes, independent of mutable messages', async () => {
+  const { executor } = await fixture({ helperOptions: { alter(request, response) {
+    return request.action === 'capture' ? refused(request, 'capture_failed', captureDiagnostic()) : response;
+  } } });
+  try {
+    await assert.rejects(executor.execute([{ action: 'screenshot' }]), error => {
+      const validated = hostHelperRefusalMessage(error);
+      assert.equal(validated, error.message);
+      assert.ok(validated.includes('phase=capture_image; apple_domain=SCStreamErrorDomain; apple_code=-1'));
+      const forged = Object.assign(new Error(validated), error);
+      assert.equal(hostHelperRefusalMessage(forged), undefined);
+      error.message = '/synthetic/private/mutated-description';
+      assert.equal(hostHelperRefusalMessage(error), validated);
+      return true;
+    });
+  } finally { await executor.close(); }
+});
+
+test('unconfirmed retirement never appends an untrusted executor message', async () => {
+  const marker = '/synthetic/private/untrusted-executor-description';
+  const forged = new Error('Host helper refused request: capture_failed; ' + marker);
+  const executor = native({ run: async () => { throw forged; }, releaseError: new Error(marker) });
+  const lane = new TargetLane({}, async () => executor);
+  try {
+    await assert.rejects(lane.execute([{ action: 'wait' }]), error => {
+      assert.equal(error.code, 'release_unconfirmed');
+      assert.equal(error.message, 'Target input release is unconfirmed; reconcile the target before restarting its broker');
+      assert.equal(error.message.includes(marker), false);
+      assert.equal(error, lane.cleanupFailure);
+      return true;
+    });
+    await assert.rejects(lane.execute([{ action: 'key_tap', key: 'tab' }]), error => error === lane.cleanupFailure);
+    assert.deepEqual(executor.calls.map(action => action.action), ['wait']);
+  } finally { await assert.rejects(lane.close(), error => error.code === 'release_unconfirmed'); }
+});
+
+test('diagnosed begin and capture refusals retain local correlation and prevent successor input', async t => {
+  for (const action of ['begin_activity', 'capture']) {
+    await t.test(action, async () => {
+      const { executor, vnc, host } = await fixture({ helperOptions: { alter(request, response) {
+        return request.action === action ? refused(request, 'capture_failed', captureDiagnostic()) : response;
+      } } });
+      try {
+        let failure;
+        await assert.rejects(executor.execute([{ action: 'screenshot' }, { action: 'key_tap', key: 'tab' }]), error => {
+          failure = error;
+          const id = host.requests.find(request => request.action === action).id;
+          assert.equal(error.message, `Host helper refused request: capture_failed; phase=capture_image; ` +
+            `apple_domain=SCStreamErrorDomain; apple_code=-1; request=${id}`);
+          assert.ok(error.message.length <= 320);
+          assert.deepEqual(error.responses, []);
+          return true;
+        });
+        await assert.rejects(executor.execute([{ action: 'key_tap', key: 'tab' }]), error => error === failure);
+        await Promise.all([executor.nativeClosing, executor.helperClosing]);
+        assert.deepEqual(vnc.calls, []);
+        assert.equal(vnc.closes.length, 1);
+        assert.deepEqual(host.child.kills, ['SIGTERM']);
+        assert.equal(host.requests.filter(request => request.action === 'begin_activity').length, 1);
+        assert.equal(host.requests.filter(request => request.action === 'capture').length, action === 'capture' ? 1 : 0);
+      } finally { await executor.close(); }
+    });
+  }
+});
+
+test('recognized Apple diagnostics retain both phases, domains and signed code boundaries', async t => {
+  const domains = ['SCStreamErrorDomain', 'NSCocoaErrorDomain', 'NSPOSIXErrorDomain', 'NSOSStatusErrorDomain'];
+  const cases = domains.map((apple_domain, index) => captureDiagnostic({ apple_domain,
+    apple_code: [-2147483648, 0, 2147483647, -1][index], phase: index % 2 ? 'shareable_content' : 'capture_image' }));
+  cases.push({ schema: 'fruitctl.host-capture-error.v1', phase: 'capture_image' });
+  cases.push(captureDiagnostic({ apple_code: undefined }));
+  for (const [index, data] of cases.entries()) {
+    await t.test(String(index), async () => {
+      const { executor, host } = await fixture({ helperOptions: { alter(request, response) {
+        return request.action === 'begin_activity' ? refused(request, 'capture_failed', data) : response;
+      } } });
+      try {
+        await assert.rejects(executor.execute([{ action: 'screenshot' }]), error => {
+          const id = host.requests.find(request => request.action === 'begin_activity').id;
+          const parts = ['Host helper refused request: capture_failed', `phase=${data.phase}`];
+          if (data.apple_domain !== undefined) parts.push(`apple_domain=${data.apple_domain}`);
+          if (data.apple_code !== undefined) parts.push(`apple_code=${data.apple_code}`);
+          parts.push(`request=${id}`);
+          assert.equal(error.message, parts.join('; '));
+          assert.ok(error.message.length <= 320);
+          return true;
+        });
+      } finally { await executor.close(); }
+    });
+  }
+});
+
+test('legacy capture reasons survive without forwarding arbitrary remote error text', async t => {
+  const reasons = ['capture_not_enabled', 'screen_capture_permission_required', 'configured_display_unavailable',
+    'own_application_exclusion_unavailable', 'incomplete_capture', 'capture_failed', 'image_encoding_failed'];
+  for (const reason of [...reasons, '/synthetic/private/remote-description', undefined]) {
+    await t.test(String(reason), async () => {
+      const { executor, host } = await fixture({ helperOptions: { alter(request, response) {
+        if (request.action !== 'begin_activity') return response;
+        return reason === undefined ? { id: request.id, success: false, error: {} } : refused(request, reason);
+      } } });
+      try {
+        await assert.rejects(executor.execute([{ action: 'screenshot' }]), error => {
+          const id = host.requests.find(request => request.action === 'begin_activity').id;
+          assert.equal(error.message, reasons.includes(reason)
+            ? `Host helper refused request: ${reason}; request=${id}` : 'Host helper refused request');
+          return true;
+        });
+      } finally { await executor.close(); }
+    });
+  }
+});
+
+test('malformed optional diagnostics never reflect descriptions, paths or arbitrary fields', async t => {
+  const marker = '/synthetic/private/diagnostic-marker';
+  const cases = [null, [], marker,
+    captureDiagnostic({ schema: marker }), captureDiagnostic({ phase: marker }),
+    captureDiagnostic({ apple_domain: marker }), captureDiagnostic({ apple_code: marker }),
+    captureDiagnostic({ apple_code: 2147483648 }), captureDiagnostic({ apple_code: -2147483649 }),
+    captureDiagnostic({ apple_code: 1.25 }), captureDiagnostic({ apple_code: null }),
+    captureDiagnostic({ localizedDescription: marker }), captureDiagnostic({ userInfo: { private: marker } }),
+    { schema: 'fruitctl.host-capture-error.v1', phase: 'capture_image', apple_code: 1 },
+    captureDiagnostic({ phase: marker.repeat(2048) }),
+  ];
+  for (const [index, data] of cases.entries()) {
+    await t.test(String(index), async () => {
+      const { executor, vnc, host } = await fixture({ helperOptions: { alter(request, response) {
+        return request.action === 'begin_activity' ? refused(request, 'capture_failed', data) : response;
+      } } });
+      try {
+        await assert.rejects(executor.execute([{ action: 'screenshot' }, { action: 'key_tap', key: 'tab' }]), error => {
+          const id = host.requests.find(request => request.action === 'begin_activity').id;
+          assert.equal(error.message, `Host helper refused request: capture_failed; request=${id}`);
+          assert.ok(error.message.length <= 320);
+          assert.equal(error.message.includes(marker), false);
+          return true;
+        });
+        assert.deepEqual(vnc.calls, []);
+      } finally { await executor.close(); }
+    });
+  }
+});
+
+test('a mismatched refusal id cannot provide correlation or authorize later input', async () => {
+  const { executor, vnc } = await fixture({ helperOptions: { alter(request, response) {
+    return request.action === 'begin_activity'
+      ? { ...refused(request, 'capture_failed', captureDiagnostic()), id: '/synthetic/private/forged-id' } : response;
+  } } });
+  try {
+    await assert.rejects(executor.execute([{ action: 'screenshot' }]), /Invalid host-helper protocol/);
+    assert.deepEqual(vnc.calls, []);
+  } finally { await executor.close(); }
+});
+
+test('diagnosed startup refusal survives the offline broker and MCP after confirmed owned close', async t => {
+  for (const kind of ['command', 'queue']) {
+    await t.test(kind, async t => {
+      const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'fruitctl-host-startup-diagnostic-'));
+      await fs.chmod(directory, 0o700);
+      t.after(() => fs.rm(directory, { recursive: true, force: true }));
+      const vnc = native();
+      // Inject a startup protocol refusal. This tests the existing wire and
+      // startup cleanup path, not a real Host health or capture qualification.
+      const host = helper({ alter(request) {
+        return refused(request, 'capture_failed', captureDiagnostic());
+      } });
+      const socketPath = path.join(directory, 'broker.sock');
+      const broker = await createBroker({ socketPath, config: { targets: { desktop: {} } },
+        factory: async (_, { onExecutor }) => {
+          const executor = new HostHelperExecutor({ nativeExecutor: vnc, hostHelper: configuration(),
+            spawnImpl: host.spawnImpl });
+          onExecutor(executor);
+          try { return await executor.ready(); }
+          catch (error) { await executor.close(); throw error; }
+        } });
+      t.after(() => broker.close());
+      const client = new BrokerExecutor({ socketPath, target: 'desktop' });
+      t.after(() => client.close());
+      await client.opened;
+      const session = new McpSession(client);
+      const result = kind === 'command' ? await session.command({ action: 'screenshot' }) :
+        await session.queue({ actions: [{ action: 'screenshot' }, { action: 'key_tap', key: 'tab' }] });
+      const id = host.requests[0].id;
+      const message = `Host helper refused request: capture_failed; phase=capture_image; ` +
+        `apple_domain=SCStreamErrorDomain; apple_code=-1; request=${id}`;
+      assert.equal(result.isError, true);
+      assert.equal(result.content[0].text, kind === 'command' ? `Error: ${message}` :
+        `[1] screenshot: ERROR — ${message}`);
+      if (kind === 'queue') assert.deepEqual(result.structuredContent, { completed: 0, failedIndex: 1 });
+      assert.deepEqual(vnc.calls, []);
+      assert.deepEqual(host.requests.map(request => request.action), ['health']);
+      assert.deepEqual(host.child.kills, ['SIGTERM']);
+    });
+  }
+});
+
+test('broker keeps release-unconfirmed and sanitized capture cause with partial progress and revoked input', async t => {
+  for (const kind of ['command', 'queue']) {
+    await t.test(kind, async t => {
+      const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'fruitctl-host-diagnostic-'));
+      await fs.chmod(directory, 0o700);
+      t.after(() => fs.rm(directory, { recursive: true, force: true }));
+      const { executor, vnc, host } = await fixture({ helperOptions: { alter(request, response) {
+        return request.action === 'capture' ? refused(request, 'capture_failed', captureDiagnostic()) : response;
+      } } });
+      const socketPath = path.join(directory, 'broker.sock');
+      const broker = await createBroker({ socketPath, config: { targets: { desktop: {} } },
+        factory: async () => executor });
+      t.after(() => assert.rejects(broker.close(), error => error.code === 'release_unconfirmed'));
+      const client = new BrokerExecutor({ socketPath, target: 'desktop' });
+      t.after(() => client.close());
+      await client.opened;
+      const session = new McpSession(client);
+      const result = kind === 'command' ? await session.command({ action: 'screenshot' }) :
+        await session.queue({ actions: [{ action: 'wait' }, { action: 'screenshot' }, { action: 'key_tap', key: 'tab' }] });
+      // An acquired helper that fails cannot certify a clean activity release.
+      // Its bounded cause accompanies this error; the sticky lane stays revoked.
+      const safetyMessage = 'Target input release is unconfirmed; reconcile the target before restarting its broker';
+      const id = host.requests.find(request => request.action === 'capture').id;
+      const message = `${safetyMessage}; cause=Host helper refused request: capture_failed; ` +
+        `phase=capture_image; apple_domain=SCStreamErrorDomain; apple_code=-1; request=${id}`;
+      assert.equal(result.isError, true);
+      assert.equal(result.content[0].text, kind === 'command' ? `Error: ${message}` :
+        `[1] wait: input acknowledged\n[2] screenshot: ERROR — ${message}`);
+      if (kind === 'queue') assert.deepEqual(result.structuredContent, { completed: 1, failedIndex: 2 });
+      assert.deepEqual(vnc.calls.map(action => action.action), kind === 'command' ? [] : ['wait']);
+      assert.equal(host.requests.filter(request => request.action === 'capture').length, 1);
+      await assert.rejects(client.execute([{ action: 'key_tap', key: 'tab' }]), error => {
+        assert.equal(error.code, 'release_unconfirmed');
+        assert.equal(error.message, safetyMessage);
+        return true;
+      });
+      assert.deepEqual(vnc.calls.map(action => action.action), kind === 'command' ? [] : ['wait']);
+    });
+  }
+});
 
 test('configured helper screenshots use owned SCK PNG and retain ownership indication, never raw VNC', async () => {
   const { executor, vnc, host } = await fixture();

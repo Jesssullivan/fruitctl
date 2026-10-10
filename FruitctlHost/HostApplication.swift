@@ -559,6 +559,8 @@ final class HostApplicationController: NSObject, NSApplicationDelegate, NSMenuDe
             }
         } catch let error as HostLeaseError {
             return .failure(id: request.id, message: error.rawValue)
+        } catch let error as HostCaptureFailure {
+            return .failure(id: request.id, message: error.reason.rawValue, data: error.diagnostic)
         } catch let error as HostCaptureError {
             return .failure(id: request.id, message: error.rawValue)
         } catch let error as HostIdleReferenceError {

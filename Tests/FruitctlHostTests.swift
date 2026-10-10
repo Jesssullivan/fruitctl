@@ -401,6 +401,89 @@ final class FruitctlHostTests: XCTestCase {
         XCTAssertEqual(object?["success"] as? Bool, true)
     }
 
+    func testCaptureFailureSerializesOnlyRecognizedAppleValues() throws {
+        let screenCaptureDomain = "synthetic.screen-capture-domain"
+        let domains: [(String, HostAppleErrorDomain)] = [
+            (screenCaptureDomain, .screenCaptureKit), (NSCocoaErrorDomain, .cocoa),
+            (NSPOSIXErrorDomain, .posix), (NSOSStatusErrorDomain, .osStatus)
+        ]
+        let privateMarker = "private-diagnostic-marker"
+        for (domain, symbol) in domains {
+            for code in [Int(Int32.min), -1, 0, Int(Int32.max)] {
+                for phase in [HostCapturePhase.shareableContent, .captureImage] {
+                    let original = NSError(domain: domain, code: code, userInfo: [
+                        NSLocalizedDescriptionKey: privateMarker,
+                        NSLocalizedFailureReasonErrorKey: "/synthetic/private/" + privateMarker,
+                        NSURLErrorKey: URL(fileURLWithPath: "/synthetic/private/" + privateMarker),
+                        NSUnderlyingErrorKey: NSError(domain: privateMarker, code: 12)
+                    ])
+                    let failure = try XCTUnwrap(HostCaptureFailure.preserving(original, phase: phase,
+                        screenCaptureErrorDomain: screenCaptureDomain) as? HostCaptureFailure)
+                    XCTAssertEqual(failure.reason, .captureFailed)
+                    XCTAssertEqual(failure.diagnostic.appleDomain, symbol)
+                    XCTAssertEqual(failure.diagnostic.appleCode, Int32(exactly: code))
+                    let line = try HostResponse.failure(id: .string("request-7"),
+                        message: failure.reason.rawValue, data: failure.diagnostic).line()
+                    let text = try XCTUnwrap(String(data: line, encoding: .utf8))
+                    XCTAssertFalse(text.contains(privateMarker))
+                    XCTAssertFalse(text.contains("/synthetic/private/"))
+                    let reply = try XCTUnwrap(JSONSerialization.jsonObject(with: line) as? [String: Any])
+                    XCTAssertEqual(reply["id"] as? String, "request-7")
+                    XCTAssertEqual(reply["success"] as? Bool, false)
+                    let error = try XCTUnwrap(reply["error"] as? [String: Any])
+                    XCTAssertEqual(error["code"] as? Int, -32000)
+                    XCTAssertEqual(error["message"] as? String, "capture_failed")
+                    let diagnostic = try XCTUnwrap(error["data"] as? [String: Any])
+                    XCTAssertEqual(Set(diagnostic.keys), Set(["schema", "phase", "apple_domain", "apple_code"]))
+                    XCTAssertEqual(diagnostic["schema"] as? String, "fruitctl.host-capture-error.v1")
+                    XCTAssertEqual(diagnostic["phase"] as? String, phase.rawValue)
+                    XCTAssertEqual(diagnostic["apple_domain"] as? String, symbol.rawValue)
+                    XCTAssertEqual(diagnostic["apple_code"] as? Int, code)
+                }
+            }
+        }
+    }
+
+    func testUnknownAppleDomainsAndUnrepresentableCodesAreNotReflected() throws {
+        let marker = "/synthetic/private/untrusted-domain"
+        let diagnostic = HostCaptureDiagnostic(error: NSError(domain: marker, code: 17,
+            userInfo: [NSLocalizedDescriptionKey: marker]), phase: .captureImage,
+            screenCaptureErrorDomain: "synthetic.screen-capture-domain")
+        XCTAssertNil(diagnostic.appleDomain)
+        XCTAssertNil(diagnostic.appleCode)
+        let unknownLine = try HostResponse.failure(id: .integer(7), message: "capture_failed",
+                                                   data: diagnostic).line()
+        XCTAssertFalse(String(decoding: unknownLine, as: UTF8.self).contains(marker))
+        let reply = try XCTUnwrap(JSONSerialization.jsonObject(with: unknownLine) as? [String: Any])
+        XCTAssertEqual(reply["id"] as? Int, 7)
+        let error = try XCTUnwrap(reply["error"] as? [String: Any])
+        let data = try XCTUnwrap(error["data"] as? [String: Any])
+        XCTAssertEqual(Set(data.keys), Set(["schema", "phase"]))
+        for code in [Int(Int32.min) - 1, Int(Int32.max) + 1, Int.min, Int.max] {
+            let bounded = HostCaptureDiagnostic(error: NSError(domain: NSPOSIXErrorDomain, code: code),
+                phase: .shareableContent, screenCaptureErrorDomain: "synthetic.screen-capture-domain")
+            XCTAssertEqual(bounded.appleDomain, .posix)
+            XCTAssertNil(bounded.appleCode)
+        }
+    }
+
+    func testCaptureNormalizationPreservesExistingErrorsAndLegacyWireResponse() throws {
+        for original in [HostCaptureError.notEnabled, .permissionRequired, .displayUnavailable,
+                         .selfApplicationUnavailable, .incompleteImage, .captureFailed, .imageEncodingFailed] {
+            XCTAssertEqual(HostCaptureFailure.preserving(original, phase: .captureImage,
+                screenCaptureErrorDomain: "synthetic.screen-capture-domain") as? HostCaptureError, original)
+        }
+        let line = try HostResponse.failure(id: .string("request-7"), message: "capture_failed").line()
+        XCTAssertEqual(String(decoding: line, as: UTF8.self),
+            "{\"error\":{\"code\":-32000,\"message\":\"capture_failed\"},\"id\":\"request-7\",\"success\":false}\n")
+        let original = HostCaptureFailure(diagnostic: HostCaptureDiagnostic(
+            error: NSError(domain: NSPOSIXErrorDomain, code: 0), phase: .shareableContent,
+            screenCaptureErrorDomain: "synthetic.screen-capture-domain"))
+        let preserved = try XCTUnwrap(HostCaptureFailure.preserving(original, phase: .captureImage,
+            screenCaptureErrorDomain: "synthetic.screen-capture-domain") as? HostCaptureFailure)
+        XCTAssertEqual(preserved.diagnostic, original.diagnostic)
+    }
+
     func testFramingHandlesFragmentationAndRejectsOversizedOrUnterminatedInput() throws {
         var framer = HostLineFramer()
         XCTAssertEqual(try framer.append(Data("{\"action\":\"he".utf8)), [])
