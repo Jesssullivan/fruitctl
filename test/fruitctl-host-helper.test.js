@@ -378,6 +378,47 @@ test('idle heartbeat loss closes the owner and refuses future calls without reac
   assert.equal(host.requests.filter(request => request.action === 'capture').length, 1);
 });
 
+test('permit expiry between timer samples retires the owned executor without reacquisition',
+  { timeout: 2000 }, async t => {
+    const initialClock = 1000;
+    const until = initialClock + 1;
+    let crossExpiry = false;
+    const samples = [];
+    const { executor, vnc, host } = await fixture({ now() {
+      if (!crossExpiry) return initialClock;
+      const value = samples.length === 0 ? until - 0.1 : until;
+      samples.push(value);
+      return value;
+    } });
+    t.after(() => executor.close());
+    await executor.execute([{ action: 'screenshot' }]);
+    const ownedClosure = Promise.withResolvers();
+    const close = vnc.close.bind(vnc);
+    vnc.close = async options => {
+      await close(options);
+      ownedClosure.resolve();
+    };
+    executor.refreshPermit(until);
+    crossExpiry = true;
+    // The watchdog's first sample precedes expiry; refresh's next sample
+    // reaches that same cutoff. Wait for owned closure, not a timing margin.
+    await ownedClosure.promise;
+    assert.deepEqual(samples.slice(0, 2), [until - 0.1, until]);
+    const failure = executor.failed;
+    assert.match(failure.message, /Host-helper input permit expired/);
+    assert.equal(executor.permitUntil, until);
+    assert.deepEqual(vnc.closes, [{ graceful: false }]);
+    await assert.rejects(executor.execute([{ action: 'screenshot' }]), error => error === failure);
+    await executor.close();
+    assert.equal(executor.failed, failure);
+    assert.equal(vnc.closes.length, 1);
+    assert.deepEqual(vnc.calls, []);
+    assert.deepEqual(vnc.permitControls, []);
+    assert.equal(host.requests.filter(request => request.action === 'begin_activity').length, 1);
+    assert.equal(host.requests.filter(request => request.action === 'capture').length, 1);
+    assert.deepEqual(host.child.kills, ['SIGTERM']);
+  });
+
 test('human stop during a thinking gap revokes the owner before another input', async () => {
   let stopped = false;
   const { executor, vnc, host } = await fixture({ config: { ...configuration(), mapping },
