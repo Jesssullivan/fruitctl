@@ -258,6 +258,16 @@ for (const [name, content] of pageSources) {
 <footer><p>Public support: best effort. <a href="${repository}">Public source</a> · <a href="/agents.md">Agent instructions</a> · <a href="/adoption.json">Adoption manifest</a></p>
 <p>Source: <code>${revision}</code> (${sourceStatus}). Hosting: ${escape(deployment.status)}.</p></footer></body></html>\n`);
 }
+// A top-level 404 disables Pages' implicit homepage fallback for missing routes.
+// https://developers.cloudflare.com/pages/configuration/serving-pages/
+artifacts.set('404.html', `<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Page not found · Fruitctl</title><meta name="robots" content="noindex">
+<link rel="stylesheet" href="/site.css"></head>
+<body><main id="content"><h1>Page not found</h1>
+<p>This documentation route does not exist.</p>
+<p><a href="/">Fruitctl documentation</a> · <a href="/install/">Install guide</a></p>
+</main></body></html>\n`);
 artifacts.set('site.css', await source('docs/site/site.css'));
 artifacts.set('install-prompt.md', installPrompt);
 artifacts.set('agents.md', `# Fruitctl adoption\n\nCanonical repository: ${repository}\nCanonical documentation: ${origin}/\n\nUse adoption.json and versions.json to resolve a verified immutable release. Pin\nfull source SHAs and verify binary SHA-256 hashes. Preserve unrelated MCP/skill\nconfiguration. Use operator-selected profiles and controller-local credentials.\nCapture a complete fresh frame before input; stop without replay on uncertainty.\nQualify the installed adapter and capture mode. Enable the indicator only with\nrecorded exclusion proof. Public support is best effort.\n\nRead /install-prompt.md, /install/, /agents/, /junie/, /compatibility/, /architecture/, and /slo/.\n\n${sourceFallback}\nSource revision: ${revision}; source status: ${sourceStatus}.\nRelease status: ${adoption.releaseStatus}; hosting status: ${deployment.status}.\n`);

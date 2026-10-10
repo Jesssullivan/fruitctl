@@ -24,7 +24,9 @@ hashes so a deployment can be related to the reviewed artifact.
 - Allocated Pages project: `xoxd-ai-fruitctl`, production branch `main`.
 - Actual Pages hostname: `xoxd-ai-fruitctl.pages.dev`.
 - Domain association and Pages credential: separate Pages deployment surface.
-- Zone CNAME: the Tinyland owner overlay's `xoxd-ai-edge` stack.
+- Recorded zone owner: `xoxd-ai/tinyland-infra`, `tofu/stacks/xoxd-ai-edge`.
+  This is the owner reference in `deployment.json`; current edge-policy state
+  remains unverified.
 - Public audience: no login on the canonical documentation origin.
 
 The workflow builds and validates when GitHub can start its job. Deployment occurs only on `main` or a
@@ -59,6 +61,18 @@ convergence is a separate host observation.
 receipts separately. Update each claim only with its observed receipt.
 There is no
 Sites project or VNC network service on this route.
+
+A successful Pages upload does not prove anonymous client acceptance. In the
+2026-10-10 recheck, default curl received the committed `7fd39d5a` docs, while
+default Python urllib returned HTTP 403/error 1010 on adoption routes. That
+client-delivery blocker remains open for the recorded edge owner; no active
+policy or security-setting change is claimed here. See
+[Cloudflare error 1010](https://developers.cloudflare.com/support/troubleshooting/http-status-codes/cloudflare-1xxx-errors/error-1010/).
+
+The builder emits a root `404.html` to disable Pages' implicit homepage fallback
+for missing routes, following [Cloudflare's routing contract](https://developers.cloudflare.com/pages/configuration/serving-pages/).
+Verify an ordinary client's nonexistent route returns HTTP 404 after the reviewed
+deployment. Emitting the file is source intent, not canonical-route acceptance.
 
 ## Immutable adoption
 
