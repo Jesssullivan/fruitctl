@@ -167,6 +167,84 @@ its existing authentication. The [standalone plugin
 guide](https://junie.jetbrains.com/docs/junie-ide-plugin.html) documents this
 route; verify the MCP surface available in that exact build as described above.
 
+## Use IntelliJ through Gateway on a remote backend
+
+For a Gateway session, keep the qualification project, Fruitctl runtime and
+project configuration on the remote backend. Use a dedicated project owned by
+the operator and record its physical absolute path. Keep the existing backend
+sessions for other projects intact. Gateway and JetBrains Client provide the
+local editor; the remote IDE owns the backend project. See the [Remote
+Development overview](https://www.jetbrains.com/help/idea/remote-development-overview.html).
+
+Record the exact IntelliJ backend build, matching JetBrains Client build and
+AI Assistant/Junie versions selected for this project. In the remote project's
+Plugins settings, check each plugin's placement indicator: **On Host**, on the
+client, or both. Plugins are installed per remote project; installation in a
+local IDE or another backend project does not establish this project's setup.
+Follow [remote plugin installation](https://www.jetbrains.com/help/idea/work-inside-remote-project.html).
+Use the existing supported account, provider, selected model and tool-approval
+settings. The CLI startup-migration warning above is a separate finding; neither
+a CLI result nor another IDE's result qualifies this IntelliJ frontend.
+
+Run the project-scope bootstrap above from the backend's terminal in that
+physical project. For a verified installed CLI, this equivalent example uses
+only stock installer flags. Set the absolute paths to your owned backend
+project and storage root, and select an exact published runtime tag and an
+already-configured target profile:
+
+```sh
+FRUITCTL_BACKEND_CLI='/absolute/path/to/verified/bin/fruitctl'
+FRUITCTL_BACKEND_PROJECT='/absolute/path/to/owned/qualification-project'
+FRUITCTL_INSTALL_ROOT='/absolute/path/to/owned/fruitctl-root'
+FRUITCTL_RELEASE_TAG='v0.1.0-alpha.6'
+FRUITCTL_TARGET_PROFILE='desktop'
+
+"$FRUITCTL_BACKEND_CLI" install --agent junie --scope project \
+  --project-dir "$FRUITCTL_BACKEND_PROJECT" --install-root "$FRUITCTL_INSTALL_ROOT" \
+  --version "$FRUITCTL_RELEASE_TAG" --target "$FRUITCTL_TARGET_PROFILE" --dry-run &&
+"$FRUITCTL_BACKEND_CLI" install --agent junie --scope project \
+  --project-dir "$FRUITCTL_BACKEND_PROJECT" --install-root "$FRUITCTL_INSTALL_ROOT" \
+  --version "$FRUITCTL_RELEASE_TAG" --target "$FRUITCTL_TARGET_PROFILE"
+```
+
+An `installed` result records the backend project's `.junie/mcp/mcp.json` and
+`.junie/skills/fruitctl` link to the selected immutable runtime. A
+`declarative-required` result retains configuration for its owning surface to
+merge. Keep the project instructions and unrelated settings intact. Repeat the
+same project path and installation root for doctor, rollback and uninstall.
+`--install-root` selects runtime, state and launcher storage; it does not select
+the MCP execution host or broker/relay socket. The installed CLI resolves exact
+published releases; it has no offline-install flag. Private development bundles
+need their separately verified installer API inputs and must not be presented
+as published bootstrap tags.
+
+In this same remote project, follow **Connect IntelliJ AI Chat** above: paste
+`ideSettingsSnippet` into project-level AI Assistant MCP settings, retain its
+absolute backend command and configured target, set the working directory to
+the recorded backend project, and enable **Pass custom MCP servers**. Applying
+MCP settings starts the configured process. These steps follow [AI Assistant
+MCP settings](https://www.jetbrains.com/help/ai-assistant/mcp.html) and [Junie's
+external-tool settings](https://www.jetbrains.com/help/ai-assistant/junie-agent.html).
+The project JSON and IDE entry remain separate configuration surfaces.
+
+Before desktop qualification, observe the actual Fruitctl MCP child on the
+backend and record its executable, user, process identity, arguments and working
+directory. Confirm the intended owned socket and transport in that process's
+context without publishing credentials or inherited environments. A backend
+pathname in JSON alone does not establish where a subprocess runs. For a Linux
+backend, the configured SSH relay connects to the Darwin broker; the target's
+credentials stay on the Darwin controller.
+
+Verify that this exact Junie conversation loads the installed skill and its
+operation reference, then complete the real frontend journey below: complete
+fresh images, a reversible action and visible result, restoration, acknowledged
+release, reacquisition and closure of its owned processes. Record the model's
+interpretation of the returned images and the actual tool responses. Official
+[Junie skills documentation](https://junie.jetbrains.com/docs/agent-skills.html)
+describes IDE support; directory placement alone does not prove discovery.
+Keep synthetic frontend compatibility and physical desktop acceptance as
+separate results.
+
 ## Current preview and historical installation evidence
 
 Alpha.6 is the current pinned preview. It includes explicit storage roots and
