@@ -62,7 +62,10 @@ final class HostCapture {
                 try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
             }
         } catch let error as HostCaptureError { throw error }
-        catch { throw HostCaptureError.captureFailed }
+        catch {
+            throw HostCaptureFailure.preserving(error, phase: .shareableContent,
+                                              screenCaptureErrorDomain: SCStreamErrorDomain)
+        }
         guard let display = content.displays.first(where: { $0.displayID == displayID }),
               CGDisplayIsActive(displayID) != 0 else { throw HostCaptureError.displayUnavailable }
         guard let ownApp = content.applications.first(where: {
@@ -91,7 +94,10 @@ final class HostCapture {
                 try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: configuration)
             }
         } catch let error as HostCaptureError { throw error }
-        catch { throw HostCaptureError.captureFailed }
+        catch {
+            throw HostCaptureFailure.preserving(error, phase: .captureImage,
+                                              screenCaptureErrorDomain: SCStreamErrorDomain)
+        }
         guard image.width == width, image.height == height,
               CGDisplayBounds(displayID) == bounds,
               CGDisplayPixelsWide(displayID) == width, CGDisplayPixelsHigh(displayID) == height else {

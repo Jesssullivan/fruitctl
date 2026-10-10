@@ -83,14 +83,20 @@ struct HostResponse: Encodable {
     let result: [String: HostValue]?
     let error: RPCError?
 
-    struct RPCError: Encodable { let code: Int; let message: String }
+    struct RPCError: Encodable {
+        let code: Int
+        let message: String
+        let data: HostCaptureDiagnostic?
+    }
 
     static func ok(_ request: HostRequest, _ result: [String: HostValue]) -> HostResponse {
         HostResponse(id: request.id, success: true, result: result, error: nil)
     }
 
-    static func failure(id: HostValue?, code: Int = -32000, message: String) -> HostResponse {
-        HostResponse(id: id, success: false, result: nil, error: RPCError(code: code, message: message))
+    static func failure(id: HostValue?, code: Int = -32000, message: String,
+                        data: HostCaptureDiagnostic? = nil) -> HostResponse {
+        HostResponse(id: id, success: false, result: nil,
+                     error: RPCError(code: code, message: message, data: data))
     }
 
     func line() throws -> Data {

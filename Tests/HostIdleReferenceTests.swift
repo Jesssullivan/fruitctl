@@ -307,6 +307,32 @@ final class HostIdleReferenceTests: XCTestCase {
         XCTAssertEqual(fixture.requests, 0)
     }
 
+    func testFrameworkNSErrorDiagnosisDoesNotRequestConsentOrAcceptPixels() async throws {
+        let fixture = IdleReferenceFixture()
+        let marker = "private-framework-description"
+        do {
+            let _: String = try await fixture.permission.withCaptureAuthorization(enabled: { fixture.enabled }) {
+                throw NSError(domain: NSPOSIXErrorDomain, code: -1,
+                              userInfo: [NSLocalizedDescriptionKey: marker])
+            }
+            XCTFail("Framework refusal returned pixels")
+        } catch {
+            let failure = try XCTUnwrap(HostCaptureFailure.preserving(error, phase: .captureImage,
+                screenCaptureErrorDomain: "synthetic.screen-capture-domain") as? HostCaptureFailure)
+            XCTAssertEqual(failure.reason, .captureFailed)
+            XCTAssertEqual(failure.diagnostic.appleDomain, .posix)
+            XCTAssertEqual(failure.diagnostic.appleCode, -1)
+            let line = try HostResponse.failure(id: .string("offline-refusal"),
+                message: failure.reason.rawValue, data: failure.diagnostic).line()
+            XCTAssertFalse(String(decoding: line, as: UTF8.self).contains(marker))
+        }
+        XCTAssertTrue(fixture.granted)
+        XCTAssertTrue(fixture.enabled)
+        XCTAssertEqual(fixture.requests, 0)
+        XCTAssertEqual(fixture.captures, 0)
+        XCTAssertTrue(fixture.persisted.isEmpty)
+    }
+
     func testIdleExportConsumesArmAndNeverProducesInputReadiness() async throws {
         let fixture = IdleReferenceFixture()
         let id = try fixture.coordinator.armFromHuman()

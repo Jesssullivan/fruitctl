@@ -79,6 +79,15 @@ Input and capture failures are distinct. If an input's execution is uncertain,
 report that uncertainty and avoid replay. If capture fails after known input,
 report both facts and stop until a complete observation is available.
 
+In the experimental Host path, a capture refusal preserves its stable reason
+and, when available, the failed capture phase, recognized Apple error domain
+symbol and signed 32-bit code. A locally generated request ID correlates the refusal.
+Localized descriptions, paths, arbitrary domains and underlying errors are
+discarded. If retirement cannot confirm release, the failing request still
+reports `release_unconfirmed`, with the sanitized Host cause for diagnosis;
+the target stays revoked and requires operator reconciliation. These source
+diagnostics do not qualify capture or grant macOS permission.
+
 ## FuzzyBot spell
 
 Fruitctl Host remains an unqualified source prototype. Public runtime previews
