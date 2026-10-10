@@ -156,7 +156,8 @@ func namedKeyToKeysym(_ name: String) -> UInt32? {
     case "f12": return KeySym.f12
     default:
         if name.count == 1, let ch = name.first {
-            return charToKeysym(ch).keysym
+            let keysym = charToKeysym(ch).keysym
+            return keysym == 0 ? nil : keysym
         }
         return nil
     }
@@ -165,29 +166,91 @@ func namedKeyToKeysym(_ name: String) -> UInt32? {
 // MARK: - Character → KeySym Resolution
 
 func charToKeysym(_ ch: Character) -> (keysym: UInt32, shift: Bool) {
-    guard let scalar = ch.unicodeScalars.first else { return (0, false) }
+    // A named single key cannot silently truncate a composed character. Text
+    // typing plans every scalar separately, preserving its original ordering.
+    guard ch.unicodeScalars.count == 1, let scalar = ch.unicodeScalars.first else {
+        return (0, false)
+    }
+    return scalarToKeysym(scalar)
+}
+
+private func scalarToKeysym(_ scalar: Unicode.Scalar) -> (keysym: UInt32, shift: Bool) {
     let code = scalar.value
 
     if code >= 0x20 && code <= 0x7E {
-        if ch.isUppercase {
+        if code >= 0x41 && code <= 0x5A {
             return (code, true)
         }
-        let shiftedSymbols: [Character: UInt32] = [
-            "!": 0x21, "@": 0x40, "#": 0x23, "$": 0x24, "%": 0x25,
-            "^": 0x5E, "&": 0x26, "*": 0x2A, "(": 0x28, ")": 0x29,
-            "_": 0x5F, "+": 0x2B, "{": 0x7B, "}": 0x7D, "|": 0x7C,
-            ":": 0x3A, "\"": 0x22, "<": 0x3C, ">": 0x3E, "?": 0x3F,
-            "~": 0x7E,
-        ]
-        if let sym = shiftedSymbols[ch] {
-            return (sym, true)
+        if "!@#$%^&*()_+{}|:\"<>?~".unicodeScalars.contains(scalar) {
+            return (code, true)
         }
         return (code, false)
     }
 
-    if code > 0x7E {
-        return (0x01000000 + code, false)
-    }
-
+    // RFB uses the Latin-1 keysyms directly, and Unicode keysyms above Latin-1.
+    if code >= 0xA0 && code <= 0xFF { return (code, false) }
+    if code >= 0x100 { return (0x01000000 | code, false) }
     return (0, false)
+}
+
+struct TextInputStroke: Equatable {
+    let keysym: UInt32
+    let shift: Bool
+}
+
+enum TextInputPlanError: LocalizedError {
+    case textTooLarge
+    case unsupportedControl(UInt32)
+
+    var errorDescription: String? {
+        switch self {
+        case .textTooLarge: return "Text exceeds the 1048576-byte typing limit"
+        case .unsupportedControl(let code):
+            return "Unsupported typing control U+" + String(code, radix: 16).uppercased()
+        }
+    }
+}
+
+/// Compact complete event plan: each validated stroke determines its down/up,
+/// optional Shift down/up and pauses using this captured timing. No conversion,
+/// omission or fallback is allowed after execution starts. At most one stroke
+/// per input byte is retained; do not expand a megabyte into millions of events.
+/// LF, CR and CRLF represent one Return each; tab represents Tab. All other
+/// C0/C1 controls and DEL are refused before any event. Other Unicode scalars,
+/// including combining marks, selectors and joiners, retain their exact order;
+/// this plans RFB symbols, not a guarantee about a target's keyboard layout.
+struct TextInputPlan {
+    static let maximumUTF8Bytes = 1_048_576
+    let strokes: [TextInputStroke]
+    let timing: InputTiming
+
+    init(_ text: String, timing: InputTiming) throws {
+        guard text.utf8.count <= Self.maximumUTF8Bytes else {
+            throw TextInputPlanError.textTooLarge
+        }
+        var planned: [TextInputStroke] = []
+        planned.reserveCapacity(text.unicodeScalars.count)
+        var afterCR = false
+        for scalar in text.unicodeScalars {
+            let code = scalar.value
+            if code == 0x0A && afterCR {
+                afterCR = false
+                continue // CRLF is one line-ending, not two Return strokes.
+            }
+            afterCR = code == 0x0D
+            if code == 0x0A || code == 0x0D {
+                planned.append(.init(keysym: KeySym.returnKey, shift: false))
+            } else if code == 0x09 {
+                planned.append(.init(keysym: KeySym.tab, shift: false))
+            } else {
+                let symbol = scalarToKeysym(scalar)
+                guard symbol.keysym != 0 else {
+                    throw TextInputPlanError.unsupportedControl(code)
+                }
+                planned.append(.init(keysym: symbol.keysym, shift: symbol.shift))
+            }
+        }
+        strokes = planned
+        self.timing = timing
+    }
 }
