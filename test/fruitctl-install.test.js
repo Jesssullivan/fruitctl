@@ -1015,11 +1015,152 @@ test('install root contract: invalid UTF8 unrelated config bytes refuse before a
     assert.deepEqual(await fs.readFile(configPath), original);
     assert.equal(await exists(f.installRoot), false);
   }
-  // Legacy v1 planning retains its existing decoding contract. This does not
-  // qualify a lossy legacy install or rewrite the operator's original bytes.
-  assert.equal((await install({ ...f, installRoot: undefined, dryRun: true })).status, 'planned');
-  assert.deepEqual(await installationSnapshot(f), before);
-  assert.deepEqual(await fs.readFile(configPath), original);
+  for (const dryRun of [true, false]) {
+    await assert.rejects(install({ ...f, installRoot: undefined, dryRun, offline: release.offline }), /UTF.?8|encoding|encoded|decode/i);
+    assert.deepEqual(await installationSnapshot(f), before);
+    assert.deepEqual(await fs.readFile(configPath), original);
+  }
+});
+
+test('malformed UTF8 in unrelated TOML and JSONC refuses both storage layouts before mutation', async t => {
+  for (const explicit of [false, true]) for (const agent of ['codex', 'vscode']) await t.test(`${agent} ${explicit ? 'explicit' : 'default'}`, async t => {
+    const f = { ...await fixture(t), agent };
+    if (explicit) f.installRoot = path.join(f.root, 'invalid encoding root');
+    const adapter = resolveAdapter(f);
+    const original = Buffer.concat([Buffer.from(agent === 'codex' ? '# retained ' : '{\n // retained '), Buffer.from([0xff]), Buffer.from(agent === 'codex' ? '\n[mcp_servers.other]\ncommand = "operator"\n' : '\n "mcpServers":{"other":{"command":"operator"}}\n}\n')]);
+    await fs.mkdir(path.dirname(adapter.configPath), { recursive: true });
+    await fs.writeFile(adapter.configPath, original, { mode: 0o640 });
+    const before = { home: await treeSnapshot(f.home), project: await treeSnapshot(f.projectDir) };
+    let requests = 0;
+    for (const dryRun of [true, false]) {
+      await assert.rejects(install({ ...f, dryRun }, { fetchImpl: async () => { requests++; throw new Error('invalid encoding must not fetch'); } }), /UTF.?8/);
+      assert.deepEqual({ home: await treeSnapshot(f.home), project: await treeSnapshot(f.projectDir) }, before);
+      assert.deepEqual(await fs.readFile(adapter.configPath), original);
+      if (explicit) assert.equal(await exists(f.installRoot), false);
+    }
+    assert.equal(requests, 0);
+  });
+});
+
+test('default storage JSONC keeps BOM and Unicode byte exact through reinstall and uninstall', async t => {
+  const f = { ...await fixture(t), agent: 'vscode' };
+  const text = '\uFEFF{\n // retained Ω comment\n "mcpServers":{"other":{"command":"operator"}},\n "unrelated":"café 日本",\n}\n';
+  const original = await writeConfig(f, text), release = await releaseFixture(f);
+  const installed = await install({ ...f, offline: release.offline });
+  const configured = await fs.readFile(installed.configPath);
+  assert.deepEqual(configured.subarray(0, 3), Buffer.from([0xef, 0xbb, 0xbf]));
+  assert.equal(configured.toString('utf8').includes('café 日本'), true);
+  await install({ ...f, offline: release.offline });
+  assert.deepEqual(await fs.readFile(installed.configPath), configured);
+  assert.equal((await doctor(f)).status, 'configured');
+  assert.equal((await uninstall(f)).status, 'removed');
+  assert.deepEqual(await fs.readFile(original.file), Buffer.from(text));
+  assert.equal((await fs.stat(original.file)).mode & 0o777, original.mode);
+});
+
+test('default storage preserves config modes under umask 0077 across install, reinstall, upgrade, rollback and uninstall', async t => {
+  for (const scope of ['user', 'project']) await t.test(scope, async t => {
+    const f = { ...await fixture(t), scope }, original = await writeConfig(f);
+    const first = await releaseFixture(f), next = await releaseFixture(f, 'v0.1.0-alpha.2');
+    const parentUmask = process.umask(), source = new URL('../lib/install/index.mjs', import.meta.url).href;
+    const script = `
+      import assert from 'node:assert/strict';
+      import fs from 'node:fs/promises';
+      import { createHash } from 'node:crypto';
+      import { install, doctor, rollback, uninstall } from ${JSON.stringify(source)};
+      const options = ${JSON.stringify(f)}, firstOffline = ${JSON.stringify(first.offline)}, nextOffline = ${JSON.stringify(next.offline)};
+      const original = Buffer.from(${JSON.stringify(Buffer.from(original.text).toString('base64'))}, 'base64');
+      process.umask(0o077);
+      const stages = [];
+      const check = async (stage, installed, mode = 0o640) => {
+        assert.equal((await fs.stat(installed.configPath)).mode & 0o777, mode, stage + ' config mode');
+        const receipt = JSON.parse(await fs.readFile(installed.receiptPath, 'utf8'));
+        assert.equal(receipt.schema, 'fruitctl.install.v1');
+        assert.equal(receipt.config.baseMode, 0o640);
+        assert.equal(receipt.config.baseBackupSha256, createHash('sha256').update(original).digest('hex'));
+        for (const file of [installed.receiptPath, receipt.config.baseBackupPath, receipt.previousReceipt].filter(Boolean)) {
+          assert.equal((await fs.stat(file)).mode & 0o777, 0o600, stage + ' private receipt/backup mode');
+        }
+        assert.equal((await doctor(options)).status, 'configured'); stages.push(stage);
+      };
+      const installed = await install({ ...options, offline: firstOffline }); await check('install', installed);
+      await check('reinstall', await install({ ...options, offline: firstOffline }));
+      const upgraded = await install({ ...options, version: ${JSON.stringify(next.manifest.version)}, offline: nextOffline }); await check('upgrade', upgraded);
+      await fs.chmod(installed.configPath, 0o660);
+      assert.equal((await rollback(options)).to, options.version); await check('rollback', installed, 0o660);
+      assert.equal((await uninstall(options)).status, 'removed');
+      assert.deepEqual(await fs.readFile(installed.configPath), original);
+      assert.equal((await fs.stat(installed.configPath)).mode & 0o777, 0o640, 'uninstall restores original mode, not later mode');
+      assert.equal((await doctor(options)).status, 'not-installed'); stages.push('uninstall');
+      process.stdout.write(JSON.stringify({ stages, configMode: (await fs.stat(installed.configPath)).mode & 0o777 }));
+    `;
+    const { stdout } = await run(process.execPath, ['--input-type=module', '--eval', script], { cwd: f.projectDir, timeout: 20000, maxBuffer: 65536 });
+    assert.deepEqual(JSON.parse(stdout), { stages: ['install', 'reinstall', 'upgrade', 'rollback', 'uninstall'], configMode: 0o640 });
+    assert.equal(process.umask(), parentUmask, 'shared runner umask remains untouched');
+  });
+});
+
+test('older v1 receipts without original mode/hash keep recovery compatibility without inventing provenance', async t => {
+  const f = await fixture(t), original = await writeConfig(f), first = await releaseFixture(f), next = await releaseFixture(f, 'v0.1.0-alpha.2');
+  const installed = await install({ ...f, offline: first.offline });
+  const legacy = await readJson(installed.receiptPath);
+  delete legacy.config.baseMode; delete legacy.config.baseBackupSha256;
+  await fs.writeFile(installed.receiptPath, JSON.stringify(legacy));
+  assert.equal((await doctor(f)).status, 'configured');
+  await install({ ...f, version: next.manifest.version, offline: next.offline });
+  const upgraded = await readJson(installed.receiptPath);
+  assert.equal(Object.hasOwn(upgraded.config, 'baseMode'), false);
+  assert.equal(Object.hasOwn(upgraded.config, 'baseBackupSha256'), false);
+  assert.equal((await rollback(f)).to, f.version);
+  const rolledBack = await readJson(installed.receiptPath);
+  assert.equal(Object.hasOwn(rolledBack.config, 'baseMode'), false);
+  assert.equal(Object.hasOwn(rolledBack.config, 'baseBackupSha256'), false);
+  await fs.chmod(installed.configPath, 0o660);
+  assert.equal((await uninstall(f)).status, 'removed');
+  assert.deepEqual(await fs.readFile(original.file), Buffer.from(original.text));
+  assert.equal((await fs.stat(original.file)).mode & 0o777, 0o660, 'old receipt retains current-mode fallback rather than claiming an unknown original mode');
+});
+
+test('default storage original backup hash and mode are checked before recovery changes config', async t => {
+  for (const kind of ['bytes', 'mode', 'receipt']) await t.test(kind, async t => {
+    const f = await fixture(t), original = await writeConfig(f), release = await releaseFixture(f);
+    const installed = await install({ ...f, offline: release.offline }), receipt = await readJson(installed.receiptPath);
+    if (kind === 'bytes') await fs.writeFile(receipt.config.baseBackupPath, 'changed original backup\n');
+    if (kind === 'mode') await fs.chmod(receipt.config.baseBackupPath, 0o640);
+    if (kind === 'receipt') { delete receipt.config.baseMode; await fs.writeFile(installed.receiptPath, JSON.stringify(receipt)); }
+    const before = { home: await treeSnapshot(f.home), project: await treeSnapshot(f.projectDir) };
+    await assert.rejects(uninstall(f), /Original configuration backup|Invalid bound original/);
+    assert.deepEqual({ home: await treeSnapshot(f.home), project: await treeSnapshot(f.projectDir) }, before);
+    assert.equal((await fs.stat(original.file)).mode & 0o777, original.mode);
+  });
+});
+
+test('default storage shared config transfers original mode/hash and keeps unknown legacy provenance unknown', async t => {
+  for (const legacyOwner of [false, true]) await t.test(legacyOwner ? 'older owner' : 'bound owner', async t => {
+    const f = await fixture(t), original = await writeConfig(f), release = await releaseFixture(f);
+    const owner = await install({ ...f, offline: release.offline });
+    if (legacyOwner) {
+      const receipt = await readJson(owner.receiptPath); delete receipt.config.baseMode; delete receipt.config.baseBackupSha256;
+      await fs.writeFile(owner.receiptPath, JSON.stringify(receipt));
+    }
+    const inheritor = await install({ ...f, agent: 'vscode', offline: release.offline });
+    await fs.chmod(owner.configPath, 0o660);
+    assert.equal((await uninstall(f)).status, 'removed');
+    const transferred = await readJson(inheritor.receiptPath);
+    assert.equal(transferred.config.owned, true);
+    if (legacyOwner) {
+      assert.equal(Object.hasOwn(transferred.config, 'baseMode'), false);
+      assert.equal(Object.hasOwn(transferred.config, 'baseBackupSha256'), false);
+    } else {
+      assert.equal(transferred.config.baseMode, original.mode);
+      assert.equal(transferred.config.baseBackupSha256, sha256(original.text));
+      assert.equal(sha256(await fs.readFile(transferred.config.baseBackupPath)), sha256(original.text));
+    }
+    assert.equal((await doctor({ ...f, agent: 'vscode' })).status, 'configured');
+    assert.equal((await uninstall({ ...f, agent: 'vscode' })).status, 'removed');
+    assert.deepEqual(await fs.readFile(original.file), Buffer.from(original.text));
+    assert.equal((await fs.stat(original.file)).mode & 0o777, legacyOwner ? 0o660 : original.mode);
+  });
 });
 
 test('install root contract: valid UTF8 JSONC keeps its BOM, Unicode and exact pristine bytes through recovery', async t => {
