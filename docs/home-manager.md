@@ -14,18 +14,20 @@ Darwin only. Linux uses the SSH bridge. The Host prototype has no public package
 export or runtime payload.
 
 ```nix
-inputs.fruitctl.url = "github:xoxd-ai/fruitctl/99bcca8954e462b6e0d9f7ce3f2fae763d4c963d";
+inputs.fruitctl.url = "github:xoxd-ai/fruitctl/e599109df9b75fdec3e483b5e2f1b874db22f37f";
 
 # In the Home Manager module list:
 imports = [ inputs.fruitctl.homeManagerModules.default ];
 ```
 
 This verified development-source example includes the portable runtime, skill
-and qualification helpers. Its Linux leaf package passed 511 offline tests on
-October 10, 2026, with one real-curl test skipped. This is package-realization evidence;
+and qualification helpers. Its Linux leaf package passed 556 of 557 offline
+tests on October 10, 2026, under Node 24.21.0; one declared real-curl test was
+skipped because curl was unavailable. This is package-realization evidence;
 full Home Manager activation, Darwin realization, frontend qualification and new
-native artifact publication remain separate. Documentation-only commits may
-advance `main` without changing this tested code-source pin.
+native artifact publication remain separate. Repin after reviewed code changes
+have their own package check. Documentation-only commits may advance `main`
+without changing the last tested code-source pin.
 
 Earlier delivery records for `2bf0e4b545123f700a344aa05c29d43854cb413e` remain
 historical; they do not establish activation or desktop acceptance for this pin.
