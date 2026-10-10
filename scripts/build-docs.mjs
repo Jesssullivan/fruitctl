@@ -15,10 +15,10 @@ if (process.argv.slice(2).some((arg) => arg !== '--check')) {
 const output = path.join(root, 'build-docs');
 const origin = 'https://fruitctl.clients.xoxd.ai';
 const repository = 'https://github.com/xoxd-ai/fruitctl';
-const pageNames = ['index', 'install', 'agents', 'junie', 'architecture', 'compatibility', 'home-manager', 'licensing', 'product', 'slo'];
+const pageNames = ['index', 'install', 'agents', 'junie', 'permissions', 'architecture', 'compatibility', 'home-manager', 'licensing', 'product', 'slo'];
 const labels = {
   index: 'Fruitctl', install: 'Install', agents: 'Agent adapters', junie: 'Junie and IntelliJ', architecture: 'Architecture',
-  compatibility: 'Compatibility', product: 'Product', slo: 'Service objectives',
+  permissions: 'macOS permissions', compatibility: 'Compatibility', product: 'Product', slo: 'Service objectives',
   'home-manager': 'Home Manager', licensing: 'Licensing',
 };
 const sha256 = (value) => createHash('sha256').update(value).digest('hex');
@@ -47,6 +47,9 @@ function linkTarget(raw, page) {
   const [filename, fragment = ''] = raw.split('#');
   const relative = path.posix.normalize(path.posix.join('docs', filename));
   if (relative === 'docs/site/install-prompt.md') return `/install-prompt.md${fragment ? `#${fragment}` : ''}`;
+  if (relative === 'docs/permissions/fruitctl-standard-user.mobileconfig.example') {
+    return `/examples/fruitctl-standard-user.mobileconfig.example${fragment ? `#${fragment}` : ''}`;
+  }
   const name = path.posix.basename(relative, '.md');
   if (path.posix.dirname(relative) === 'docs' && pageNames.includes(name)) {
     return `${name === 'index' ? '/' : `/${name}/`}${fragment ? `#${fragment}` : ''}`;
@@ -239,6 +242,8 @@ if (/\{\{FRUITCTL_[A-Z0-9_]+\}\}/.test(installPrompt)) throw new Error('Unresolv
 const fallbackSources = [
   ['Repository instructions', 'AGENTS.md'], ['Install guide', 'docs/install.md'],
   ['Agent adapters', 'docs/agents.md'], ['Junie and IntelliJ', 'docs/junie.md'],
+  ['macOS permissions', 'docs/permissions.md'],
+  ['Managed standard-user policy template', 'docs/permissions/fruitctl-standard-user.mobileconfig.example'],
   ['Compatibility', 'docs/compatibility.md'], ['Authored install prompt template', 'docs/site/install-prompt.md'],
   ['Curated release inventory', 'docs/site/versions.json'], ['Canonical adoption contract', 'integrations/adoption.json'],
   ['Site release-policy overlay', 'docs/site/adoption.json'], ['Adapter registry', 'integrations/agents.json'],
@@ -269,8 +274,9 @@ artifacts.set('404.html', `<!doctype html>
 <p><a href="/">Fruitctl documentation</a> · <a href="/install/">Install guide</a></p>
 </main></body></html>\n`);
 artifacts.set('site.css', await source('docs/site/site.css'));
+artifacts.set('examples/fruitctl-standard-user.mobileconfig.example', await source('docs/permissions/fruitctl-standard-user.mobileconfig.example'));
 artifacts.set('install-prompt.md', installPrompt);
-artifacts.set('agents.md', `# Fruitctl adoption\n\nCanonical repository: ${repository}\nCanonical documentation: ${origin}/\n\nUse adoption.json and versions.json to resolve a verified immutable release. Pin\nfull source SHAs and verify binary SHA-256 hashes. Preserve unrelated MCP/skill\nconfiguration. Use operator-selected profiles and controller-local credentials.\nCapture a complete fresh frame before input; stop without replay on uncertainty.\nQualify the installed adapter and capture mode. Enable the indicator only with\nrecorded exclusion proof. Public support is best effort.\n\nRead /install-prompt.md, /install/, /agents/, /junie/, /compatibility/, /architecture/, and /slo/.\n\n${sourceFallback}\nSource revision: ${revision}; source status: ${sourceStatus}.\nRelease status: ${adoption.releaseStatus}; hosting status: ${deployment.status}.\n`);
+artifacts.set('agents.md', `# Fruitctl adoption\n\nCanonical repository: ${repository}\nCanonical documentation: ${origin}/\n\nUse adoption.json and versions.json to resolve a verified immutable release. Pin\nfull source SHAs and verify binary SHA-256 hashes. Preserve unrelated MCP/skill\nconfiguration. Use operator-selected profiles and controller-local credentials.\nCapture a complete fresh frame before input; stop without replay on uncertainty.\nQualify the installed adapter and capture mode. Enable the indicator only with\nrecorded exclusion proof. Public support is best effort.\n\nRead /install-prompt.md, /install/, /agents/, /junie/, /permissions/, /compatibility/, /architecture/, and /slo/.\n\n${sourceFallback}\nSource revision: ${revision}; source status: ${sourceStatus}.\nRelease status: ${adoption.releaseStatus}; hosting status: ${deployment.status}.\n`);
 artifacts.set('llms.txt', `# Fruitctl\n\n> Agent VNC desktop control. Resolve verified releases before installation.\n\n## Documentation\n${pageNames.map((name) => `- [${labels[name]}](${origin}${name === 'index' ? '/' : `/${name}/`})`).join('\n')}\n\n## Machine adoption\n- [Agent instructions](${origin}/agents.md)\n- [Install prompt](${origin}/install-prompt.md)\n- [Adoption JSON](${origin}/adoption.json)\n- [Adoption TOON](${origin}/adoption.toon)\n- [Curated versions](${origin}/versions.json)\n- [Public source](${repository})\n\n${sourceFallback}`);
 const releaseManifestSchemaText = await source('release/release-manifest.schema.json');
 const nativeInputManifestSchemaText = await source('release/native-input-manifest.schema.json');

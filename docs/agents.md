@@ -104,7 +104,7 @@ manifest digest fail explicitly. No agent or GUI is launched and no root access
 or package-manager install scripts are needed.
 
 For one terminal operation, use the
-[published alpha.6 paste](install.md#one-terminal-paste-published-alpha-6).
+[published alpha.7 paste](install.md#one-terminal-paste-published-alpha-7).
 For installation by an agent, copy the
 [rendered prompt](https://fruitctl.clients.xoxd.ai/install-prompt.md).
 Replace `default` with your configured profile. Those routes select the same
