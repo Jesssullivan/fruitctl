@@ -179,7 +179,8 @@ test('CLI forwards selected root and registration paths to all four lifecycle AP
       ...(process.env.FRUITCTL_CONFIG_PATH !== undefined ? { configPath: process.env.FRUITCTL_CONFIG_PATH } : {}),
     } });
   }
-  const { stdout } = await run(process.execPath, [fixtureCli, 'install', '--agent', 'junie'], { timeout: 5000 });
+  const { stdout } = await run(process.execPath, [fixtureCli, 'install', '--agent', 'junie',
+    '--version', 'v9.8.7-fixture'], { timeout: 5000 });
   const legacy = JSON.parse(stdout).options;
   assert.equal(Object.hasOwn(legacy, 'installRoot'), false);
   assert.equal(Object.hasOwn(legacy, 'scope'), false);
@@ -300,5 +301,63 @@ test('uninstall selects only the requested root launcher and preserves original 
       return true;
     });
     await absent(trace);
+  }
+});
+
+async function lifecycleCliFixture(t, installerSource) {
+  const directory = await ownedDirectory(t);
+  const fixtureCli = path.join(directory, 'bin/fruitctl.mjs');
+  await Promise.all(['bin', 'lib/broker', 'lib/install'].map(relative =>
+    fs.mkdir(path.join(directory, relative), { recursive: true })));
+  await fs.copyFile(cliPath, fixtureCli);
+  await fs.copyFile(fileURLToPath(new URL('../lib/broker/paths.mjs', import.meta.url)),
+    path.join(directory, 'lib/broker/paths.mjs'));
+  await fs.writeFile(path.join(directory, 'package.json'), JSON.stringify({ version: '9.8.7-fixture' }));
+  await fs.writeFile(path.join(directory, 'lib/install/index.mjs'), installerSource);
+  return { directory, fixtureCli };
+}
+
+test('CLI missing or empty install version fails before package metadata or installer import', async t => {
+  const { directory, fixtureCli } = await lifecycleCliFixture(t,
+    `throw new Error('Installer must not be imported without an exact version');\n`);
+  await fs.unlink(path.join(directory, 'package.json'));
+  for (const version of [[], ['--version', '']]) {
+    await assert.rejects(run(process.execPath, [fixtureCli, 'install', '--agent', 'junie',
+      ...version, '--dry-run'], { timeout: 5000 }), error => {
+      assert.equal(error.code, 1);
+      assert.equal(error.stdout, '');
+      assert.match(error.stderr, /Installation requires explicit --version TAG/);
+      assert.doesNotMatch(error.stderr, /Installer must not be imported|ENOENT/);
+      return true;
+    });
+  }
+  const { stdout } = await run(process.execPath, [fixtureCli, 'install', '--help'], { timeout: 5000 });
+  assert.match(stdout, /install --agent AGENT --scope user\|project --version TAG/);
+});
+
+test('CLI doctor retains JSON and exits nonzero only for drift results', async t => {
+  const { fixtureCli } = await lifecycleCliFixture(t,
+    `export async function doctor() { return JSON.parse(process.env.FRUITCTL_TEST_DOCTOR_RESULT); }\n`);
+  for (const result of [
+    { action: 'doctor', status: 'configured', checks: [{ name: 'fixture', ok: true }] },
+    { action: 'doctor', status: 'not-installed', checks: [] },
+    { action: 'doctor', status: 'drift', checks: [{ name: 'fixture', ok: false }] },
+    { action: 'doctor', status: 'drift', installations: [{ status: 'drift' }] },
+  ]) {
+    const invoke = () => run(process.execPath, [fixtureCli, 'doctor', '--json'], {
+      timeout: 5000, env: childEnvironment({ FRUITCTL_TEST_DOCTOR_RESULT: JSON.stringify(result) }),
+    });
+    if (result.status === 'drift') {
+      await assert.rejects(invoke(), error => {
+        assert.equal(error.code, 1);
+        assert.deepEqual(JSON.parse(error.stdout), result);
+        assert.equal(error.stderr, '');
+        return true;
+      });
+    } else {
+      const { stdout, stderr } = await invoke();
+      assert.deepEqual(JSON.parse(stdout), result);
+      assert.equal(stderr, '');
+    }
   }
 });
