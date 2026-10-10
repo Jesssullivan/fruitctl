@@ -166,6 +166,12 @@ would need its own attended consent and permission qualification; no managed
 or headless Screen Capture grant is provided. [Apple's ScreenCaptureKit sample](https://developer.apple.com/documentation/screencapturekit/capturing-screen-content-in-macos)
 requires user permission and an app restart before capture.
 
+The [macOS permissions guide](permissions.md) separates target Screen Sharing,
+optional Host capture consent and managed-device policy. It includes attended
+setup and upgrade checks plus a reviewed standard-user policy template for an
+MDM administrator. The template permits the user's approval; it does not grant
+Screen Capture access or install the Host.
+
 ## Published alpha.6 pins and qualification
 
 The runtime producer is

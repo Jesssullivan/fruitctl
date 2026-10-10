@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  TEMPLATE ONLY: replace every REPLACE_WITH_ field before MDM validation.
+  This ScreenCapture policy lets the standard user make the access choice;
+  it does not grant access. Deploy only through user-approved device MDM.
+  See https://fruitctl.clients.xoxd.ai/permissions/ for identity checks and user steps.
+-->
+<plist version="1.0">
+<dict>
+  <key>PayloadType</key>
+  <string>Configuration</string>
+  <key>PayloadVersion</key>
+  <integer>1</integer>
+  <key>PayloadIdentifier</key>
+  <string>REPLACE_WITH_ORGANIZATION_PROFILE_IDENTIFIER</string>
+  <key>PayloadUUID</key>
+  <string>REPLACE_WITH_PROFILE_UUID</string>
+  <key>PayloadDisplayName</key>
+  <string>Fruitctl Host: standard-user Screen Capture choice</string>
+  <key>PayloadDescription</key>
+  <string>Enables a standard user's permission choice for the verified Fruitctl Host app. Does not grant Screen Capture access.</string>
+  <key>PayloadOrganization</key>
+  <string>REPLACE_WITH_ORGANIZATION_NAME</string>
+  <key>PayloadScope</key>
+  <string>System</string>
+  <key>PayloadContent</key>
+  <array>
+    <dict>
+      <key>PayloadType</key>
+      <string>com.apple.TCC.configuration-profile-policy</string>
+      <key>PayloadVersion</key>
+      <integer>1</integer>
+      <key>PayloadIdentifier</key>
+      <string>REPLACE_WITH_ORGANIZATION_PPPC_IDENTIFIER</string>
+      <key>PayloadUUID</key>
+      <string>REPLACE_WITH_PPPC_UUID</string>
+      <key>PayloadDisplayName</key>
+      <string>Fruitctl Host Screen Capture</string>
+      <key>Services</key>
+      <dict>
+        <key>ScreenCapture</key>
+        <array>
+          <dict>
+            <key>Identifier</key>
+            <string>com.xoxd.fruitctl.host</string>
+            <key>IdentifierType</key>
+            <string>bundleID</string>
+            <key>CodeRequirement</key>
+            <string>REPLACE_WITH_EXACT_SIGNED_HOST_DESIGNATED_REQUIREMENT</string>
+            <key>Authorization</key>
+            <string>AllowStandardUserToSetSystemService</string>
+            <key>Comment</key>
+            <string>Verify Developer ID team REPLACE_WITH_RELEASE_TEAM_ID against the actual signed release and its complete designated requirement before deployment.</string>
+          </dict>
+        </array>
+      </dict>
+    </dict>
+  </array>
+</dict>
+</plist>

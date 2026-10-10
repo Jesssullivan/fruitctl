@@ -128,6 +128,13 @@ and the approved capability in the app's Xcode profile. This is a reviewed
 capability route, not an ordinary TCC bypass or a headless grant. Fruitctl's
 public preview supplies neither that approval nor Screen Capture provisioning.
 
+The [macOS permissions guide](permissions.md) carries the unmanaged consent
+procedure, managed-device prerequisites, signed-identity verification and
+Account Holder request checklist. Its
+[standard-user policy template](permissions/fruitctl-standard-user.mobileconfig.example)
+contains only the Screen Capture policy that lets the user choose; an MDM
+administrator must bind it to the exact signed app before deployment.
+
 The target-side indicator draws an edge-feathered deep purple pulse with the
 centered message: “Machine under FuzzyBot spell, courtesy xoxd.ai)”. It accepts
 no pointer or keyboard input and respects a reduced-motion setting. Human stop
