@@ -24,10 +24,11 @@ live baseline, not estimates derived from the offline test results.
 | Operation lifetime | 30-second operation deadline | Enforce an end-to-end deadline including queue wait and cancellation. Record terminal-response overhead; long-running text/batches require explicit bounded handling rather than silently extending the deadline. |
 | Input ownership | One active input owner per host; stop accepting input within 1 second of revoke/abort | Contention, expiry, cancellation, and disconnect tests against a configured target. This behavior requires qualification. |
 | Process lifecycle | No accumulating owned transport/daemon children after 100 lifecycle cycles | Return to the documented idle process set after connect/disconnect/cancel cycles; record child counts and RSS after warmup and teardown. |
-| Indicator lifecycle | Visible within 1 second of the first admitted command; visible throughout the owned session; clear within 5 seconds of release/expiry/connection loss | Observe the physical display while recording the control lease and harness capture, including thinking gaps between commands. Applies only to qualified indicator modes. |
+| Indicator lifecycle | Visible within 1 second of the first admitted non-health command; visible throughout the owned session; clear within 5 seconds of release/expiry/connection loss | Observe the physical display while recording the control lease and harness capture, including thinking gaps between commands. Applies only to qualified indicator modes. |
 
-The indicator starts with the first admitted command and persists while that
+The indicator starts with the first admitted non-health command and persists while that
 client owns the target, including pauses between observations and input.
+Health and capability discovery alone do not start the indicator.
 The broker's 60-second idle ownership lease, explicit release, task completion
 or failure, disconnect, and helper failure bound this lifetime. A 500-millisecond
 helper heartbeat renews its three-second target lease across command boundaries;

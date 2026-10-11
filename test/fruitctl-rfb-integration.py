@@ -18,6 +18,7 @@ import json
 import os
 from pathlib import Path
 import queue
+import re
 import socket
 import statistics
 import stat
@@ -39,6 +40,22 @@ MAX_LINE = 8 * 1024 * 1024
 def require(condition, message):
     if not condition:
         raise AssertionError(message)
+
+
+def validate_native_ready(params):
+    require(isinstance(params, dict)
+            and type(params.get("scaledWidth")) is int and params["scaledWidth"] == WIDTH
+            and type(params.get("scaledHeight")) is int and params["scaledHeight"] == HEIGHT,
+            "unexpected native ready geometry")
+    # Older controllers omit this additive field. Its absence is unknown
+    # support; present metadata follows the NativeExecutor capability contract.
+    if "capabilities" in params:
+        capabilities = params["capabilities"]
+        require(isinstance(capabilities, list) and len(capabilities) <= 64
+                and all(isinstance(action, str) and re.fullmatch(r"[a-z][a-z0-9_]{0,63}", action)
+                        for action in capabilities)
+                and len(set(capabilities)) == len(capabilities),
+                "invalid native ready capabilities")
 
 
 def sha256_file(path):
@@ -366,8 +383,7 @@ class NativeSession(JsonProcess):
                 require(time.monotonic() < deadline, "native ready timed out")
                 self.notifications.append(message)
                 if message.get("method") == "ready":
-                    require(message["params"] == {"scaledWidth": WIDTH, "scaledHeight": HEIGHT},
-                            "unexpected native ready geometry")
+                    validate_native_ready(message.get("params"))
                     break
         except Exception:
             self.close()
