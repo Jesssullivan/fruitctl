@@ -14,8 +14,9 @@ reference describes the current workflow; use your installed release's skill
 and discovered tool schemas when their versions differ.
 
 All seven adapters currently have documented configuration formats and offline
-installer tests. End-to-end image rendering, input and lease qualification is
-pending for each frontend. A successful configuration check means **configured**;
+installer tests. Complete desktop qualification is pending for each frontend;
+the scoped Claude synthetic observations below do not complete it. A successful
+configuration check means **configured**;
 it does not mean a desktop session or native binary has been qualified.
 
 ## Install a pinned release
@@ -44,6 +45,19 @@ Two fresh Claude Code CLI sessions used the public alpha.8 Linux x64 runtime and
 This is public-installed Claude synthetic MCP component evidence only. Physical
 desktop, SSH, native Host, consent and complete frontend qualification remain
 open; Gateway/Junie remains deferred.
+
+### Installed Home Manager component evidence
+
+Separately, on October 11, two fresh Claude Code CLI sessions used the installed
+alpha.8 Home Manager package and shipped skill against an owned synthetic
+desktop. The first observed three complete images and made and reversed two
+inputs; the second reconnected and observed the restored scene. Both awaited
+session release. Normal settings digests and metadata remained intact at the
+recorded checks, without authentication or model overrides. This is a distinct
+installed Home Manager synthetic MCP component result; it does not transfer
+public-bootstrap, real SSH, physical desktop, native Host, macOS consent,
+complete frontend, Gateway/Junie or product SLO qualification. See the
+[current Home Manager pin and delivery scope](home-manager.md).
 
 ### Historical installation evidence
 

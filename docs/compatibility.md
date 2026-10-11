@@ -9,7 +9,7 @@ it to qualified status.
 
 The current public preview is
 [v0.1.0-alpha.8](https://github.com/xoxd-ai/fruitctl/releases/tag/v0.1.0-alpha.8),
-runtime producer `ceb1d4643b8f3c66f744f536777214285a4d20ad`. Its accepted public Linux scope is limited to
+runtime producer `ceb1d4643b8f3c66f744f536777214285a4d20ad`. Its accepted public Linux installer scope is limited to
 Linux x64 stock public bootstrap and Claude project configuration lifecycle: dry-run, install, doctor, reinstall, same-version prior-receipt rollback and uninstall/cache retention; the populated project configuration was restored exactly, including mode 0640. The alpha.6 Darwin
 ARM64 Junie installer observations and alpha.4 synthetic controller/relay checks
 below remain historical; they do not qualify alpha.8 runtime or frontend behavior.
@@ -24,7 +24,7 @@ previews are published; fully qualified product releases remain zero.
 | Public Node relay | Bundled Node.js 24.21.0 | Alpha.4 Darwin synthetic MCP journey and Linux MCP metadata checked; real SSH journey pending |
 | Linux x64 runtime | Rootless alpha.8 preview bundle | Linux x64 stock public bootstrap and Claude project configuration lifecycle: dry-run, install, doctor, reinstall, same-version prior-receipt rollback and uninstall/cache retention; the populated project configuration was restored exactly, including mode 0640. Frontend/SSH/desktop pending |
 | Linux arm64 runtime | Preview bundle available | Archive integrity checked; runtime execution pending |
-| Home Manager vendoring | Opt-in Linux x64 consumer | Historical October 10 alpha.7 package, three skills and four MCP fragments delivered through the normal serialized lab deployment path to one enabled development seat; no frontend, SSH or desktop qualification |
+| Home Manager vendoring | Opt-in Linux x64 alpha.8 consumer | October 11 package: 622 passing checks and one declared curl skip; normal serialized canary/follower delivery to one enabled Linux seat, with canary consumer default-off. Separate installed-package two-task Claude synthetic MCP component observed; real SSH, physical desktop and complete frontend qualification pending |
 | Linux agent seat | SSH bridge to Darwin controller | Initial supported design; acceptance pending |
 | Rocky Linux agent seat | Same SSH bridge | Historical alpha2 Linux x64 bootstrap passed on Rocky 10.2; SSH/desktop journey pending |
 | Native Linux VNC controller | No native binary promised | Outside initial release |
@@ -46,6 +46,17 @@ SSH. The older alpha1 preview retains its existing-controller prerequisite.
 fully qualified product releases. Its alpha.8 installer acceptance covers
 only the recorded public Linux package/configuration journey. An installed MCP entry and `doctor` result do not
 establish tool actions, returned-image rendering or target behavior.
+
+The October 11 [Home Manager delivery](home-manager.md) bound the tested
+alpha.8 portable producer to one enabled Linux seat while the canary consumer
+stayed disabled. A separate installed-package check used two real Claude Code
+CLI sessions against an owned synthetic desktop: four complete images, two
+reversible inputs, two awaited releases and a reconnect to the restored scene.
+Normal settings were retained without authentication or model overrides. This
+is an installed Home Manager component observation, distinct from the public
+bootstrap/component journey; real SSH, physical desktop, native Host, macOS
+permissions and complete frontend qualification remain open. Gateway/Junie
+remains deferred.
 
 The separate October 10 [Home Manager delivery](home-manager.md) observation
 bound the enabled development seat's installed alpha.7 package and skill/MCP
@@ -76,7 +87,7 @@ public native Host bundle, automatic consent or qualified Host capture mode.
 | Agent | Adoption surface | Release status |
 | --- | --- | --- |
 | Codex | Skill plus stdio MCP adapter | Historical preview bootstrap checked; real frontend acceptance pending |
-| Claude Code | Skill plus stdio MCP adapter | Alpha.8 Linux x64 public package/configuration scope and scoped public-installed synthetic MCP component observation; real desktop/SSH and complete frontend qualification pending |
+| Claude Code | Skill plus stdio MCP adapter | Alpha.8 Linux x64 public package/configuration scope, public-installed synthetic MCP component and separate installed Home Manager two-task synthetic component observations; real desktop/SSH and complete frontend qualification pending |
 | Pi | Shared skill plus native MCP in 0.99.0+ | Configuration documented; runtime experimental |
 | Junie CLI | Shared skill plus supported MCP settings | Alpha.6 Darwin project installer components verified; historical alpha.4 install/lifecycle and MCP metadata checked; current SDK terminal and actual frontend acceptance pending |
 | IntelliJ Junie | Standalone IDE plugin MCP settings and instructions | Separate IDE/plugin version qualification pending |
