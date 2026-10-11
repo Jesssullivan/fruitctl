@@ -9,6 +9,10 @@ deps:
 test:
     npm run test:offline
 
+# File-only Host installer fixtures; no app launch, Apple trust or desktop.
+test-host-installer node="node":
+    {{quote(node)}} --test --test-concurrency=1 test/fruitctl-host-install.test.js
+
 # Owned broker/relay retirement and inherited-deadline behavior; no desktop.
 test-broker node="node":
     {{quote(node)}} --test --test-concurrency=1 test/fruitctl-broker.test.js test/fruitctl-broker-review.test.js test/fruitctl-deadline-budget.test.js
