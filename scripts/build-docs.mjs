@@ -63,16 +63,21 @@ function linkTarget(raw, page) {
 
 function inline(value, page) {
   const tokens = [];
-  const token = (html) => {
+  const labelTokens = [];
+  const token = (html, labelHTML = html) => {
     const marker = `\u0000${tokens.length}\u0000`;
     tokens.push(html);
+    labelTokens.push(labelHTML);
     return marker;
   };
   const marked = value.replace(/`([^`]+)`/g, (_, content) => token(`<code>${escape(content)}</code>`))
-    .replace(/<(https?:\/\/[^<>\s]+)>/g, (_, target) => token(`<a href="${escape(target)}">${escape(target)}</a>`))
+    .replace(/<(https?:\/\/[^<>\s]+)>/g, (_, target) =>
+      token(`<a href="${escape(target)}">${escape(target)}</a>`, escape(target)))
     .replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_, label, target) => {
       const href = linkTarget(target, page);
-      return token(`<a href="${escape(href)}">${escape(label)}</a>`);
+      const labelHTML = escape(label).replace(/\u0000(\d+)\u0000/g,
+        (_, index) => labelTokens[Number(index)]);
+      return token(`<a href="${escape(href)}">${labelHTML}</a>`);
     });
   return escape(marked).replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
     .replace(/\u0000(\d+)\u0000/g, (_, index) => tokens[Number(index)]);
@@ -309,6 +314,7 @@ artifacts.set('sitemap.xml', `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xm
 const receipts = [...artifacts].map(([file, value]) => ({ file, sha256: sha256(value) }));
 artifacts.set('build-manifest.json', `${JSON.stringify({ product: 'fruitctl', source: buildSource, canonicalOrigin: origin, hostingStatus: deployment.status, files: receipts }, null, 2)}\n`);
 for (const [file, content] of artifacts) {
+  if (content.includes('\u0000')) throw new Error(`Unresolved inline token or NUL in public artifact: ${file}`);
   if (/\b(?:VNC_PASSWORD|CF_ACCESS_CLIENT_SECRET|CLOUDFLARE_API_TOKEN)\s*[:=]\s*[^\s"'}]/i.test(content)) {
     throw new Error(`Potential credential assignment in public artifact: ${file}`);
   }
