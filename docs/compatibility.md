@@ -7,18 +7,24 @@ it to qualified status.
 
 ## Platforms
 
-The current alpha.6 installer observations cover the Darwin ARM64 Junie project
-adapter with an explicit root. Existing alpha.4 controller, relay and Linux
-observations below remain historical; they do not qualify alpha.6 runtime or
-frontend behavior. See [current installation evidence](install.md).
+The current public preview is
+[v0.1.0-alpha.7](https://github.com/xoxd-ai/fruitctl/releases/tag/v0.1.0-alpha.7),
+runtime producer `cd34bbcdcc9e70bf25f77cbcfd1f129e1eac30db`. Its Linux x64 stock
+bootstrap and Claude project configuration lifecycle passed. The alpha.6 Darwin
+ARM64 Junie installer observations and alpha.4 synthetic controller/relay checks
+below remain historical; they do not qualify alpha.7 runtime or frontend behavior.
+See [current installation evidence](install.md) and the
+[macOS permissions guide](permissions.md) for operator setup steps. Seven runtime
+previews are published; fully qualified product releases remain zero.
 
 | Role | Baseline | Status |
 | --- | --- | --- |
-| Darwin ARM64 runtime installer | Junie project scope; explicit storage root | Alpha.6 stock bootstrap, doctor, reinstall, same-version rollback and owned uninstall verified as components; separate default public uninstall shell from offline-cache setup passed; SDK/frontend/desktop pending |
-| Native controller | Apple Silicon; macOS 15+ | Alpha.4 reuses the signed alpha.3 controller; its original submission is Apple Accepted; alpha.4 synthetic SDK/broker/RFB check passed; physical desktop pending |
+| Darwin ARM64 runtime installer | Junie project scope; explicit storage root | Historical alpha.6 stock bootstrap, doctor, reinstall, same-version rollback and owned uninstall verified as components; separate default public uninstall shell from offline-cache setup passed; alpha.7 installed runtime/frontend/desktop pending |
+| Native controller | Apple Silicon; macOS 15+ | Alpha.7 bundles the unchanged signed controller from source e00fcc86; its original controller-ZIP submission is Apple Accepted; historical alpha.4 synthetic SDK/broker/RFB check passed; physical desktop pending |
 | Public Node relay | Bundled Node.js 24.21.0 | Alpha.4 Darwin synthetic MCP journey and Linux MCP metadata checked; real SSH journey pending |
-| Linux x64 runtime | Rootless preview bundle | Alpha.4 public Junie project bootstrap, CLI lifecycle and four-tool metadata discovery passed; no tool actions or frontend rendering |
+| Linux x64 runtime | Rootless alpha.7 preview bundle | Stock public bootstrap and Claude project dry-run, install, doctor, reinstall, same-version prior-receipt rollback and uninstall verified; unrelated configuration restored; frontend/SSH/desktop pending |
 | Linux arm64 runtime | Preview bundle available | Archive integrity checked; runtime execution pending |
+| Home Manager vendoring | Opt-in Linux x64 consumer | Historical October 10 alpha.7 package, three skills and four MCP fragments delivered through the normal serialized lab deployment path to one enabled development seat; no frontend, SSH or desktop qualification |
 | Linux agent seat | SSH bridge to Darwin controller | Initial supported design; acceptance pending |
 | Rocky Linux agent seat | Same SSH bridge | Historical alpha2 Linux x64 bootstrap passed on Rocky 10.2; SSH/desktop journey pending |
 | Native Linux VNC controller | No native binary promised | Outside initial release |
@@ -28,8 +34,7 @@ frontend behavior. See [current installation evidence](install.md).
 | Purple target indicator | Qualified filtered macOS capture only | Unqualified source prototype; no public Host binary or automatic setup |
 
 `project.yml` targets macOS 15.0 and `arm64`. This is a build baseline, not a
-claim that every later OS version is tested. The immutable
-[v0.1.0-alpha.4 preview](https://github.com/xoxd-ai/fruitctl/releases/tag/v0.1.0-alpha.4)
+claim that every later OS version is tested. The immutable alpha.7 preview
 publishes Darwin arm64, Linux x64 and Linux arm64 runtime archives. Its Darwin
 runtime reuses `bin/claude-kvm-daemon` from source
 `e00fcc86bbac4247d5a0847d7e656369c52cc15f`, with exact Developer ID signature,
@@ -38,8 +43,20 @@ That acceptance does not cover the whole runtime archive. A bare binary has no
 stapled ticket. Linux still needs a configured Darwin controller through
 SSH. The older alpha1 preview retains its existing-controller prerequisite.
 `versions.json` records scoped preview checks separately from
-fully qualified product releases. The current fully qualified release count is
-zero. Alpha.4's portable source is
+fully qualified product releases. Its alpha.7 installer acceptance covers
+configuration only: the populated Claude project configuration was restored
+exactly, including mode 0640. An installed MCP entry and `doctor` result do not
+establish tool actions, returned-image rendering or target behavior.
+
+The separate October 10 [Home Manager delivery](home-manager.md) observation
+bound the enabled development seat's installed alpha.7 package and skill/MCP
+projections to producer `cd34bbcdcc9e70bf25f77cbcfd1f129e1eac30db`. This is a
+historical package/configuration delivery result, not a fresh host-state claim
+or evidence that an agent loaded the configuration and controlled a desktop.
+The default-off canary consumer remained disabled; no broader fleet enablement
+or Host, signing or permission acceptance follows from that delivery.
+
+Historical alpha.4's portable source is
 `e0f4d064b076e58b33856d877e0e1c9266f55177`. Its Darwin ARM64 runtime passed an
 offline Junie project lifecycle through the bundled installer API and an
 installed SDK/shared-broker journey through the unchanged signed controller to
@@ -57,7 +74,7 @@ qualified product release count remains zero.
 | Agent | Adoption surface | Release status |
 | --- | --- | --- |
 | Codex | Skill plus stdio MCP adapter | Historical preview bootstrap checked; real frontend acceptance pending |
-| Claude Code | Skill plus stdio MCP adapter | Historical alpha.2/alpha.3 bootstrap checked; real frontend acceptance pending |
+| Claude Code | Skill plus stdio MCP adapter | Alpha.7 Linux x64 stock public bootstrap and project configuration lifecycle verified; real frontend/image/input acceptance pending |
 | Pi | Shared skill plus native MCP in 0.99.0+ | Configuration documented; runtime experimental |
 | Junie CLI | Shared skill plus supported MCP settings | Alpha.6 Darwin project installer components verified; historical alpha.4 install/lifecycle and MCP metadata checked; current SDK terminal and actual frontend acceptance pending |
 | IntelliJ Junie | Standalone IDE plugin MCP settings and instructions | Separate IDE/plugin version qualification pending |
