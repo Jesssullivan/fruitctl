@@ -95,11 +95,10 @@ final class HostCapture {
         do {
             sampled = try await permission.withCaptureAuthorization(enabled: { self.enabled }) {
                 try Task.checkCancellation()
-                let hostClock = CMClockGetHostTimeClock()
-                let requestedAt = CMClockGetTime(hostClock)
+                let requestedAt = HostCoreMediaClock.sample()
                 let sample = try await SCScreenshotManager.captureSampleBuffer(contentFilter: filter,
                                                                              configuration: configuration)
-                let completedAt = CMClockGetTime(hostClock)
+                let completedAt = HostCoreMediaClock.sample()
                 try Task.checkCancellation()
                 return (sample, requestedAt, completedAt)
             }

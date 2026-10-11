@@ -90,6 +90,7 @@ struct HostHumanStopEvent: Equatable {
     let displayGeneration: UInt64
     let invokedAtMilliseconds: UInt64
     let activity: Activity?
+    var coreMediaStopBracket: HostCoreMediaStopBracket? = nil
 
     var metadata: [String: HostValue] {
         ["schema": .string("fruitctl.human-stop.v1"),
@@ -100,7 +101,8 @@ struct HostHumanStopEvent: Equatable {
          "clock_basis": .string("host_instance_milliseconds"),
          "invoked_monotonic_ms": .integer(Int64(clamping: invokedAtMilliseconds)),
          "active_lease_at_stop": .boolean(activity != nil),
-         "active_lease": activity.map { .object($0.metadata) } ?? .null]
+         "active_lease": activity.map { .object($0.metadata) } ?? .null,
+         "core_media_stop_bracket": coreMediaStopBracket?.metadata ?? .null]
     }
 }
 
@@ -215,6 +217,19 @@ struct HostLeaseState {
         lastHumanStopEvent = HostHumanStopEvent(eventID: UUID(), eventNumber: humanStopEventCount,
             instanceID: instanceID, processID: processID, displayID: displayID,
             displayGeneration: displayGeneration, invokedAtMilliseconds: now, activity: activity)
+    }
+
+    /// Attach only after the synchronous local transition and UI invalidation.
+    /// Never replace an event or its first bracket, or attach to a successor
+    /// activity. Invalid times do not throw, restore a lease or change readiness.
+    @discardableResult
+    mutating func attachHumanStopClockBracket(_ bracket: HostCoreMediaStopBracket,
+                                              eventID: UUID) -> Bool {
+        guard active == nil, var event = lastHumanStopEvent,
+              event.eventID == eventID, event.coreMediaStopBracket == nil else { return false }
+        event.coreMediaStopBracket = bracket
+        lastHumanStopEvent = event
+        return true
     }
 
     static func heartbeatAge(now: UInt64, uiHeartbeatAt: UInt64?) -> UInt64? {

@@ -215,12 +215,21 @@ final class HostApplicationController: NSObject, NSApplicationDelegate, NSMenuDe
     func menuWillOpen(_ menu: NSMenu) { updateHumanControl() }
 
     @objc private func stopAgentControl(_ sender: Any?) {
+        // Raw, nonthrowing entry observation only. Diagnostic validation and
+        // attachment must follow the existing revocation and UI invalidation.
+        let entryHostTime = HostCoreMediaClock.sample()
         let invokedAt = clock.milliseconds()
         availability.apply(.humanStopped)
         lease.stopFromHuman(instanceID: instanceID, processID: getpid(), displayID: capture.displayID,
                             displayGeneration: generation, now: invokedAt)
+        let eventID = lease.lastHumanStopEvent?.eventID
         invalidateActivity(reason: .humanStopped)
         updateHumanControl()
+        let completionHostTime = HostCoreMediaClock.sample()
+        if let eventID {
+            lease.attachHumanStopClockBracket(HostCoreMediaStopBracket(
+                entryHostTime: entryHostTime, completionHostTime: completionHostTime), eventID: eventID)
+        }
     }
 
     @objc private func allowAgentControl(_ sender: Any?) {
