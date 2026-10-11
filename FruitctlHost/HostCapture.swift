@@ -42,12 +42,99 @@ struct HostCapturedImage {
     }
 }
 
+/// Only value data leaves the image-processing worker. Its mutable graphics
+/// context, destination and PNG buffer are private to that one operation.
+struct HostProcessedImage: Sendable {
+    let png: Data
+    let scaledWidth: Int
+    let scaledHeight: Int
+}
+
+enum HostImageEncoder {
+    static func encode(_ image: CGImage, maximumDimension: Int) throws -> HostProcessedImage {
+        try Task.checkCancellation()
+        let width = image.width, height = image.height
+        guard maximumDimension > 0, width > 0, height > 0,
+              width <= 16_384, height <= 16_384, width <= 33_554_432 / height else {
+            throw HostCaptureError.incompleteImage
+        }
+        let ratio = min(1, Double(maximumDimension) / Double(max(width, height)))
+        let scaledWidth = max(1, Int((Double(width) * ratio).rounded()))
+        let scaledHeight = max(1, Int((Double(height) * ratio).rounded()))
+        let output: CGImage
+        if ratio == 1 { output = image }
+        else {
+            guard let context = CGContext(data: nil, width: scaledWidth, height: scaledHeight,
+                bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else {
+                throw HostCaptureError.imageEncodingFailed
+            }
+            context.interpolationQuality = .high
+            context.draw(image, in: CGRect(x: 0, y: 0, width: scaledWidth, height: scaledHeight))
+            guard let resized = context.makeImage() else { throw HostCaptureError.imageEncodingFailed }
+            output = resized
+        }
+        try Task.checkCancellation()
+        let png = NSMutableData()
+        guard let encoder = CGImageDestinationCreateWithData(png, UTType.png.identifier as CFString, 1, nil)
+        else { throw HostCaptureError.imageEncodingFailed }
+        CGImageDestinationAddImage(encoder, output, nil)
+        try Task.checkCancellation()
+        guard CGImageDestinationFinalize(encoder) else { throw HostCaptureError.imageEncodingFailed }
+        try Task.checkCancellation()
+        return HostProcessedImage(png: png as Data, scaledWidth: scaledWidth, scaledHeight: scaledHeight)
+    }
+}
+
+/// CGImage is immutable and Sendable. Only the image created from our owned
+/// copied sample crosses this boundary, never the ScreenCaptureKit surface.
+@MainActor
+final class HostImageProcessor {
+    typealias Operation = @Sendable (CGImage, Int) async throws -> HostProcessedImage
+    private let operation: Operation
+    private var worker: Task<HostProcessedImage, Error>?
+    var isProcessing: Bool { worker != nil }
+
+    init(operation: @escaping Operation = { image, maximumDimension in
+        try HostImageEncoder.encode(image, maximumDimension: maximumDimension)
+    }) {
+        self.operation = operation
+    }
+
+    func process(_ image: CGImage, maximumDimension: Int,
+                 validate: @MainActor () throws -> Void = {}) async throws -> HostProcessedImage {
+        try Task.checkCancellation()
+        guard worker == nil else { throw HostLeaseError.busy }
+        guard maximumDimension > 0 else { throw HostCaptureError.incompleteImage }
+        let task = Task.detached(priority: Task.currentPriority) { [operation] in
+            try Task.checkCancellation()
+            let result = try await operation(image, maximumDimension)
+            try Task.checkCancellation()
+            return result
+        }
+        worker = task
+        // Parent cancellation cannot interrupt a synchronous ImageIO call.
+        // Keep the worker owned, and refuse successors, until it really ends.
+        defer { worker = nil }
+        let result = try await withTaskCancellationHandler(operation: {
+            try await task.value
+        }, onCancel: {
+            task.cancel()
+        })
+        try Task.checkCancellation()
+        try validate()
+        try Task.checkCancellation()
+        return result
+    }
+}
+
 /// Captures only the explicitly selected display, excluding this entire app.
 /// Each screenshot gets a fresh filter; native VNC capture is a separate path.
 @MainActor
 final class HostCapture {
     private let preferences: HostCapturePreferences
     private let permission: HostCapturePermission
+    private let imageProcessor = HostImageProcessor()
     var enabled: Bool { preferences.isEnabled }
     let displayID: CGDirectDisplayID
 
@@ -115,30 +202,19 @@ final class HostCapture {
               CGDisplayPixelsWide(displayID) == width, CGDisplayPixelsHigh(displayID) == height else {
             throw HostCaptureError.incompleteImage
         }
-        let ratio = min(1, Double(maximumDimension) / Double(max(width, height)))
-        let scaledWidth = max(1, Int((Double(width) * ratio).rounded()))
-        let scaledHeight = max(1, Int((Double(height) * ratio).rounded()))
-        let output: CGImage
-        if ratio == 1 { output = image }
-        else {
-            guard let context = CGContext(data: nil, width: scaledWidth, height: scaledHeight,
-                bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),
-                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else {
-                throw HostCaptureError.imageEncodingFailed
+        let processed = try await imageProcessor.process(image, maximumDimension: maximumDimension) {
+            try self.permission.requireCapture(enabled: self.enabled)
+            guard CGDisplayIsActive(self.displayID) != 0,
+                  CGDisplayBounds(self.displayID) == bounds,
+                  CGDisplayPixelsWide(self.displayID) == width,
+                  CGDisplayPixelsHigh(self.displayID) == height else {
+                throw HostCaptureError.incompleteImage
             }
-            context.interpolationQuality = .high
-            context.draw(image, in: CGRect(x: 0, y: 0, width: scaledWidth, height: scaledHeight))
-            guard let resized = context.makeImage() else { throw HostCaptureError.imageEncodingFailed }
-            output = resized
         }
-        let png = NSMutableData()
-        guard let encoder = CGImageDestinationCreateWithData(png, UTType.png.identifier as CFString, 1, nil)
-        else { throw HostCaptureError.imageEncodingFailed }
-        CGImageDestinationAddImage(encoder, output, nil)
-        guard CGImageDestinationFinalize(encoder) else { throw HostCaptureError.imageEncodingFailed }
         try Task.checkCancellation()
-        return HostCapturedImage(png: png as Data, nativeWidth: width, nativeHeight: height,
-            scaledWidth: scaledWidth, scaledHeight: scaledHeight, displayID: displayID, bounds: bounds,
+        return HostCapturedImage(png: processed.png, nativeWidth: width, nativeHeight: height,
+            scaledWidth: processed.scaledWidth, scaledHeight: processed.scaledHeight,
+            displayID: displayID, bounds: bounds,
             excludedPID: ownApp.processID, excludedBundleID: ownApp.bundleIdentifier,
             nativeFrameTiming: captured.timing)
     }
