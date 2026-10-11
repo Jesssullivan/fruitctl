@@ -14,46 +14,69 @@ Darwin only. Linux uses the SSH bridge. The Host prototype has no public package
 export or runtime payload.
 
 ```nix
-inputs.fruitctl.url = "github:xoxd-ai/fruitctl/cd34bbcdcc9e70bf25f77cbcfd1f129e1eac30db";
+inputs.fruitctl.url = "github:xoxd-ai/fruitctl/ceb1d4643b8f3c66f744f536777214285a4d20ad";
 
 # In the Home Manager module list:
 imports = [ inputs.fruitctl.homeManagerModules.default ];
 ```
 
-This tested alpha.7 source pin includes the portable runtime, skill and
-qualification helpers. Its Linux leaf package passed 556 of 557 offline
-tests on October 10, 2026, under Node 24.21.0; one declared real-curl test was
-skipped because curl was unavailable.
+This tested alpha.8 source pin includes the portable runtime, skill,
+qualification helpers and portable Host-installer interface. Its Linux leaf
+package passed 622 of 623 offline checks on October 11, 2026, under Node
+24.21.0; one declared real-curl check was skipped because curl was unavailable.
+This package result does not qualify installing or running the native Host.
 
-An October 10 managed delivery also passed through the infrastructure's normal
-Home Manager canary and follower path. The canary's Fruitctl consumer stayed
-disabled; one enabled Linux seat received the alpha.7 package, three skill
-roots and four generated MCP fragments, with its relay service disabled. A
-fresh login resolved the selected executable, and installed package metadata
-reported `0.1.0-alpha.7`. A limited read-only follow-up on October 11 confirmed
-the same installed version and skill/fragment files on that seat. These are
-dated package and delivery observations; they do not qualify an agent frontend,
-a Darwin Home Manager installation, target control or new native artifacts.
+An October 11 managed delivery passed through the infrastructure's normal
+serialized Home Manager canary and follower path. The canary's Fruitctl
+consumer stayed disabled; one enabled Linux seat received the alpha.8 package,
+three skill roots and four generated MCP fragments, with its relay service
+disabled. The selected executables and installed package metadata matched the
+accepted alpha.8 package. This is a dated delivery observation, not broader
+fleet enablement or a Darwin Home Manager installation.
+
+A separate October 11 component check used the installed Home Manager package
+and shipped skill in two fresh Claude Code CLI sessions against an owned
+synthetic desktop. The first session observed three complete images and made
+and reversed two inputs; the second reconnected and observed the restored
+scene. Both awaited session release. The run used normal settings without
+authentication or model overrides; recorded settings digests and metadata
+remained intact at the bound checks. This is installed Home Manager synthetic
+MCP component evidence, separate from the [public-runtime journey](agents.md).
+Physical desktop, real SSH, native Host, macOS consent, complete frontend and
+product SLO qualification remain open; Gateway/Junie remains deferred.
 
 Repin reviewed code changes after their own package check. Documentation-only
 commits may advance `main` without changing the last tested code-source pin.
-Earlier package evidence for
-`e599109df9b75fdec3e483b5e2f1b874db22f37f` and delivery records for
-`2bf0e4b545123f700a344aa05c29d43854cb413e` remain historical; their acceptance
-does not transfer to this pin.
+Every consumer's final pin, package realization and Home Manager activation
+need their own recorded checks; changing this example does not upgrade a
+published runtime archive.
 
-The public [alpha.7 runtime](https://github.com/xoxd-ai/fruitctl/releases/tag/v0.1.0-alpha.7)
-uses producer `cd34bbcdcc9e70bf25f77cbcfd1f129e1eac30db`. The earlier immutable
-alpha.6 runtime producer `8653325c6ccc0e058b3e4cf84eb44101cfd270fc` remains a
-historical packaging record. Every consumer's final pin, package realization
-and Home Manager activation need their own recorded checks; changing this
-example does not upgrade a published runtime archive.
+The public [alpha.8 runtime](https://github.com/xoxd-ai/fruitctl/releases/tag/v0.1.0-alpha.8)
+uses the same portable producer `ceb1d4643b8f3c66f744f536777214285a4d20ad`.
 The explicitly selected `native-controller` package separately consumes the
 immutable alpha.3 controller produced from
 `e00fcc86bbac4247d5a0847d7e656369c52cc15f`. Advancing the source pin does not
-rebuild, patch or re-sign those released bytes. Alpha.7's Darwin runtime also
-reuses that native payload; its newer portable-source revision does not change
-the controller's original source or Apple submission.
+rebuild, patch or re-sign those released bytes. Alpha.8's Darwin runtime also
+reuses that native payload; its portable-source revision does not change the
+controller's original source or Apple submission. Later native source work on
+`main` does not supply a new public native artifact through this pin.
+
+### Historical package and delivery records
+
+The earlier alpha.7 producer `cd34bbcdcc9e70bf25f77cbcfd1f129e1eac30db`
+passed 556 of 557 offline package tests on October 10 under Node 24.21.0, with
+one declared unavailable-curl skip. An October 10 normal canary/follower
+delivery installed its package, three skill roots and four MCP fragments on
+one enabled Linux seat; the canary consumer and enabled seat's relay stayed
+disabled. A fresh login resolved alpha.7, and an October 11 read-only
+follow-up still observed it before the later alpha.8 delivery. These are
+historical snapshots; they do not qualify alpha.8 or an agent frontend.
+
+Earlier package evidence for
+`e599109df9b75fdec3e483b5e2f1b874db22f37f` and delivery records for
+`2bf0e4b545123f700a344aa05c29d43854cb413e` remain historical. The immutable
+alpha.6 runtime producer `8653325c6ccc0e058b3e4cf84eb44101cfd270fc` is also a
+historical packaging record. None of their acceptance transfers to this pin.
 
 ## CLI and skills installation
 
@@ -136,7 +159,7 @@ can still reach the same machine, so assign its physical identity explicitly;
 the broker does not infer arbitrary network aliases.
 
 The optional Host/indicator remains a private prototype until its exact
-capture mode passes background and indicator-exclusion qualification. Alpha.7
+capture mode passes background and indicator-exclusion qualification. Alpha.8
 ships no Host app, ZIP, package export, service or helper mapping. The existing
 `targets.<profile>.hostHelper` option remains available for independently
 qualified private work and defaults to null; configuring it does not install or
@@ -154,7 +177,7 @@ executable bytes and signature remain unchanged. Fixups, stripping and
 re-signing are disabled.
 The exact artifact and corresponding-source bindings live in
 [`nix/native-release.json`](../nix/native-release.json), which remains the
-historical alpha.3 controller input. The public alpha.7 runtime inventory is a
+historical alpha.3 controller input. The public alpha.8 runtime inventory is a
 separate packaging record. Apple returned `Accepted`
 for the original controller-ZIP submission; that does not notarize the complete
 runtime archive. The command-line tool is not stapled. These checks do not
