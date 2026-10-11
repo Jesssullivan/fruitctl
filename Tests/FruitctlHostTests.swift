@@ -363,12 +363,112 @@ final class FruitctlHostTests: XCTestCase {
         XCTAssertFalse(encoded.contains(owner.uuidString))
         XCTAssertEqual(event.metadata["clock_basis"], .string("host_instance_milliseconds"))
         XCTAssertEqual(event.metadata["schema"], .string("fruitctl.human-stop.v1"))
+        XCTAssertEqual(event.metadata["core_media_stop_bracket"], .null)
         guard case .object(let activity)? = event.metadata["active_lease"] else {
             return XCTFail("Active Stop must retain the ended lease binding")
         }
         XCTAssertEqual(Set(activity.keys), Set(["session_id", "displayGeneration", "sequence",
                                               "lease_remaining_ms"]))
         XCTAssertNil(event.metadata["physical_cleared"])
+    }
+
+    func testStopCoreMediaBracketPreservesLosslessTimesAndOriginalLeaseBinding() throws {
+        var state = try started()
+        state.stopFromHuman(instanceID: "instance-A", processID: 321, displayID: 1,
+                            displayGeneration: 7, now: 200)
+        let original = try XCTUnwrap(state.lastHumanStopEvent)
+        let bracket = HostCoreMediaStopBracket(
+            entryHostTime: CMTime(value: Int64.max - 20, timescale: 1_000_000,
+                                  flags: .valid, epoch: Int64.max),
+            completionHostTime: CMTime(value: Int64.max - 10, timescale: 1_000_000,
+                                       flags: .valid, epoch: Int64.max))
+        XCTAssertTrue(state.attachHumanStopClockBracket(bracket, eventID: original.eventID))
+        XCTAssertNil(state.active)
+        let event = try XCTUnwrap(state.lastHumanStopEvent)
+        XCTAssertEqual(event.eventID, original.eventID)
+        XCTAssertEqual(event.activity, original.activity)
+        XCTAssertEqual(event.invokedAtMilliseconds, original.invokedAtMilliseconds)
+        let data = try JSONEncoder().encode(HostValue.object(event.metadata))
+        let metadata = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let timing = try XCTUnwrap(metadata["core_media_stop_bracket"] as? [String: Any])
+        let entry = try XCTUnwrap(timing["entry_host_time"] as? [String: Any])
+        let completion = try XCTUnwrap(timing["completion_host_time"] as? [String: Any])
+        XCTAssertEqual(entry["value"] as? String, String(Int64.max - 20))
+        XCTAssertEqual(entry["epoch"] as? String, String(Int64.max))
+        XCTAssertEqual(completion["value"] as? String, String(Int64.max - 10))
+        XCTAssertEqual(timing["status"] as? String, "valid")
+        XCTAssertEqual(timing["host_bracket_valid"] as? Bool, true)
+        XCTAssertEqual(timing["time_semantics"] as? String, "local_stop_handler_interval")
+        XCTAssertNil(timing["physical_cleared"])
+        XCTAssertNil(timing["acquisition_time"])
+        XCTAssertNil(timing["freshness"])
+    }
+
+    func testInvalidStopCoreMediaTimesCannotDelayOrUndoRevocation() throws {
+        let valid = CMTime(value: 100, timescale: 1_000)
+        for (entry, completion) in [(CMTime.invalid, valid), (.indefinite, valid),
+                                   (.positiveInfinity, valid), (CMTime(value: -1, timescale: 1_000), valid),
+                                   (valid, CMTime(value: 99, timescale: 1_000)),
+                                   (valid, CMTime(value: 101, timescale: 1_000,
+                                                  flags: .valid, epoch: 1))] {
+            var state = try started()
+            var availability = HostAvailabilityState()
+            availability.apply(.humanStopped)
+            state.stopFromHuman(instanceID: "instance-A", processID: 321, displayID: 1,
+                                displayGeneration: 7, now: 200)
+            let event = try XCTUnwrap(state.lastHumanStopEvent)
+            XCTAssertNil(state.active)
+            XCTAssertTrue(state.attachHumanStopClockBracket(HostCoreMediaStopBracket(
+                entryHostTime: entry, completionHostTime: completion), eventID: event.eventID))
+            XCTAssertFalse(try XCTUnwrap(state.lastHumanStopEvent?.coreMediaStopBracket).hasValidBracket)
+            guard case .object(let timing)? = state.lastHumanStopEvent?.metadata["core_media_stop_bracket"] else {
+                return XCTFail("Unavailable timing must remain bounded diagnostics")
+            }
+            XCTAssertEqual(timing["status"], .string("unavailable"))
+            XCTAssertEqual(state.lastHumanStopEvent?.activity, event.activity)
+            XCTAssertNil(state.active)
+            XCTAssertFalse(availability.humanAllowed)
+            XCTAssertThrowsError(try renew(&state, at: 201, pulse: 201)) {
+                XCTAssertEqual($0 as? HostLeaseError, .expired)
+            }
+        }
+    }
+
+    func testStopClockEvidenceCannotRebindANewerEventOrReplaceItsFirstBracket() throws {
+        var state = try started()
+        state.stopFromHuman(instanceID: "instance-A", processID: 321, displayID: 1,
+                            displayGeneration: 7, now: 200)
+        let first = try XCTUnwrap(state.lastHumanStopEvent)
+        state.stopFromHuman(instanceID: "instance-A", processID: 321, displayID: 1,
+                            displayGeneration: 7, now: 300)
+        let latest = try XCTUnwrap(state.lastHumanStopEvent)
+        let bracket = HostCoreMediaStopBracket(entryHostTime: CMTime(value: 100, timescale: 1_000),
+                                               completionHostTime: CMTime(value: 110, timescale: 1_000))
+        XCTAssertFalse(state.attachHumanStopClockBracket(bracket, eventID: first.eventID))
+        XCTAssertEqual(state.lastHumanStopEvent, latest)
+        XCTAssertTrue(state.attachHumanStopClockBracket(bracket, eventID: latest.eventID))
+        let recorded = state.lastHumanStopEvent
+        XCTAssertFalse(state.attachHumanStopClockBracket(HostCoreMediaStopBracket(
+            entryHostTime: .invalid, completionHostTime: .invalid), eventID: latest.eventID))
+        XCTAssertEqual(state.lastHumanStopEvent, recorded)
+        XCTAssertNil(state.lastHumanStopEvent?.activity)
+    }
+
+    func testLateStopClockEvidenceCannotAttachWhileASuccessorOwnsTheLease() throws {
+        var state = try started()
+        state.stopFromHuman(instanceID: "instance-A", processID: 321, displayID: 1,
+                            displayGeneration: 7, now: 200)
+        let event = try XCTUnwrap(state.lastHumanStopEvent)
+        // The application requires human Allow separately; a new activity is
+        // never created by diagnostic attachment itself.
+        try state.begin(sessionID: "session-B", connectionID: other, sequence: 1,
+                        challenge: "challenge-B", displayGeneration: 7, now: 300)
+        let successor = state.active
+        XCTAssertFalse(state.attachHumanStopClockBracket(HostCoreMediaStopBracket(
+            entryHostTime: CMTime(value: 100, timescale: 1_000),
+            completionHostTime: CMTime(value: 110, timescale: 1_000)), eventID: event.eventID))
+        XCTAssertEqual(state.active, successor)
+        XCTAssertEqual(state.lastHumanStopEvent, event)
     }
 
     func testHumanAllowDoesNotOverrideAnInactiveSessionOrSleepingDisplay() {

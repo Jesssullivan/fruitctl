@@ -194,6 +194,18 @@ overshoot remains recorded; the planning margin is prospective.
    clocks across launches. An event retained after Allow is not a new Stop.
    The invocation diagnostic does not prove physical-clear timing; physical
    evidence must establish that independently.
+   Current source may also return `core_media_stop_bracket` on that same event:
+   lossless `entry_host_time` and `completion_host_time` surround the synchronous
+   local Stop handler on the CoreMedia host clock used by capture's existing
+   request/completion samples. Revocation and UI invalidation precede bracket
+   attachment; invalid times report `status:unavailable` without delaying Stop.
+   Validate its source, epoch, rational values and same instance/PID/display/
+   generation/session before comparing intervals. A null or omitted bracket on
+   an older Host leaves this relation unknown and retains the legacy Stop check.
+   This interval does not establish physical clear, seat input neutralization,
+   sample PTS mapping, pixel acquisition or freshness. Existing signed binaries
+   cannot acquire these fields from a source merge; qualify a newly built Host
+   separately, retaining all 600-frame/60-second and hard episode deadlines.
 6. Finish with the owned attachment's clean release/close and final health,
    title-free panel metadata and physical clear evidence. Do not signal another
    session or restart Screen Sharing to pass cleanup. Main-thread hang is a
