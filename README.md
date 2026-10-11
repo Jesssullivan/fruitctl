@@ -17,17 +17,22 @@ verified release, configures a named target, and checks a fresh observation
 before input. If the release does not support your controller and agent, it
 reports the missing prerequisite instead of claiming installation succeeded.
 
-The published immutable [v0.1.0-alpha.7 runtime preview](https://github.com/xoxd-ai/fruitctl/releases/tag/v0.1.0-alpha.7)
-uses producer `cd34bbcdcc9e70bf25f77cbcfd1f129e1eac30db`. Its thirteen public
+The published immutable [v0.1.0-alpha.8 runtime preview](https://github.com/xoxd-ai/fruitctl/releases/tag/v0.1.0-alpha.8)
+uses producer `ceb1d4643b8f3c66f744f536777214285a4d20ad`. Its thirteen public
 assets match the reviewed hashes and sizes through anonymous downloads. The
 bootstrap disables user curl configuration and retains explicit install-root
 support, normal-home storage and separate user/project registration choices.
-Its stock public Linux x64 Claude project configuration lifecycle passed:
-dry-run, install, doctor, reinstall, same-version prior-receipt rollback and
-uninstall, with unrelated configuration restored exactly. This verifies the
-package and configuration; actual agent/IDE frontend, SSH desktop control,
-optional Host and measured service objectives remain pending. See the
-[exact install pins and component evidence](docs/install.md).
+Its accepted public Linux evidence is limited to Linux x64 stock public bootstrap and Claude project configuration lifecycle: dry-run, install, doctor, reinstall, same-version prior-receipt rollback and uninstall/cache retention; the populated project configuration was restored exactly, including mode 0640.
+This verifies the package and configuration; actual agent/IDE frontend, SSH
+desktop control, optional Host and measured service objectives remain pending.
+Alpha.8 adds the portable `fruitctl-host-install` launcher, implementation and help. It contains no FruitctlHost app, Host native bundle or automatic Host setup; Apple trust, consent retention and physical capture/Stop remain unqualified.
+See the [exact install pins and component evidence](docs/install.md).
+
+Historical alpha.7 remains immutable at producer `cd34bbcdcc9e70bf25f77cbcfd1f129e1eac30db`.
+Its accepted public evidence covers Linux x64 stock bootstrap and Claude project
+configuration lifecycle: dry-run, install, doctor, reinstall, same-version
+prior-receipt rollback and uninstall, with unrelated configuration restored
+exactly. That evidence is historical and does not qualify alpha.8.
 
 Alpha.5 introduced the explicit install-root contract. Its producer
 `00beadf9a62189c6306f147c7d2aad128ff133d7` and older qualification records remain
@@ -72,8 +77,9 @@ operator and cannot be redirected through tool arguments. A human can stop
 control, and uncertain input is never replayed automatically.
 
 The optional **FuzzyBot spell** indicator is a target-side purple heartbeat
-overlay. Its Host source remains an unqualified prototype, and no Host binary,
-installer or service is included in public previews. It will ship only for
+overlay. Its Host source remains an unqualified prototype, and no Host binary
+or service is included in public previews. Alpha.8 includes the portable
+Host-installer payload and help only. It will ship only for
 capture modes that prove the indicator stays out of the agent's observations.
 
 ## Develop and adopt

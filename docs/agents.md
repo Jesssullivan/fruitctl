@@ -21,23 +21,29 @@ it does not mean a desktop session or native binary has been qualified.
 ## Install a pinned release
 
 The curated current preview is immutable
-[v0.1.0-alpha.7](https://github.com/xoxd-ai/fruitctl/releases/tag/v0.1.0-alpha.7),
-pinned to runtime producer `cd34bbcdcc9e70bf25f77cbcfd1f129e1eac30db`.
+[v0.1.0-alpha.8](https://github.com/xoxd-ai/fruitctl/releases/tag/v0.1.0-alpha.8),
+pinned to runtime producer `ceb1d4643b8f3c66f744f536777214285a4d20ad`.
 It provides the runtime, skill and adapters. The Darwin arm64 runtime includes
 the Developer ID-signed controller at `bin/claude-kvm-daemon`. Apple accepted
 its original controller-ZIP submission, produced from
-`e00fcc86bbac4247d5a0847d7e656369c52cc15f`. Alpha.7 reuses those unchanged
+`e00fcc86bbac4247d5a0847d7e656369c52cc15f`. Alpha.8 reuses those unchanged
 native bytes; the complete runtime archive is separate and is not covered by
 that acceptance. Linux uses the separately configured SSH bridge to Darwin. The broker, target
 profile, credential provider, target Screen Sharing and any macOS consent remain
 operator-owned. The Host application and purple indicator remain source
 prototypes with private lab binaries and are not distributed in this preview.
+The runtime includes portable Host-installer payload and help only.
 
-Alpha.7 public installer evidence is limited to
-Linux x64 stock public bootstrap and Claude project configuration lifecycle: dry-run, install, doctor, reinstall, same-version prior-receipt rollback and uninstall; the existing populated project configuration was restored exactly, including mode 0640. Complete platform,
+Alpha.8 public installer evidence is limited to
+Linux x64 stock public bootstrap and Claude project configuration lifecycle: dry-run, install, doctor, reinstall, same-version prior-receipt rollback and uninstall/cache retention; the populated project configuration was restored exactly, including mode 0640. Complete platform,
 real frontend and target desktop qualification remain pending. Use the
 [current installation guide](install.md); alpha.6 and older evidence below is
-historical and does not qualify alpha.7.
+historical and does not qualify alpha.8.
+
+Two fresh Claude Code CLI sessions used the public alpha.8 Linux x64 runtime and shipped skill against an owned synthetic desktop. The first observed three full images and made/reversed two clicks; the second reconnected and observed the restored scene. Both released their sessions.
+This is public-installed Claude synthetic MCP component evidence only. Physical
+desktop, SSH, native Host, consent and complete frontend qualification remain
+open; Gateway/Junie remains deferred.
 
 ### Historical installation evidence
 
@@ -86,8 +92,8 @@ project bootstrap checks remain historical evidence for that release.
 ### Current install and recovery commands
 
 ```sh
-fruitctl install --agent codex --scope user --version v0.1.0-alpha.7 --target <profile> --dry-run
-fruitctl install --agent codex --scope user --version v0.1.0-alpha.7 --target <profile>
+fruitctl install --agent codex --scope user --version v0.1.0-alpha.8 --target <profile> --dry-run
+fruitctl install --agent codex --scope user --version v0.1.0-alpha.8 --target <profile>
 fruitctl doctor --agent codex --scope user
 fruitctl doctor --json
 fruitctl rollback --agent codex --scope user
@@ -110,7 +116,7 @@ manifest digest fail explicitly. No agent or GUI is launched and no root access
 or package-manager install scripts are needed.
 
 For one terminal operation, use the
-[published alpha.7 paste](install.md#one-terminal-paste-published-alpha-7).
+[published alpha.8 paste](install.md#one-terminal-paste-published-alpha-8).
 For installation by an agent, copy the
 [rendered prompt](https://fruitctl.clients.xoxd.ai/install-prompt.md).
 Replace `default` with your configured profile. Those routes select the same
@@ -129,20 +135,20 @@ process or service, create a target profile or credential, or grant macOS consen
 
 ## Install root and registration: current preview
 
-The current [v0.1.0-alpha.7 preview](https://github.com/xoxd-ai/fruitctl/releases/tag/v0.1.0-alpha.7)
+The current [v0.1.0-alpha.8 preview](https://github.com/xoxd-ai/fruitctl/releases/tag/v0.1.0-alpha.8)
 separates operational storage from adapter registration with
 `--install-root ABSOLUTE_DIRECTORY`. Its accepted public installer evidence is
 limited to the Linux x64 Claude project configuration lifecycle described above;
-Darwin alpha.7 runtime, installed SDK and actual frontend qualification remain
+Darwin alpha.8 runtime, installed SDK and actual frontend qualification remain
 pending. **Alpha.4 does not support this option.**
 See the
 [explicit install-root guide](install.md#explicit-install-root-current-preview)
-for the exact alpha.7 bootstrap pin, storage layout and recovery commands.
+for the exact alpha.8 bootstrap pin, storage layout and recovery commands.
 
 An explicit-root installation requires an explicit `--scope`. Use
 `--scope project --project-dir <absolute-project-directory>` to choose the
 project's MCP and skill destinations independently of the runtime cache, private
-installer state and launcher beneath the install root. The alpha.7 bootstrap
+installer state and launcher beneath the install root. The alpha.8 bootstrap
 passes `--project-dir` through; project scope still uses the current directory
 when it is omitted. With `--scope user`, registration still uses the supported
 user configuration and adapter environment rules. Choosing a storage root does

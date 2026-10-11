@@ -7,14 +7,15 @@ through local configuration and the controller's credential provider, not this
 prompt or a checked-in MCP file.
 
 The curated adoption route selects the published
-[v0.1.0-alpha.7 runtime preview](https://github.com/xoxd-ai/fruitctl/releases/tag/v0.1.0-alpha.7),
-producer `cd34bbcdcc9e70bf25f77cbcfd1f129e1eac30db`. Its thirteen public assets match
+[v0.1.0-alpha.8 runtime preview](https://github.com/xoxd-ai/fruitctl/releases/tag/v0.1.0-alpha.8),
+producer `ceb1d4643b8f3c66f744f536777214285a4d20ad`. Its thirteen public assets match
 the reviewed hashes and sizes through anonymous downloads. Its accepted public
-installer lifecycle is limited to Linux x64 stock public bootstrap and Claude project configuration lifecycle: dry-run, install, doctor, reinstall, same-version prior-receipt rollback and uninstall; the existing populated project configuration was restored exactly, including mode 0640.
+installer evidence is limited to Linux x64 stock public bootstrap and Claude project configuration lifecycle: dry-run, install, doctor, reinstall, same-version prior-receipt rollback and uninstall/cache retention; the populated project configuration was restored exactly, including mode 0640.
 This does not qualify a complete platform, actual agent frontend or desktop.
 The rendered prompt follows this curated preview, rather than a moving package
-version or source checkout. Existing alpha.6 evidence and explicitly alpha.6-pinned
-examples below remain historical and are not transferred to alpha.7.
+version or source checkout. Existing alpha.7/alpha.6 evidence and explicitly alpha.6-pinned
+examples below remain historical and are not transferred to alpha.8.
+Alpha.8 adds the portable `fruitctl-host-install` launcher, implementation and help. It contains no FruitctlHost app, Host native bundle or automatic Host setup; Apple trust, consent retention and physical capture/Stop remain unqualified.
 
 The historical [v0.1.0-alpha.4 runtime preview](https://github.com/xoxd-ai/fruitctl/releases/tag/v0.1.0-alpha.4)
 is immutable and source-pinned to
@@ -75,7 +76,7 @@ The current broker provider is an owner-only private credential file. Configure
 that path on the Darwin controller; the installer does not create a target
 password or copy it into the agent configuration.
 
-## One terminal paste: published alpha.7
+## One terminal paste: published alpha.8
 
 This pins both the bootstrap source and immutable runtime preview. Choose your
 adapter from the [agent guide](agents.md), replace `default` with your configured
@@ -83,8 +84,8 @@ profile, and preserve any Home Manager-owned configuration through its owner:
 
 ```sh
 (
-  FRUITCTL_SOURCE_SHA='cd34bbcdcc9e70bf25f77cbcfd1f129e1eac30db'
-  FRUITCTL_RELEASE_TAG='v0.1.0-alpha.7'
+  FRUITCTL_SOURCE_SHA='ceb1d4643b8f3c66f744f536777214285a4d20ad'
+  FRUITCTL_RELEASE_TAG='v0.1.0-alpha.8'
   FRUITCTL_SCRIPT=$(mktemp)
   trap 'rm -f "$FRUITCTL_SCRIPT"' EXIT
   curl --disable --fail --silent --show-error --location --proto '=https' --proto-redir '=https' \
@@ -207,20 +208,20 @@ include the Host prototype.
 
 ## Explicit install root: current preview
 
-The published [v0.1.0-alpha.7 preview](https://github.com/xoxd-ai/fruitctl/releases/tag/v0.1.0-alpha.7)
+The published [v0.1.0-alpha.8 preview](https://github.com/xoxd-ai/fruitctl/releases/tag/v0.1.0-alpha.8)
 implements `--install-root ABSOLUTE_DIRECTORY` for
 `install`, `doctor`, `rollback` and `uninstall`, and the stock bootstrap.
 Its accepted public installer evidence covers only the Linux x64 Claude project
 configuration lifecycle described above. Installed SDK, real frontend, Darwin
-alpha.7 runtime and desktop qualification remain pending. The published
+alpha.8 runtime and desktop qualification remain pending. The published
 **alpha.4 bootstrap and runtime do not support
-`--install-root`**. The pinned alpha.7 user-scope paste above deliberately keeps
+`--install-root`**. The pinned alpha.8 user-scope paste above deliberately keeps
 the normal-home storage behavior by omitting that option.
 
 An install root selects Fruitctl's operational storage. Registration remains a
 separate choice: an explicit-root installation must also specify `--scope user`
 or `--scope project`. `--project-dir` selects the registration project and is
-passed through by the alpha.7 bootstrap; when omitted, project scope uses the
+passed through by the alpha.8 bootstrap; when omitted, project scope uses the
 current directory. Choose project scope and an explicit project directory when
 you want registration confined to an owned project.
 
@@ -243,18 +244,18 @@ executable and existing target/configuration fields; they do not pass
 `--install-root`. That storage option is rejected on `mcp`, `broker`, `relay` and
 `attach`.
 
-For alpha.7, replace every pathname/profile placeholder below. Use an
+For alpha.8, replace every pathname/profile placeholder below. Use an
 absolute project path and a dedicated absolute root you own; quote paths that
-contain spaces. Obtain the [exact producer's bootstrap](https://raw.githubusercontent.com/xoxd-ai/fruitctl/cd34bbcdcc9e70bf25f77cbcfd1f129e1eac30db/scripts/install.sh)
+contain spaces. Obtain the [exact producer's bootstrap](https://raw.githubusercontent.com/xoxd-ai/fruitctl/ceb1d4643b8f3c66f744f536777214285a4d20ad/scripts/install.sh)
 and verify SHA-256 `d5aae5f89812def9f5e91e80de4fe8779b4f62263f1e331a26e5734b5fc3ecfc`
-before running it. These pins identify alpha.7's bytes; they do not qualify an
+before running it. These pins identify alpha.8's bytes; they do not qualify an
 arbitrary frontend, profile or desktop:
 
 ```text
-sh <verified-alpha7-install.sh> --agent junie --scope project \
+sh <verified-alpha8-install.sh> --agent junie --scope project \
   --project-dir <absolute-project-directory> \
   --install-root <absolute-install-root> \
-  --version v0.1.0-alpha.7 --target <configured-profile> --dry-run
+  --version v0.1.0-alpha.8 --target <configured-profile> --dry-run
 
 <absolute-install-root>/bin/fruitctl doctor --agent junie --scope project \
   --project-dir <absolute-project-directory> --install-root <absolute-install-root>
@@ -306,7 +307,7 @@ migration and purge are unsupported.
 
 ### Older runtimes must refuse explicit-root requests
 
-The alpha.7 bootstrap verifies the selected runtime's install-root capability
+The alpha.8 bootstrap verifies the selected runtime's install-root capability
 before calling its installer API. The executing installer must also verify that
 capability in the target release before committing its cache or registration,
 including when installing or rolling back to an older version. Missing or
@@ -337,7 +338,7 @@ lane for them.
 
 ### First run without Home Manager
 
-Install the pinned alpha.7 preview above on the controller and, when needed,
+Install the pinned alpha.8 preview above on the controller and, when needed,
 the Linux seat. These examples assume explicit roots `/Users/alex/Tools/fruitctl`
 and `/home/alex/Tools/fruitctl`, with the agent registered for profile `default`.
 Replace all example accounts, roots, project paths, SSH aliases and the reserved
@@ -347,7 +348,7 @@ daemon paths. Omit `--install-root` from doctor and retain the recorded agent,
 scope and project; the doctor example below uses explicit-root storage.
 Keep your real `HOME`.
 
-These are current configuration instructions. Alpha.7's accepted public
+These are current configuration instructions. Alpha.8's accepted public
 installer scope is the Linux x64 Claude project lifecycle; the Darwin runtime,
 SSH journey and actual frontends remain unqualified.
 
@@ -371,7 +372,7 @@ Save this operator-owned JSON as
       "targetId": "office-desktop",
       "vnc": { "host": "192.0.2.10", "port": 5900, "username": "alex" },
       "credentialFile": "/Users/alex/.config/fruitctl/secrets/desktop",
-      "daemonPath": "/Users/alex/Tools/fruitctl/releases/v0.1.0-alpha.7/darwin-arm64/bin/claude-kvm-daemon"
+      "daemonPath": "/Users/alex/Tools/fruitctl/releases/v0.1.0-alpha.8/darwin-arm64/bin/claude-kvm-daemon"
     }
   }
 }
@@ -380,7 +381,7 @@ Save this operator-owned JSON as
 Run your own broker in a dedicated terminal and leave it running:
 
 ```sh
-"/Users/alex/Tools/fruitctl/releases/v0.1.0-alpha.7/darwin-arm64/bin/fruitctl" \
+"/Users/alex/Tools/fruitctl/releases/v0.1.0-alpha.8/darwin-arm64/bin/fruitctl" \
   broker --config "/Users/alex/.config/fruitctl/controller.json"
 ```
 
@@ -397,9 +398,9 @@ host key trusted and authentication usable without interaction. Start your own
 foreground relay in a dedicated Linux terminal:
 
 ```sh
-"/home/alex/Tools/fruitctl/releases/v0.1.0-alpha.7/linux-x64/bin/fruitctl" \
+"/home/alex/Tools/fruitctl/releases/v0.1.0-alpha.8/linux-x64/bin/fruitctl" \
   relay --bridge desktop-controller \
-  --remote-command "/Users/alex/Tools/fruitctl/releases/v0.1.0-alpha.7/darwin-arm64/bin/fruitctl" \
+  --remote-command "/Users/alex/Tools/fruitctl/releases/v0.1.0-alpha.8/darwin-arm64/bin/fruitctl" \
   --remote-socket "/Users/alex/Library/Application Support/fruitctl/run/broker.sock"
 ```
 
@@ -416,7 +417,7 @@ agent, scope and project recorded by your installation. For a Linux Claude
 project installation, the concrete doctor command is:
 
 ```sh
-"/home/alex/Tools/fruitctl/releases/v0.1.0-alpha.7/linux-x64/bin/fruitctl" \
+"/home/alex/Tools/fruitctl/releases/v0.1.0-alpha.8/linux-x64/bin/fruitctl" \
   doctor --agent claude --scope project --project-dir "/home/alex/Projects/desktop-task" \
   --install-root "/home/alex/Tools/fruitctl" --json
 ```
@@ -437,7 +438,7 @@ and inspect its fresh result. Finish with `task_complete` and a `summary`, or
 unconfirmed release as failure. After reconnect, take and inspect a fresh
 screenshot before further input; never replay uncertain input. Report the exact
 release and observed outcome; registration and these commands alone do not
-qualify a frontend or desktop. Public alpha.7 supplies no Host app or purple
+qualify a frontend or desktop. Public alpha.8 supplies no Host app or purple
 indicator. Installation grants no Screen Recording/Accessibility permission
 or headless TCC provisioning; any independently installed Host requires its
 own consent and capture qualification. Preserve the signed controller bytes.

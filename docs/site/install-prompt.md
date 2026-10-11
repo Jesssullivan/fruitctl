@@ -90,7 +90,9 @@ Report the installed release, full source revision, agent adapter/version,
 controller/target OS, capture mode, and observed test outcome without secrets,
 private screen content, or invented success. Enable the optional FuzzyBot spell
 indicator only when this exact capture mode has a recorded exclusion proof.
-Host remains an unqualified source prototype and is absent from public runtime
-payloads, installation and generated helper mappings. Do not install or enable
-it as part of this preview. No Screen Capture grant or Apple capability approval
+The Host application remains an unqualified source prototype and is absent
+from public runtime payloads and generated helper mappings. Alpha.8 includes
+the portable `fruitctl-host-install` payload and help only; it supplies no native
+Host bundle or public Host install route. Do not install or enable the Host
+app as part of this preview. No Screen Capture grant or Apple capability approval
 is provided by this installation.
