@@ -207,7 +207,7 @@ def main():
         target = Path(args.zip)
         require(target.is_absolute() and not target.exists() and target.suffix == ".zip", "submission archive must be a new absolute ZIP path")
         if signed["kind"] == "fruitctl-apple-sign":
-            run(["ditto", "-c", "-k", "--keepParent", app, target])
+            run(["ditto", "-c", "-k", "--sequesterRsrc", "--keepParent", app, target])
             archived = {"archiveSha256": digest(target), "archiveBytes": target.stat().st_size}
         else:
             # A file needs no parent directory or AppleDouble resource entry.
