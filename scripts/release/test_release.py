@@ -6,10 +6,12 @@ import json
 import subprocess
 import importlib.util
 import io
+import os
 from pathlib import Path
 import tarfile
 import tempfile
 import shutil
+import shlex
 import stat
 import sys
 import zipfile
@@ -558,6 +560,35 @@ class AppleToolArchiveTests(unittest.TestCase):
             with self.subTest(name=name), self.assertRaisesRegex(ValueError, "not a readable ZIP"):
                 self.invoke(producer, suffix=name)
             self.assertFalse((self.base / (name + ".json")).exists())
+
+
+class PortableHostLauncherTests(unittest.TestCase):
+    def test_bundled_node_precedes_ambient_and_resolves_links_without_changing_arguments(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            bundle = root / "runtime space 'quote" / "bin"; bundle.mkdir(parents=True)
+            launcher = bundle / "fruitctl-host-install"
+            shutil.copyfile(ROOT / "bin/fruitctl-host-install", launcher); launcher.chmod(0o755)
+            entry = bundle / "fruitctl-host-install.mjs"; entry.write_text("// inert entrypoint fixture\n")
+            probe = root / "node-probe.py"
+            probe.write_text("import json,sys\nprint(json.dumps({'source':sys.argv[1],'args':sys.argv[2:]}))\n")
+            ambient = root / "ambient"; ambient.mkdir()
+            for executable, label in ((bundle / "node", "bundled"), (ambient / "node", "ambient")):
+                executable.write_text("#!/bin/sh\nexec " + shlex.quote(sys.executable) + " " + shlex.quote(str(probe)) + " " + label + ' "$@"\n')
+                executable.chmod(0o755)
+            links = root / "links space"; links.mkdir()
+            (links / "intermediate").symlink_to(os.path.relpath(launcher, links))
+            relative = links / "relative"; relative.symlink_to("intermediate")
+            absolute = links / "absolute"; absolute.symlink_to(launcher)
+            env = {**os.environ, "PATH": str(ambient) + os.pathsep + os.environ.get("PATH", "")}
+            args = ["doctor", "--app-path", "/a space/FruitctlHost.app", "single' double\"", "$literal;no-eval", ""]
+            for selected in (launcher, relative, absolute):
+                with self.subTest(launcher=selected.name):
+                    completed = subprocess.run([str(selected), *args], env=env, check=True, capture_output=True, text=True, timeout=10)
+                    self.assertEqual(json.loads(completed.stdout), {"source": "bundled", "args": [str(entry), *args]})
+            (bundle / "node").unlink()
+            completed = subprocess.run([str(relative), *args], env=env, check=True, capture_output=True, text=True, timeout=10)
+            self.assertEqual(json.loads(completed.stdout), {"source": "ambient", "args": [str(entry), *args]})
 
 
 class RuntimeArchiveTests(unittest.TestCase):

@@ -38,11 +38,14 @@ def main():
     platform = args.os + "-" + args.arch
     entry = next((binary for binary in node["binaries"] if binary["platform"] == platform), None)
     source.require(entry is not None and node["version"] == "24.21.0", "reviewed Node platform is missing")
-    required = ("package.json", "bin/fruitctl", "bin/fruitctl.mjs", "lib/install/index.mjs", "integrations/agents.json", "skills/fruitctl/SKILL.md")
+    required = ("package.json", "bin/fruitctl", "bin/fruitctl.mjs", "bin/fruitctl-host-install",
+                "bin/fruitctl-host-install.mjs", "lib/install/index.mjs", "lib/install/native.mjs",
+                "integrations/agents.json", "skills/fruitctl/SKILL.md")
     for name in required:
         path = stage / name
         source.require(path.is_file() and not path.is_symlink(), "runtime required file is missing: " + name)
-    source.require((stage / "bin/fruitctl").stat().st_mode & 0o111, "Fruitctl launcher must be executable")
+    for launcher in ("bin/fruitctl", "bin/fruitctl-host-install"):
+        source.require((stage / launcher).stat().st_mode & 0o111, launcher + " launcher must be executable")
     asset_name = "fruitctl-" + args.version + "-" + args.os + "-" + args.arch + ".tar.gz"
     output = destination / asset_name
     receipt_path = destination / (asset_name + ".receipt.json")
