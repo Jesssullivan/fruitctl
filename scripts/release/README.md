@@ -79,6 +79,9 @@ The Apple rail uses `apple_distribution.py` phases in order:
    The current narrow app rail
    refuses embedded frameworks/plugins until their signing order is reviewed.
 2. `archive` verifies signed bytes and creates a submission ZIP for transfer.
+   App bundles retain their parent directory and sequester AppleDouble metadata
+   under `__MACOSX`, keeping the app payload equal to the signed file inventory.
+   Bare controller archives contain only the executable and omit resource metadata.
 3. `notarize` on Neo requires that ZIP, its archive receipt and an existing
    operator-established keychain profile or explicit existing ASC material
    directory. A real Apple `Accepted` response and

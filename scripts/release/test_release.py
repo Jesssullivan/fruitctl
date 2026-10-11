@@ -473,16 +473,33 @@ class AppleToolArchiveTests(unittest.TestCase):
         self.assertEqual(self.binary.read_bytes(), original)
         self.assertEqual(stat.S_IMODE(self.binary.stat().st_mode), 0o755)
 
-    def test_app_bundle_retains_keep_parent_command(self):
+    def test_app_bundle_sequesters_resource_metadata_and_preserves_signed_payload(self):
         app = self.base / "FruitctlHost.app"
         (app / "Contents").mkdir(parents=True); (app / "Contents/Info.plist").write_bytes(b"app fixture")
         self.signed.update(kind="fruitctl-apple-sign", appName=app.name, files=apple.inventory(app))
         self.sign_receipt.write_text(json.dumps(self.signed))
+        # Model the observed macOS ditto default: inline AppleDouble members
+        # would become extra signed payload paths; --sequesterRsrc moves them
+        # into the ZIP metadata namespace without discarding metadata.
+        metadata = b"AppleDouble resource metadata fixture"
         def produce(command, target):
-            self.zip(target, [self.member(app.name + "/Contents/Info.plist", b"app fixture", stat.S_IFREG | 0o644)])
+            sidecar = ("__MACOSX/" + app.name + "/Contents/._Info.plist"
+                       if "--sequesterRsrc" in command else app.name + "/Contents/._Info.plist")
+            self.zip(target, [self.member(app.name + "/Contents/Info.plist", b"app fixture", stat.S_IFREG | 0o644),
+                              self.member(sidecar, metadata, stat.S_IFREG | 0o644)])
+        original = apple.inventory(app)
         target, receipt, calls = self.invoke(produce, app=app)
-        self.assertEqual(calls, [["ditto", "-c", "-k", "--keepParent", app, target]])
-        self.assertEqual(json.loads(receipt.read_text())["archiveSha256"], hashlib.sha256(target.read_bytes()).hexdigest())
+        with zipfile.ZipFile(target) as archive:
+            signed_payload = {name[len(app.name) + 1:]: {"bytes": len(archive.read(name)),
+                               "sha256": hashlib.sha256(archive.read(name)).hexdigest()}
+                              for name in archive.namelist() if name.startswith(app.name + "/")}
+            self.assertEqual(signed_payload, self.signed["files"])
+            self.assertEqual(archive.read("__MACOSX/" + app.name + "/Contents/._Info.plist"), metadata)
+        self.assertEqual(apple.inventory(app), original)
+        self.assertEqual(calls, [["ditto", "-c", "-k", "--sequesterRsrc", "--keepParent", app, target]])
+        result = json.loads(receipt.read_text())
+        self.assertEqual(result["archiveSha256"], hashlib.sha256(target.read_bytes()).hexdigest())
+        self.assertEqual(result["signReceiptSha256"], hashlib.sha256(self.sign_receipt.read_bytes()).hexdigest())
 
     def test_archive_receipt_binds_validated_sign_receipt_despite_producer_replacement(self):
         original = self.sign_receipt.read_bytes()
