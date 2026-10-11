@@ -1,0 +1,24 @@
+#!/bin/sh
+# SPDX-License-Identifier: MIT
+set -eu
+fruitctl_host_script=$0
+case "$fruitctl_host_script" in
+  */*) ;;
+  *) fruitctl_host_script=$(command -v -- "$fruitctl_host_script");;
+esac
+fruitctl_host_links=0
+while [ -L "$fruitctl_host_script" ]; do
+  fruitctl_host_links=$((fruitctl_host_links + 1))
+  [ "$fruitctl_host_links" -le 40 ] || { printf '%s\n' 'Fruitctl Host installer: launcher symlink loop' >&2; exit 1; }
+  fruitctl_host_parent=$(CDPATH='' cd -- "$(dirname -- "$fruitctl_host_script")" && pwd)
+  fruitctl_host_link=$(readlink "$fruitctl_host_script")
+  case "$fruitctl_host_link" in
+    /*) fruitctl_host_script=$fruitctl_host_link;;
+    *) fruitctl_host_script=$fruitctl_host_parent/$fruitctl_host_link;;
+  esac
+done
+fruitctl_host_bin_dir=$(CDPATH='' cd -- "$(dirname -- "$fruitctl_host_script")" && pwd)
+if [ -x "$fruitctl_host_bin_dir/node" ]; then
+  exec "$fruitctl_host_bin_dir/node" "$fruitctl_host_bin_dir/fruitctl-host-install.mjs" "$@"
+fi
+exec node "$fruitctl_host_bin_dir/fruitctl-host-install.mjs" "$@"
