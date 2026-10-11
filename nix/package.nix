@@ -31,6 +31,9 @@ in buildNpmPackage {
     rm -f "$out/bin/fruitctl"
     makeWrapper ${nodejs}/bin/node "$out/bin/fruitctl" \
       --add-flags "$out/lib/node_modules/${metadata.name}/bin/fruitctl.mjs"
+    rm -f "$out/bin/fruitctl-host-install"
+    makeWrapper ${nodejs}/bin/node "$out/bin/fruitctl-host-install" \
+      --add-flags "$out/lib/node_modules/${metadata.name}/bin/fruitctl-host-install.mjs"
     cp -R "${cleanSrc}/skills/fruitctl" "$out/share/fruitctl/skills/fruitctl"
   '';
   passthru = {

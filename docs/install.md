@@ -159,8 +159,11 @@ Gatekeeper may retrieve its notarization ticket online and request normal user
 approval. See [Apple's notarization workflow](https://developer.apple.com/documentation/security/notarizing-macos-software-before-distribution).
 Do not modify or re-sign its bytes to bypass that approval.
 
-The optional Host indicator remains an unqualified source prototype and is
-excluded from public runtime payloads and automatic installation. Signing and
+The optional Host indicator is not yet qualified for public capture modes and
+is excluded from public runtime payloads and automatic installation. The
+[developer Host installer](host-installer.md) provides a separate file-only
+path for reviewed native artifacts; no public Host release is available.
+Signing and
 notarization do not grant Screen Recording or Accessibility permission. Host
 would need its own attended consent and permission qualification; no managed
 or headless Screen Capture grant is provided. [Apple's ScreenCaptureKit sample](https://developer.apple.com/documentation/screencapturekit/capturing-screen-content-in-macos)

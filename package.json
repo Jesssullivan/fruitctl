@@ -24,7 +24,8 @@
   "main": "index.js",
   "bin": {
     "claude-kvm": "index.js",
-    "fruitctl": "bin/fruitctl.mjs"
+    "fruitctl": "bin/fruitctl.mjs",
+    "fruitctl-host-install": "bin/fruitctl-host-install.mjs"
   },
   "files": [
     "bin/",

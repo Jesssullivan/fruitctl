@@ -15,11 +15,11 @@ if (process.argv.slice(2).some((arg) => arg !== '--check')) {
 const output = path.join(root, 'build-docs');
 const origin = 'https://fruitctl.clients.xoxd.ai';
 const repository = 'https://github.com/xoxd-ai/fruitctl';
-const pageNames = ['index', 'install', 'agents', 'operation', 'junie', 'permissions', 'architecture', 'compatibility', 'home-manager', 'licensing', 'product', 'slo'];
+const pageNames = ['index', 'install', 'host-installer', 'agents', 'operation', 'junie', 'permissions', 'architecture', 'compatibility', 'home-manager', 'licensing', 'product', 'slo'];
 const labels = {
   index: 'Fruitctl', install: 'Install', agents: 'Agent adapters', junie: 'Junie and IntelliJ', architecture: 'Architecture',
   operation: 'Desktop operation', permissions: 'macOS permissions', compatibility: 'Compatibility', product: 'Product', slo: 'Service objectives',
-  'home-manager': 'Home Manager', licensing: 'Licensing',
+  'home-manager': 'Home Manager', 'host-installer': 'Developer Host installer', licensing: 'Licensing',
 };
 const sha256 = (value) => createHash('sha256').update(value).digest('hex');
 const sources = new Map();
