@@ -119,6 +119,71 @@ def wait_until(condition, seconds, message):
     raise TimeoutError(message)
 
 
+def require_suspension_evidence(report):
+    """An early action refusal cannot stand in for observed native expiry."""
+    def require(condition, message):
+        if not condition:
+            raise AssertionError(message)
+
+    signals = report.get("signals", [])
+    require(len(signals) == 2 and [row.get("signal") for row in signals] == ["SIGSTOP", "SIGCONT"],
+            "owned broker suspension and resume were not observed")
+    require(all(row.get("pid") == report.get("ownedBrokerPid") for row in signals),
+            "suspension did not target the recorded broker")
+    suspended, resumed = [row.get("atNanoseconds") for row in signals]
+    require(type(suspended) is int and type(resumed) is int and 0 < suspended < resumed,
+            "invalid suspension interval")
+    grants = [row for row in report.get("messages", []) if row.get("kind") == "permit"
+              and row.get("method") == "grant_input_permit" and row.get("result")
+              and not row.get("error") and type(row.get("observedMonotonicNanoseconds")) is int
+              and row["observedMonotonicNanoseconds"] <= suspended]
+    require(bool(grants), "no successful native grant before suspension")
+    grant = grants[-1]
+    remaining = grant["result"].get("native_permit_remaining_ms")
+    require(type(remaining) is int and 0 < remaining <= 1000, "invalid native grant duration")
+    cutoff = grant["observedMonotonicNanoseconds"] + remaining * 1_000_000
+    require(report.get("observerExpiryUpperBoundNanoseconds") == cutoff
+            and 0 < cutoff - suspended <= 1_000_000_000 and resumed >= cutoff + 450_000_000,
+            "native expiry was not observed within the bounded suspension")
+    events = report.get("eventsObservedWhileBrokerSuspended", [])
+    require(bool(events), "no native input observed before suspension")
+    held_keys, held_pointer, nonrelease, after_expiry = set(), False, [], []
+    previous = 0
+    for event in events:
+        observed = event.get("receivedMonotonicNanoseconds")
+        require(type(observed) is int and previous <= observed <= resumed,
+                "invalid observed native event order")
+        previous = observed
+        expired, cleanup = observed >= cutoff, False
+        if event.get("kind") == "key":
+            require(event.get("down") in (0, 1), "invalid native key event")
+            cleanup = expired and event["down"] == 0 and event["key"] in held_keys
+            if event["down"]:
+                held_keys.add(event["key"])
+                nonrelease.append(event)
+            else:
+                held_keys.discard(event["key"])
+        elif event.get("kind") == "pointer":
+            cleanup = expired and event["mask"] == 0 and held_pointer
+            held_pointer = event["mask"] != 0
+            if held_pointer:
+                nonrelease.append(event)
+        else:
+            require(False, "unexpected native input event")
+        if expired:
+            require(cleanup, "non-release input arrived after native expiry")
+            after_expiry.append({**event, "forcedCleanupRelease": cleanup})
+    require(any(event["receivedMonotonicNanoseconds"] <= suspended for event in nonrelease),
+            "native input never started before broker suspension")
+    require(not held_keys and not held_pointer, "expiry did not neutralize held native input")
+    require(report.get("eventsAfterObserverExpiryUpperBound") == after_expiry
+            and report.get("heldInputAfterExpiry") == {"keys": [], "pointer": False},
+            "native expiry summary does not match observed events")
+    require(report.get("brokerExitCode") == 0 and report.get("readerThreadsStopped") is True
+            and report.get("fixtureThreadStopped") is True and report.get("fixtureErrors") == [],
+            "owned broker or fixture closure was not confirmed")
+
+
 def scenario(module, daemon, node, producer, image, name):
     class TimedEvents(list):
         def append(self, value):
@@ -267,6 +332,12 @@ def scenario(module, daemon, node, producer, image, name):
         report["fixtureErrors"] = fixture.snapshot()["errors"]
         if report["fixtureErrors"] or not report["fixtureThreadStopped"]:
             report["status"] = "failed"
+    if name != "healthy-renewal" and report["status"] == "passed":
+        try:
+            require_suspension_evidence(report)
+        except AssertionError as error:
+            report["status"] = "failed"
+            report["failure"] = "AssertionError: " + str(error)
     return report
 
 
