@@ -212,6 +212,7 @@ targets:
       - FruitctlHost/HostCapturePermission.swift
       - FruitctlHost/HostCaptureTiming.swift
       - FruitctlHost/HostCapturedSample.swift
+      - FruitctlHost/HostCapture.swift
       - FruitctlHost/HostIdleReference.swift
       - FruitctlHost/HostIPC.swift
       - Tests/FruitctlHostTests.swift

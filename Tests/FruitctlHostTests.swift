@@ -3,6 +3,7 @@ import XCTest
 import CoreMedia
 import CoreVideo
 import CoreGraphics
+import ImageIO
 import ScreenCaptureKit
 import Darwin
 
@@ -603,6 +604,223 @@ final class FruitctlHostTests: XCTestCase {
         var unterminated = HostLineFramer()
         _ = try unterminated.append(Data(#"{"action":"health"}"#.utf8))
         XCTAssertTrue(unterminated.hasIncompleteLine)
+    }
+}
+
+/// The worker is released by the test, not an elapsed-time assumption. This
+/// lets main-actor work and cancellation happen while it is still owned.
+private actor HostImageProcessingTestGate {
+    private var startWaiters: [CheckedContinuation<Void, Never>] = []
+    private var releaseWaiters: [CheckedContinuation<Void, Never>] = []
+    private var released = false
+    private(set) var started = false
+    private(set) var finished = false
+    private(set) var startedOnMainThread = false
+    private(set) var canceledAtCompletion = false
+
+    func hold(startedOnMainThread: Bool) async {
+        self.startedOnMainThread = startedOnMainThread
+        started = true
+        let waiters = startWaiters
+        startWaiters.removeAll()
+        for waiter in waiters { waiter.resume() }
+        if !released {
+            await withCheckedContinuation { releaseWaiters.append($0) }
+        }
+        canceledAtCompletion = Task.isCancelled
+        finished = true
+    }
+
+    func waitForStart() async {
+        if !started {
+            await withCheckedContinuation { startWaiters.append($0) }
+        }
+    }
+
+    func release() {
+        released = true
+        let waiters = releaseWaiters
+        releaseWaiters.removeAll()
+        for waiter in waiters { waiter.resume() }
+    }
+}
+
+final class HostImageProcessingTests: XCTestCase {
+    private func image(width: Int = 4, height: Int = 2, solid: Bool = false) throws -> CGImage {
+        var bytes: [UInt8] = []
+        for pixel in 0..<(width * height) {
+            bytes += solid ? [255, 0, 255, 255] :
+                [UInt8(pixel * 31 % 256), UInt8(pixel * 17 % 256), UInt8(pixel * 7 % 256), 255]
+        }
+        let provider = try XCTUnwrap(CGDataProvider(data: Data(bytes) as CFData))
+        return try XCTUnwrap(CGImage(width: width, height: height, bitsPerComponent: 8,
+            bitsPerPixel: 32, bytesPerRow: width * 4, space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue |
+                CGBitmapInfo.byteOrder32Big.rawValue), provider: provider, decode: nil,
+            shouldInterpolate: false, intent: .defaultIntent))
+    }
+
+    private func rgba(_ image: CGImage) throws -> [UInt8] {
+        let context = try XCTUnwrap(CGContext(data: nil, width: image.width, height: image.height,
+            bitsPerComponent: 8, bytesPerRow: image.width * 4, space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue))
+        context.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
+        let bytes = try XCTUnwrap(context.data).assumingMemoryBound(to: UInt8.self)
+        return Array(UnsafeBufferPointer(start: bytes, count: image.width * image.height * 4))
+    }
+
+    private func decoded(_ png: Data) throws -> CGImage {
+        let source = try XCTUnwrap(CGImageSourceCreateWithData(png as CFData, nil))
+        XCTAssertEqual(CGImageSourceGetCount(source), 1)
+        XCTAssertEqual(CGImageSourceGetType(source) as String?, "public.png")
+        return try XCTUnwrap(CGImageSourceCreateImageAtIndex(source, 0, nil))
+    }
+
+    @MainActor
+    func testImageProcessingLeavesMainActorFreeForStopAndHeartbeat() async throws {
+        let gate = HostImageProcessingTestGate()
+        let processor = HostImageProcessor { image, maximumDimension in
+            await gate.hold(startedOnMainThread: Thread.isMainThread)
+            return try HostImageEncoder.encode(image, maximumDimension: maximumDimension)
+        }
+        let owned = try image()
+        let parent = Task { @MainActor in
+            try await processor.process(owned, maximumDimension: 4)
+        }
+        await gate.waitForStart()
+        let workerOnMainThread = await gate.startedOnMainThread
+        XCTAssertFalse(workerOnMainThread)
+        XCTAssertTrue(processor.isProcessing)
+        var lease = HostLeaseState()
+        let owner = UUID()
+        try lease.begin(sessionID: "processing", connectionID: owner, sequence: 1,
+            challenge: "owned-image", displayGeneration: 7, now: 100)
+        XCTAssertEqual(HostLeaseState.uiHeartbeatDecision(activityEligible: true,
+            captureInProgress: true, captureReady: true, overlayReady: true, visiblePanels: true),
+            .recordVisibleHeartbeat)
+        XCTAssertTrue(HostLeaseState.isReady(now: 200, uiHeartbeatAt: 200,
+            captureReady: true, overlayReady: true))
+        lease.stopFromHuman(instanceID: "processing-test", processID: 123, displayID: 1,
+            displayGeneration: 7, now: 201)
+        XCTAssertNil(lease.active)
+        let finishedBeforeStop = await gate.finished
+        XCTAssertFalse(finishedBeforeStop)
+        await gate.release()
+        _ = try await parent.value
+        // The existing caller's post-capture owner check cannot publish this
+        // now-stale result, even though image processing itself succeeded.
+        XCTAssertThrowsError(try lease.requireOwner(sessionID: "processing", connectionID: owner,
+            displayGeneration: 7, now: 202)) { XCTAssertEqual($0 as? HostLeaseError, .expired) }
+        XCTAssertFalse(processor.isProcessing)
+    }
+
+    @MainActor
+    func testImageProcessingCancellationRetainsWorkerUntilActualCompletion() async throws {
+        let gate = HostImageProcessingTestGate()
+        let processor = HostImageProcessor { image, maximumDimension in
+            await gate.hold(startedOnMainThread: Thread.isMainThread)
+            return try HostImageEncoder.encode(image, maximumDimension: maximumDimension)
+        }
+        let owned = try image()
+        let parent = Task { @MainActor in
+            try await processor.process(owned, maximumDimension: 4)
+        }
+        await gate.waitForStart()
+        parent.cancel()
+        XCTAssertTrue(processor.isProcessing)
+        let completed = await gate.finished
+        XCTAssertFalse(completed)
+        do {
+            _ = try await processor.process(owned, maximumDimension: 4)
+            XCTFail("A canceled but still-owned worker admitted a successor")
+        } catch { XCTAssertEqual(error as? HostLeaseError, .busy) }
+        await gate.release()
+        do { _ = try await parent.value; XCTFail("Canceled image processing succeeded") }
+        catch { XCTAssertTrue(error is CancellationError) }
+        let workerSawCancellation = await gate.canceledAtCompletion
+        XCTAssertTrue(workerSawCancellation)
+        XCTAssertFalse(processor.isProcessing)
+        // A new invocation is permitted only after the original task unwinds.
+        _ = try await processor.process(owned, maximumDimension: 4)
+        XCTAssertFalse(processor.isProcessing)
+    }
+
+    @MainActor
+    func testImageProcessingRejectsPreCanceledParentWithoutStartingWorker() async throws {
+        let gate = HostImageProcessingTestGate()
+        let processor = HostImageProcessor { image, maximumDimension in
+            await gate.hold(startedOnMainThread: Thread.isMainThread)
+            return try HostImageEncoder.encode(image, maximumDimension: maximumDimension)
+        }
+        let owned = try image()
+        let parent = Task { @MainActor in
+            withUnsafeCurrentTask { $0?.cancel() }
+            return try await processor.process(owned, maximumDimension: 4)
+        }
+        do { _ = try await parent.value; XCTFail("Pre-canceled parent started processing") }
+        catch { XCTAssertTrue(error is CancellationError) }
+        let started = await gate.started
+        XCTAssertFalse(started)
+        XCTAssertFalse(processor.isProcessing)
+    }
+
+    @MainActor
+    func testImageProcessingRevalidatesChangedPermissionAndDisplay() async throws {
+        let owned = try image()
+        for changed in 0..<3 {
+            let gate = HostImageProcessingTestGate()
+            let processor = HostImageProcessor { image, maximumDimension in
+                await gate.hold(startedOnMainThread: Thread.isMainThread)
+                return try HostImageEncoder.encode(image, maximumDimension: maximumDimension)
+            }
+            var granted = true, enabled = true, displayMatches = true
+            let permission = HostCapturePermission(preflight: { granted }, request: { false })
+            let parent = Task { @MainActor in
+                try await processor.process(owned, maximumDimension: 4) {
+                    try permission.requireCapture(enabled: enabled)
+                    guard displayMatches else { throw HostCaptureError.incompleteImage }
+                }
+            }
+            await gate.waitForStart()
+            if changed == 0 { granted = false }
+            else if changed == 1 { enabled = false }
+            else { displayMatches = false }
+            await gate.release()
+            do { _ = try await parent.value; XCTFail("Stale processing authorization accepted") }
+            catch {
+                let expected: HostCaptureError = changed == 0 ? .permissionRequired :
+                    (changed == 1 ? .notEnabled : .incompleteImage)
+                XCTAssertEqual(error as? HostCaptureError, expected)
+            }
+            XCTAssertFalse(processor.isProcessing)
+        }
+    }
+
+    @MainActor
+    func testImageProcessingPreservesOwnedPNGPixelsAndScaling() async throws {
+        let processor = HostImageProcessor()
+        let patterned = try image()
+        let full = try await processor.process(patterned, maximumDimension: 8)
+        let fullImage = try decoded(full.png)
+        XCTAssertEqual(full.scaledWidth, 4)
+        XCTAssertEqual(full.scaledHeight, 2)
+        XCTAssertEqual(fullImage.width, full.scaledWidth)
+        XCTAssertEqual(fullImage.height, full.scaledHeight)
+        XCTAssertEqual(try rgba(fullImage), try rgba(patterned))
+        let scaled = try await processor.process(image(solid: true), maximumDimension: 2)
+        let scaledImage = try decoded(scaled.png)
+        XCTAssertEqual(scaled.scaledWidth, 2)
+        XCTAssertEqual(scaled.scaledHeight, 1)
+        XCTAssertEqual(scaledImage.width, scaled.scaledWidth)
+        XCTAssertEqual(scaledImage.height, scaled.scaledHeight)
+        XCTAssertEqual(try rgba(scaledImage), [255, 0, 255, 255, 255, 0, 255, 255])
+        for dimension in [0, -1] {
+            do {
+                _ = try await processor.process(patterned, maximumDimension: dimension)
+                XCTFail("Invalid output bound accepted")
+            } catch { XCTAssertEqual(error as? HostCaptureError, .incompleteImage) }
+            XCTAssertFalse(processor.isProcessing)
+        }
     }
 }
 
