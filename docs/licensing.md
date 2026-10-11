@@ -100,3 +100,33 @@ build receipt, and inspect the extracted binary and corresponding-source
 archives. Confirm source and license links work without authentication. Keep
 the release's dependency inventory with its artifacts so a later pin update
 cannot rewrite what the earlier release contained.
+
+### Native-only review bundles
+
+The manifest writer also accepts an explicit native-only bundle. Stage the
+unchanged native ZIPs and each component's matching source archive in one
+canonical asset directory. Keep the original build, signing, archive,
+notarization and source-package receipts in private input contracts; the Host
+also needs its staple and final distribution receipts. Original producer
+revisions remain attached to their artifacts.
+
+```sh
+python3 scripts/release/write_manifest.py --native-only \
+  --version <reviewed-release-tag> --output-dir <absolute-asset-directory> \
+  --native-input <private-host-input.json> \
+  --native-input <private-controller-input.json>
+just verify-native-release <absolute-manifest-path> <absolute-asset-directory>
+```
+
+The writer checks resident assets and the original receipt chains before
+creating the manifest, checksums, notices and portable evidence. Original
+receipt hashes and portable projection hashes are separate: a projection
+does not reconstruct a withheld original receipt. Both commands perform
+file and structure verification; Apple trust, installed identity, permissions
+and runtime qualification require their own Darwin evidence. Missing signed
+entitlement or designated-requirement observations remain explicit gaps.
+
+A native-only bundle does not contain the installer's runtime package. The
+default release verifier still requires a runtime asset. These commands do
+not choose or publish a release, replace existing assets or grant permission
+to ship an unqualified capture mode.
