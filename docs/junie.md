@@ -64,6 +64,22 @@ or IntelliJ, create the target profile or credentials, start the broker/relay,
 enable Screen Sharing, or grant macOS consent. The public preview excludes the
 optional Host application and purple indicator.
 
+## When Junie or Gateway is deferred
+
+If Junie, its provider or Gateway setup is deferred, an existing authenticated
+Claude Code session can use the same pinned project-scope bootstrap below with
+`--agent claude` in both invocations. That choice registers project `.mcp.json`
+and `.claude/skills/fruitctl`; honor any `declarative-required` result through
+the configuration owner and retain unrelated settings. Keep the same target,
+Darwin broker and Linux SSH relay prerequisites; this alternative does not
+install Junie, IntelliJ or Gateway or change their authentication or models.
+In Claude, inspect the four discovered tools and follow the installed
+[operation reference](../skills/fruitctl/references/operation.md) for health,
+fresh images, authorized input and verification. End the session with
+`task_complete` plus `summary`, or `task_failed` plus `reason`, and report any
+unconfirmed release. Alpha.7's Linux x64 Claude project installer evidence does
+not qualify a real frontend, desktop, Gateway session or optional Host.
+
 ## One project-scope terminal paste
 
 Run this in the root of the project you intend to open in Junie. Replace
