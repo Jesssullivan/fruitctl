@@ -2,11 +2,13 @@
 """Verify exact local release assets and safe installer archive structure; never publish."""
 import argparse
 import hashlib
+import importlib.util
 import json
 from pathlib import Path
 import re
 import sys
 import tarfile
+import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -56,6 +58,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("manifest")
     parser.add_argument("--assets-dir", required=True)
+    parser.add_argument("--native-only", action="store_true", help="Verify native bundle explicitly; does not authenticate Apple or qualify runtime")
     args = parser.parse_args()
     manifest = json.loads(Path(args.manifest).read_text())
     require(manifest.get("schema") == "fruitctl.release.v1" and manifest.get("repository") == "xoxd-ai/fruitctl", "unexpected release schema or repository")
@@ -65,6 +68,31 @@ def main():
     require(isinstance(assets, list) and assets, "release assets are absent")
     root = Path(args.assets_dir)
     require(root.is_absolute() and root.resolve(strict=True) == root, "canonical asset directory required")
+    if args.native_only:
+        spec = importlib.util.spec_from_file_location("native_release", ROOT / "scripts/release/native_release.py")
+        native = importlib.util.module_from_spec(spec); spec.loader.exec_module(native)
+        require(native.canonical_file(args.manifest) == root / "fruitctl-release.json", "native manifest must be beside its assets")
+        manifest = native.json_bytes(Path(args.manifest).read_bytes())
+        require(manifest.get("schema") == "fruitctl.release.v1" and manifest.get("repository") == "xoxd-ai/fruitctl"
+                and manifest.get("version") == version, "native manifest identity differs")
+        require(manifest.get("nativeEvidence") == "native-evidence.json", "native evidence asset required")
+        evidence = native.json_bytes(native.canonical_file(root / "native-evidence.json").read_bytes())
+        count = native.verify_native(manifest, root, evidence)
+        expected = {asset["name"]: asset["sha256"] for asset in assets}
+        expected[Path(args.manifest).name] = digest(Path(args.manifest))
+        lines = native.canonical_file(root / "SHA256SUMS").read_text().splitlines()
+        actual = {}
+        for line in lines:
+            match = re.fullmatch(r"([a-f0-9]{64})  ([A-Za-z0-9][A-Za-z0-9._-]+)", line)
+            require(match is not None and match.group(2) not in actual, "invalid or duplicate checksum row")
+            actual[match.group(2)] = match.group(1)
+        require(actual == expected, "native checksum inventory differs")
+        print(json.dumps({"kind": "fruitctl-release-structure-verification", "schemaVersion": 1, "status": "passed",
+                          "mode": "native-only", "manifestSha256": digest(Path(args.manifest)), "assetsVerified": len(assets),
+                          "nativeComponents": count, "runtimeCount": 0, "qualification": native.QUALIFICATION,
+                          "appleAuthentication": "not-performed", "originalPrivateReceiptBytes": "not-reconstructed-from-projections"}))
+        return
+    require(manifest.get("mode", "runtime") == "runtime", "native bundle requires explicit --native-only")
     node = json.loads((ROOT / "LICENSES/node-runtime-provenance.json").read_text())
     names = set(); platforms = set(); runtime_count = 0
     for asset in assets:
@@ -96,6 +124,6 @@ def main():
 if __name__ == "__main__":
     try:
         main()
-    except (ValueError, OSError, KeyError, TypeError, tarfile.TarError) as error:
+    except (ValueError, OSError, KeyError, TypeError, tarfile.TarError, zipfile.BadZipFile) as error:
         print("Release asset refused: " + str(error), file=sys.stderr)
         raise SystemExit(1)

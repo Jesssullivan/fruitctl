@@ -46,6 +46,7 @@ verify-native-inputs:
 test-release:
     python3 scripts/release/test_native_input.py
     python3 scripts/release/test_release.py
+    python3 -I -B scripts/release/test_native_release.py
 
 # Explicit Darwin-only synthetic input-admission proof; never a real desktop.
 test-observation-gate daemon output_dir:
@@ -61,3 +62,7 @@ test-native-permit-receipt node="node":
 
 verify-release manifest assets_dir:
     python3 scripts/verify-release.py {{quote(manifest)}} --assets-dir {{quote(assets_dir)}}
+
+# Explicit file-only native bundle review; does not qualify install or Apple trust.
+verify-native-release manifest assets_dir:
+    python3 scripts/verify-release.py {{quote(manifest)}} --assets-dir {{quote(assets_dir)}} --native-only
