@@ -7,6 +7,12 @@ YAML metadata and Markdown instructions with references loaded when needed.
 TOON inventories can supplement that contract. They do not replace a harness's
 native skill or MCP configuration format.
 
+For desktop work, follow the installed skill's
+[operation reference](../skills/fruitctl/references/operation.md): health, a fresh
+image, bounded authorized input, verification and session release. The hosted
+reference describes the current workflow; use your installed release's skill
+and discovered tool schemas when their versions differ.
+
 All seven adapters currently have documented configuration formats and offline
 installer tests. End-to-end image rendering, input and lease qualification is
 pending for each frontend. A successful configuration check means **configured**;
