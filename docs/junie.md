@@ -68,18 +68,19 @@ optional Host application and purple indicator.
 
 Run this in the root of the project you intend to open in Junie. Replace
 `desktop` with your already-configured target profile. This uses the immutable
-alpha.6 runtime preview and checks the pinned bootstrap script before execution.
+alpha.7 runtime preview and checks the pinned bootstrap script before execution.
 The first invocation previews the operation; the second installs it.
 
 ```sh
 (
   FRUITCTL_TARGET_PROFILE='desktop'
-  FRUITCTL_SOURCE_SHA='8653325c6ccc0e058b3e4cf84eb44101cfd270fc'
-  FRUITCTL_RELEASE_TAG='v0.1.0-alpha.6'
+  FRUITCTL_SOURCE_SHA='cd34bbcdcc9e70bf25f77cbcfd1f129e1eac30db'
+  FRUITCTL_RELEASE_TAG='v0.1.0-alpha.7'
   FRUITCTL_PROJECT_DIR=$(pwd -P)
   FRUITCTL_SCRIPT=$(mktemp)
   trap 'rm -f "$FRUITCTL_SCRIPT"' EXIT
   curl --disable --fail --silent --show-error --location --proto '=https' --proto-redir '=https' \
+    --connect-timeout 10 --max-time 120 \
     "https://raw.githubusercontent.com/xoxd-ai/fruitctl/$FRUITCTL_SOURCE_SHA/scripts/install.sh" \
     -o "$FRUITCTL_SCRIPT" &&
   FRUITCTL_ACTUAL_SHA=$(if command -v sha256sum >/dev/null 2>&1; then
@@ -101,11 +102,11 @@ with `--scope user`. The bootstrap supports `--project-dir`; this example
 selects the physical current project path explicitly. It also supports
 `--install-root` for a separate absolute storage root. That option requires
 explicit scope; repeat the same root for doctor, rollback and uninstall.
-See [installation roots](install.md#explicit-install-root-alpha-6-preview) before choosing a root
+See [installation roots](install.md#explicit-install-root-current-preview) before choosing a root
 for an existing installation.
 
 Use the receipt's recorded project path for subsequent lifecycle commands.
-The example selects the physical current directory. Alpha.6's installed CLI
+The example selects the physical current directory. Alpha.7's installed CLI
 retains the project-alias refusal introduced in alpha.4 and names the recorded
 path, including during dry-run. Historical alpha.3 could create another receipt
 for that alias; later releases do not migrate those older records automatically.
@@ -196,7 +197,7 @@ already-configured target profile:
 FRUITCTL_BACKEND_CLI='/absolute/path/to/verified/bin/fruitctl'
 FRUITCTL_BACKEND_PROJECT='/absolute/path/to/owned/qualification-project'
 FRUITCTL_INSTALL_ROOT='/absolute/path/to/owned/fruitctl-root'
-FRUITCTL_RELEASE_TAG='v0.1.0-alpha.6'
+FRUITCTL_RELEASE_TAG='v0.1.0-alpha.7'
 FRUITCTL_TARGET_PROFILE='desktop'
 
 "$FRUITCTL_BACKEND_CLI" install --agent junie --scope project \
@@ -247,14 +248,18 @@ separate results.
 
 ## Current preview and historical installation evidence
 
-Alpha.6 is the current pinned preview. It includes explicit storage roots and
+Alpha.7 is the current pinned preview. It includes explicit storage roots and
 ambient-curl configuration isolation. The public runtime excludes FruitctlHost
-and the purple indicator. Darwin ARM64 Junie project bootstrap, installed doctor,
+and the purple indicator. Its accepted public installer evidence covers the
+Linux x64 stock bootstrap and Claude project configuration lifecycle; it does
+not qualify Junie or IntelliJ. Alpha.7 installed SDK terminal acceptance and
+real Junie/IntelliJ frontend qualification remain pending.
+
+Historical alpha.6 Darwin ARM64 Junie project bootstrap, installed doctor,
 same-version reinstall and rollback, and owned uninstall have verified component
 evidence. A separate default public uninstall-shell check used a fresh
-offline-cache installation. The combined installer/SDK run remained unsuccessful;
-installed SDK terminal acceptance and real Junie/IntelliJ frontend qualification
-remain pending. Historical alpha.4 observations below remain specific to alpha.4.
+offline-cache installation. The combined alpha.6 installer/SDK run remained
+unsuccessful. Historical alpha.4 observations below remain specific to alpha.4.
 See [current installation evidence](install.md).
 
 ### Observed alpha.4 installation scope

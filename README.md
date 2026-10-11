@@ -17,20 +17,25 @@ verified release, configures a named target, and checks a fresh observation
 before input. If the release does not support your controller and agent, it
 reports the missing prerequisite instead of claiming installation succeeded.
 
-The published immutable [v0.1.0-alpha.6 runtime preview](https://github.com/xoxd-ai/fruitctl/releases/tag/v0.1.0-alpha.6)
-uses producer `8653325c6ccc0e058b3e4cf84eb44101cfd270fc`. Its thirteen public
+The published immutable [v0.1.0-alpha.7 runtime preview](https://github.com/xoxd-ai/fruitctl/releases/tag/v0.1.0-alpha.7)
+uses producer `cd34bbcdcc9e70bf25f77cbcfd1f129e1eac30db`. Its thirteen public
 assets match the reviewed hashes and sizes through anonymous downloads. The
 bootstrap disables user curl configuration and retains explicit install-root
 support, normal-home storage and separate user/project registration choices.
-Source tests, archive structure and Darwin ARM64 Junie project installer
-components are verified. The combined installer/SDK run was unsuccessful;
-installed SDK terminal acceptance, actual Junie/IDE frontend, desktop and
-measured service objectives remain pending. See the
+Its stock public Linux x64 Claude project configuration lifecycle passed:
+dry-run, install, doctor, reinstall, same-version prior-receipt rollback and
+uninstall, with unrelated configuration restored exactly. This verifies the
+package and configuration; actual agent/IDE frontend, SSH desktop control,
+optional Host and measured service objectives remain pending. See the
 [exact install pins and component evidence](docs/install.md).
 
 Alpha.5 introduced the explicit install-root contract. Its producer
 `00beadf9a62189c6306f147c7d2aad128ff133d7` and older qualification records remain
-separate from alpha.6; older receipts qualify their recorded releases only.
+separate from alpha.7; older receipts qualify their recorded releases only.
+
+Historical alpha.6 Darwin ARM64 Junie project installer components are verified.
+Its combined installer/SDK run was unsuccessful; that evidence does not qualify
+alpha.7 or an actual Junie frontend.
 
 The historical immutable [v0.1.0-alpha.4 runtime preview](https://github.com/xoxd-ai/fruitctl/releases/tag/v0.1.0-alpha.4)
 ships bundled Node.js 24.21.0, the installer, shared skill and MCP/broker code.

@@ -121,21 +121,22 @@ An explicit profile `daemonPath` takes priority, followed by
 inside its installed release. Installation does not start a broker, native
 process or service, create a target profile or credential, or grant macOS consent.
 
-## Install root and registration: alpha.6 preview
+## Install root and registration: current preview
 
-The historical [v0.1.0-alpha.6 preview](https://github.com/xoxd-ai/fruitctl/releases/tag/v0.1.0-alpha.6)
+The current [v0.1.0-alpha.7 preview](https://github.com/xoxd-ai/fruitctl/releases/tag/v0.1.0-alpha.7)
 separates operational storage from adapter registration with
-`--install-root ABSOLUTE_DIRECTORY`. Source and archive capability checks are
-verified, with scoped Darwin ARM64 Junie project installer evidence; installed
-SDK terminal acceptance remains pending. **Alpha.4 does not support this option.**
+`--install-root ABSOLUTE_DIRECTORY`. Its accepted public installer evidence is
+limited to the Linux x64 Claude project configuration lifecycle described above;
+Darwin alpha.7 runtime, installed SDK and actual frontend qualification remain
+pending. **Alpha.4 does not support this option.**
 See the
-[explicit install-root guide](install.md#explicit-install-root-alpha-6-preview)
-for the exact alpha.6 bootstrap pin, storage layout and recovery commands.
+[explicit install-root guide](install.md#explicit-install-root-current-preview)
+for the exact alpha.7 bootstrap pin, storage layout and recovery commands.
 
 An explicit-root installation requires an explicit `--scope`. Use
 `--scope project --project-dir <absolute-project-directory>` to choose the
 project's MCP and skill destinations independently of the runtime cache, private
-installer state and launcher beneath the install root. The alpha.6 bootstrap
+installer state and launcher beneath the install root. The alpha.7 bootstrap
 passes `--project-dir` through; project scope still uses the current directory
 when it is omitted. With `--scope user`, registration still uses the supported
 user configuration and adapter environment rules. Choosing a storage root does
