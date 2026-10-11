@@ -44,23 +44,26 @@ milestones and the distinction between Lab targets and public best-effort suppor
 ## Current status
 
 The curated current preview is immutable
-[v0.1.0-alpha.7](https://github.com/xoxd-ai/fruitctl/releases/tag/v0.1.0-alpha.7),
-runtime producer `cd34bbcdcc9e70bf25f77cbcfd1f129e1eac30db`.
+[v0.1.0-alpha.8](https://github.com/xoxd-ai/fruitctl/releases/tag/v0.1.0-alpha.8),
+runtime producer `ceb1d4643b8f3c66f744f536777214285a4d20ad`.
 Use the [current installation guide](install.md) or
 [rendered agent prompt](https://fruitctl.clients.xoxd.ai/install-prompt.md) for
 the exact bootstrap and release checksums. The runtime bundles Node.js 24.21.0;
 Darwin ARM64 retains the unchanged signed controller from
 `e00fcc86bbac4247d5a0847d7e656369c52cc15f`.
 
-Alpha.7 has anonymous public asset verification and scoped public installer
-evidence limited to Linux x64 stock public bootstrap and Claude project configuration lifecycle: dry-run, install, doctor, reinstall, same-version prior-receipt rollback and uninstall; the existing populated project configuration was restored exactly, including mode 0640.
+Alpha.8 has anonymous public asset verification and scoped public installer
+evidence limited to Linux x64 stock public bootstrap and Claude project configuration lifecycle: dry-run, install, doctor, reinstall, same-version prior-receipt rollback and uninstall/cache retention; the populated project configuration was restored exactly, including mode 0640.
 That scope does not qualify a complete platform, actual agent frontend or
-target desktop. Seven runtime previews are published; zero fully qualified
+target desktop. Eight runtime previews are published; zero fully qualified
 product releases are available. The optional Host and purple indicator have no
-public binary or automatic setup. Profiles, controller-local credentials, broker
+public binary or automatic setup. Alpha.8 adds portable Host-installer payload
+and help only. Profiles, controller-local credentials, broker
 and SSH setup, target Screen Sharing and macOS consent remain operator prerequisites.
 
 ## Historical preview evidence
+
+Alpha.7 remains immutable at producer `cd34bbcdcc9e70bf25f77cbcfd1f129e1eac30db`. Its public Linux x64 stock bootstrap and Claude project configuration lifecycle evidence remains historical and does not qualify alpha.8.
 
 Alpha.6 remains immutable at producer `8653325c6ccc0e058b3e4cf84eb44101cfd270fc`. Its anonymous public asset
 verification and scoped Darwin ARM64 Junie project installer evidence remain

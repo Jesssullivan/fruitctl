@@ -2,9 +2,14 @@
 
 The developer Host installer manages a stable `FruitctlHost.app` separately
 from the VNC controller and agent adapters. There is no current public Host
-release. The public [alpha.7 runtime](install.md) excludes the Host; these
+release. The public [alpha.8 runtime](install.md) excludes the Host app and includes
+portable Host-installer payload/help only; these
 checkout commands are for an explicitly reviewed private native-only bundle.
 They do not select a future release tag.
+
+The public Linux x64 runtime's portable Host-installer help was observed with
+bundled Node.js 24.21.0 and a minimal PATH. That observation does not qualify
+installing or running the Host.
 
 Use an ordinary user on Apple Silicon macOS with **Node.js 24 already
 installed** and the macOS signing, Gatekeeper and `xcrun stapler` tools
