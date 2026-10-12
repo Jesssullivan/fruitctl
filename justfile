@@ -11,7 +11,7 @@ test:
 
 # Offline portable installer integrity, restoration and optional timing checks.
 test-installer node="node":
-    {{quote(node)}} --test --test-concurrency=1 test/fruitctl-install.test.js test/fruitctl-install-roots.test.js test/fruitctl-install-timings.test.js test/fruitctl-install-timings-cli.test.js
+    {{quote(node)}} --test --test-concurrency=1 test/fruitctl-install.test.js test/fruitctl-install-roots.test.js test/fruitctl-install-integrity.test.js test/fruitctl-install-timings.test.js test/fruitctl-install-timings-cli.test.js
 
 # File-only Host installer fixtures; no app launch, Apple trust or desktop.
 test-host-installer node="node":
