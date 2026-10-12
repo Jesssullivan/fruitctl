@@ -104,7 +104,7 @@ configPath = values.config || defaultConfigPath();
       version: values.version || await packageVersion(), target: values.target,
       dryRun: Boolean(values['dry-run']), projectDir: values['project-dir'],
       installRoot: values['install-root'],
-      timings: values.timings === true,
+      ...(values.timings === true ? { timings: true } : {}),
       configPath: values.config || process.env.FRUITCTL_CONFIG_PATH,
       manifestUrl: values['manifest-url'] });
     process.stdout.write(JSON.stringify(result, null, 2) + '\n');
