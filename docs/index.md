@@ -44,24 +44,27 @@ milestones and the distinction between Lab targets and public best-effort suppor
 ## Current status
 
 The curated current preview is immutable
-[v0.1.0-alpha.8](https://github.com/xoxd-ai/fruitctl/releases/tag/v0.1.0-alpha.8),
-runtime producer `ceb1d4643b8f3c66f744f536777214285a4d20ad`.
+[v0.1.0-alpha.9](https://github.com/xoxd-ai/fruitctl/releases/tag/v0.1.0-alpha.9),
+runtime producer `1ba90e84d4b6fe464c9146e7c41c4cffc3edf8e3`.
 Use the [current installation guide](install.md) or
 [rendered agent prompt](https://fruitctl.clients.xoxd.ai/install-prompt.md) for
 the exact bootstrap and release checksums. The runtime bundles Node.js 24.21.0;
 Darwin ARM64 retains the unchanged signed controller from
 `e00fcc86bbac4247d5a0847d7e656369c52cc15f`.
 
-Alpha.8 has anonymous public asset verification and scoped public installer
-evidence limited to Linux x64 stock public bootstrap and Claude project configuration lifecycle: dry-run, install, doctor, reinstall, same-version prior-receipt rollback and uninstall/cache retention; the populated project configuration was restored exactly, including mode 0640.
-That scope does not qualify a complete platform, actual agent frontend or
-target desktop. Eight runtime previews are published; zero fully qualified
-product releases are available. The optional Host and purple indicator have no
-public binary or automatic setup. Alpha.8 adds portable Host-installer payload
-and help only. Profiles, controller-local credentials, broker
-and SSH setup, target Screen Sharing and macOS consent remain operator prerequisites.
+Alpha.9 has anonymous public asset verification. Its accepted public installer
+scope is Linux x64 stock public bootstrap and Claude project configuration lifecycle: install, help, doctor, timed doctor, reinstall, same-version prior-receipt rollback and uninstall/cache retention; populated project configuration bytes and mode 0640 were restored.
+That scope does not qualify a complete platform, actual agent frontend or target
+desktop. Nine runtime previews are published; zero fully qualified product
+releases are available. The optional Host and purple indicator have no public
+binary or automatic setup. Portable Host-installer payload/help and optional
+installer `--timings` grant no native Host or permissions. The public Linux x64 installed alpha.9 CLI advertised `--timings`; timed doctor emitted the fixed nine-stage report with the same installation result as default doctor. This is optional installer measurement evidence and establishes no latency SLO or speedup.
+Profiles, controller-local credentials, broker and SSH setup, target Screen
+Sharing and macOS consent remain operator prerequisites.
 
 ## Historical preview evidence
+
+Alpha.8 remains immutable at producer `ceb1d4643b8f3c66f744f536777214285a4d20ad`. Its public asset, Linux installer/configuration and two-task Claude synthetic component observations remain historical for alpha.8; its Home Manager observations are separately scoped and do not qualify alpha.9.
 
 Alpha.7 remains immutable at producer `cd34bbcdcc9e70bf25f77cbcfd1f129e1eac30db`. Its public Linux x64 stock bootstrap and Claude project configuration lifecycle evidence remains historical and does not qualify alpha.8.
 

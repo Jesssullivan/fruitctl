@@ -14,13 +14,57 @@ Darwin only. Linux uses the SSH bridge. The Host prototype has no public package
 export or runtime payload.
 
 ```nix
-inputs.fruitctl.url = "github:xoxd-ai/fruitctl/ceb1d4643b8f3c66f744f536777214285a4d20ad";
+inputs.fruitctl.url = "github:xoxd-ai/fruitctl/1ba90e84d4b6fe464c9146e7c41c4cffc3edf8e3";
 
 # In the Home Manager module list:
 imports = [ inputs.fruitctl.homeManagerModules.default ];
 ```
 
-This tested alpha.8 source pin includes the portable runtime, skill,
+This tested alpha.9 source pin includes the portable runtime, skill,
+qualification helpers, portable Host-installer interface and optional installer
+`--timings`. Its Linux leaf package passed 665 of 666 offline checks on October
+12, 2026, under Node 24.21.0; one declared real-curl check was skipped because
+curl was unavailable. This package result does not qualify installing or
+running the native Host.
+
+An October 12 managed delivery passed through the infrastructure's normal
+serialized Home Manager canary and follower path. The canary's Fruitctl
+consumer stayed disabled; one enabled Linux seat received the alpha.9 package,
+three skill roots and four generated MCP fragments. The selected source pin,
+installed package metadata and projections matched the accepted alpha.9
+package. This is a dated delivery observation, not broader fleet enablement or
+a Darwin Home Manager installation.
+
+A separate October 12 canonical component check used the installed Home Manager
+package and shipped skill in two fresh Claude Code CLI sessions against an
+owned synthetic desktop. They observed four complete images, made and reversed
+two inputs, awaited two session releases and reconnected to the restored scene.
+The run used normal settings without authentication, model or provider
+overrides; recorded settings digests and metadata remained intact at the bound
+checks. This is installed Home Manager synthetic MCP component evidence,
+separate from the [public stock installer/configuration journey](agents.md).
+Physical desktop, real SSH, native Host, macOS consent, complete frontend and
+product SLO qualification remain open; Gateway/Junie remains deferred.
+
+Repin reviewed code changes after their own package check. Documentation-only
+commits may advance `main` without changing the last tested code-source pin.
+Every consumer's final pin, package realization and Home Manager activation
+need their own recorded checks; changing this example does not upgrade a
+published runtime archive.
+
+The public [alpha.9 runtime](https://github.com/xoxd-ai/fruitctl/releases/tag/v0.1.0-alpha.9)
+uses the same portable producer `1ba90e84d4b6fe464c9146e7c41c4cffc3edf8e3`.
+The explicitly selected `native-controller` package separately consumes the
+immutable alpha.3 controller produced from
+`e00fcc86bbac4247d5a0847d7e656369c52cc15f`. Advancing the source pin does not
+rebuild, patch or re-sign those released bytes. Alpha.9's Darwin runtime also
+reuses that native payload; its portable-source revision does not change the
+controller's original source or Apple submission. Later native source work on
+`main` does not supply a new public native artifact through this pin.
+
+### Historical package and delivery records
+
+The historical alpha.8 source pin includes the portable runtime, skill,
 qualification helpers and portable Host-installer interface. Its Linux leaf
 package passed 622 of 623 offline checks on October 11, 2026, under Node
 24.21.0; one declared real-curl check was skipped because curl was unavailable.
@@ -45,23 +89,8 @@ MCP component evidence, separate from the [public-runtime journey](agents.md).
 Physical desktop, real SSH, native Host, macOS consent, complete frontend and
 product SLO qualification remain open; Gateway/Junie remains deferred.
 
-Repin reviewed code changes after their own package check. Documentation-only
-commits may advance `main` without changing the last tested code-source pin.
-Every consumer's final pin, package realization and Home Manager activation
-need their own recorded checks; changing this example does not upgrade a
-published runtime archive.
-
-The public [alpha.8 runtime](https://github.com/xoxd-ai/fruitctl/releases/tag/v0.1.0-alpha.8)
-uses the same portable producer `ceb1d4643b8f3c66f744f536777214285a4d20ad`.
-The explicitly selected `native-controller` package separately consumes the
-immutable alpha.3 controller produced from
-`e00fcc86bbac4247d5a0847d7e656369c52cc15f`. Advancing the source pin does not
-rebuild, patch or re-sign those released bytes. Alpha.8's Darwin runtime also
-reuses that native payload; its portable-source revision does not change the
-controller's original source or Apple submission. Later native source work on
-`main` does not supply a new public native artifact through this pin.
-
-### Historical package and delivery records
+These October 11 alpha.8 observations remain historical and do not qualify the
+current alpha.9 source pin or its public runtime archive.
 
 The earlier alpha.7 producer `cd34bbcdcc9e70bf25f77cbcfd1f129e1eac30db`
 passed 556 of 557 offline package tests on October 10 under Node 24.21.0, with
