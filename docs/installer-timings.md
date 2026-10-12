@@ -1,13 +1,18 @@
 # Installer timings
 
-Optional installer timings are a source feature for a later runtime release.
-The published `v0.1.0-alpha.8` runtime does not include this option. Use a source
-checkout with Node 24 to inspect the implementation:
+The alpha.9 portable CLI includes optional installer timings. The public Linux x64 installed alpha.9 CLI advertised `--timings`; timed doctor emitted the fixed nine-stage report with the same installation result as default doctor. This is optional installer measurement evidence and establishes no latency SLO or speedup.
+The immutable alpha.8 runtime does not include this option. Use the verified
+installed alpha.9 executable with its recorded scope and storage root:
 
 ```sh
-node bin/fruitctl.mjs doctor --agent claude --scope project \
+<installed-alpha9>/bin/fruitctl doctor --agent claude --scope project \
   --install-root /absolute/path/to/your/fruitctl-root --timings
 ```
+
+The unchanged shell bootstrap and the separate Host installer do not accept
+`--timings`. A reviewed source checkout with Node 24 can instead use
+`node bin/fruitctl.mjs` for the same installer command; source availability alone
+does not qualify a published runtime.
 
 `--timings` applies to `install`, `doctor`, `rollback` and `uninstall`. A successful
 command adds a `timings` object to its JSON result. A rejected command retains its

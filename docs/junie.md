@@ -84,14 +84,15 @@ not qualify a real frontend, desktop, Gateway session or optional Host.
 
 Run this in the root of the project you intend to open in Junie. Replace
 `desktop` with your already-configured target profile. This uses the immutable
-alpha.8 runtime preview and checks the pinned bootstrap script before execution.
+alpha.9 runtime preview and checks the pinned bootstrap script before execution.
 The first invocation previews the operation; the second installs it.
+This selects alpha.9 installer bytes only; it does not qualify Junie CLI, Gateway, ACP or an IDE frontend. Optional installer `--timings` belongs to the installed Fruitctl CLI, not the bootstrap or Junie.
 
 ```sh
 (
   FRUITCTL_TARGET_PROFILE='desktop'
-  FRUITCTL_SOURCE_SHA='ceb1d4643b8f3c66f744f536777214285a4d20ad'
-  FRUITCTL_RELEASE_TAG='v0.1.0-alpha.8'
+  FRUITCTL_SOURCE_SHA='1ba90e84d4b6fe464c9146e7c41c4cffc3edf8e3'
+  FRUITCTL_RELEASE_TAG='v0.1.0-alpha.9'
   FRUITCTL_PROJECT_DIR=$(pwd -P)
   FRUITCTL_SCRIPT=$(mktemp)
   trap 'rm -f "$FRUITCTL_SCRIPT"' EXIT
@@ -213,7 +214,7 @@ already-configured target profile:
 FRUITCTL_BACKEND_CLI='/absolute/path/to/verified/bin/fruitctl'
 FRUITCTL_BACKEND_PROJECT='/absolute/path/to/owned/qualification-project'
 FRUITCTL_INSTALL_ROOT='/absolute/path/to/owned/fruitctl-root'
-FRUITCTL_RELEASE_TAG='v0.1.0-alpha.8'
+FRUITCTL_RELEASE_TAG='v0.1.0-alpha.9'
 FRUITCTL_TARGET_PROFILE='desktop'
 
 "$FRUITCTL_BACKEND_CLI" install --agent junie --scope project \

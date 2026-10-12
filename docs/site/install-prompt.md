@@ -91,8 +91,10 @@ controller/target OS, capture mode, and observed test outcome without secrets,
 private screen content, or invented success. Enable the optional FuzzyBot spell
 indicator only when this exact capture mode has a recorded exclusion proof.
 The Host application remains an unqualified source prototype and is absent
-from public runtime payloads and generated helper mappings. Alpha.8 includes
+from public runtime payloads and generated helper mappings. Alpha.9 includes
 the portable `fruitctl-host-install` payload and help only; it supplies no native
 Host bundle or public Host install route. Do not install or enable the Host
 app as part of this preview. No Screen Capture grant or Apple capability approval
 is provided by this installation.
+
+Optional installer `--timings` is limited to a verified installed CLI that advertises it and the `install`, `doctor`, `rollback` or `uninstall` command. It is absent from immutable alpha.8 and from the shell bootstrap, MCP and native Host installer. Bounded aggregate elapsed reports are not a latency SLO or permission grant.

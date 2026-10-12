@@ -17,16 +17,23 @@ verified release, configures a named target, and checks a fresh observation
 before input. If the release does not support your controller and agent, it
 reports the missing prerequisite instead of claiming installation succeeded.
 
-The published immutable [v0.1.0-alpha.8 runtime preview](https://github.com/xoxd-ai/fruitctl/releases/tag/v0.1.0-alpha.8)
-uses producer `ceb1d4643b8f3c66f744f536777214285a4d20ad`. Its thirteen public
-assets match the reviewed hashes and sizes through anonymous downloads. The
-bootstrap disables user curl configuration and retains explicit install-root
+The published immutable [v0.1.0-alpha.9 runtime preview](https://github.com/xoxd-ai/fruitctl/releases/tag/v0.1.0-alpha.9)
+uses producer `1ba90e84d4b6fe464c9146e7c41c4cffc3edf8e3`. Its 13
+public assets match the reviewed hashes and sizes through anonymous downloads.
+The bootstrap disables user curl configuration and retains explicit install-root
 support, normal-home storage and separate user/project registration choices.
-Its accepted public Linux evidence is limited to Linux x64 stock public bootstrap and Claude project configuration lifecycle: dry-run, install, doctor, reinstall, same-version prior-receipt rollback and uninstall/cache retention; the populated project configuration was restored exactly, including mode 0640.
-This verifies the package and configuration; actual agent/IDE frontend, SSH
-desktop control, optional Host and measured service objectives remain pending.
-Alpha.8 adds the portable `fruitctl-host-install` launcher, implementation and help. It contains no FruitctlHost app, Host native bundle or automatic Host setup; Apple trust, consent retention and physical capture/Stop remain unqualified.
+Its accepted public installer scope is Linux x64 stock public bootstrap and Claude project configuration lifecycle: install, help, doctor, timed doctor, reinstall, same-version prior-receipt rollback and uninstall/cache retention; populated project configuration bytes and mode 0640 were restored.
+Complete agent/IDE frontend, real SSH desktop control, optional Host and measured
+service objectives remain pending. The runtime includes portable Host-installer
+payload/help and optional installer `--timings`; neither supplies a native Host
+bundle, macOS grants or a latency SLO. The public Linux x64 installed alpha.9 CLI advertised `--timings`; timed doctor emitted the fixed nine-stage report with the same installation result as default doctor. This is optional installer measurement evidence and establishes no latency SLO or speedup.
 See the [exact install pins and component evidence](docs/install.md).
+
+Historical alpha.8 remains immutable at producer `ceb1d4643b8f3c66f744f536777214285a4d20ad`.
+Its anonymous thirteen-asset integrity, Linux x64 public bootstrap/configuration
+lifecycle and separate two-task Claude synthetic component observations remain
+scoped to alpha.8. Its installed Home Manager package and two-task synthetic
+journey are separate dated components. None transfers to alpha.9.
 
 Historical alpha.7 remains immutable at producer `cd34bbcdcc9e70bf25f77cbcfd1f129e1eac30db`.
 Its accepted public evidence covers Linux x64 stock bootstrap and Claude project

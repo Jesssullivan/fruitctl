@@ -22,18 +22,22 @@ it does not mean a desktop session or native binary has been qualified.
 ## Install a pinned release
 
 The curated current preview is immutable
-[v0.1.0-alpha.8](https://github.com/xoxd-ai/fruitctl/releases/tag/v0.1.0-alpha.8),
-pinned to runtime producer `ceb1d4643b8f3c66f744f536777214285a4d20ad`.
+[v0.1.0-alpha.9](https://github.com/xoxd-ai/fruitctl/releases/tag/v0.1.0-alpha.9),
+pinned to runtime producer `1ba90e84d4b6fe464c9146e7c41c4cffc3edf8e3`.
 It provides the runtime, skill and adapters. The Darwin arm64 runtime includes
 the Developer ID-signed controller at `bin/claude-kvm-daemon`. Apple accepted
 its original controller-ZIP submission, produced from
-`e00fcc86bbac4247d5a0847d7e656369c52cc15f`. Alpha.8 reuses those unchanged
+`e00fcc86bbac4247d5a0847d7e656369c52cc15f`. Alpha.9 reuses those unchanged
 native bytes; the complete runtime archive is separate and is not covered by
 that acceptance. Linux uses the separately configured SSH bridge to Darwin. The broker, target
 profile, credential provider, target Screen Sharing and any macOS consent remain
 operator-owned. The Host application and purple indicator remain source
 prototypes with private lab binaries and are not distributed in this preview.
 The runtime includes portable Host-installer payload and help only.
+
+Alpha.9 public installer scope is Linux x64 stock public bootstrap and Claude project configuration lifecycle: install, help, doctor, timed doctor, reinstall, same-version prior-receipt rollback and uninstall/cache retention; populated project configuration bytes and mode 0640 were restored. Complete platform, physical desktop, real SSH, native Host, consent and whole-frontend qualification remain pending; Gateway/Junie remains deferred.
+
+### Historical alpha.8 public installation and component evidence
 
 Alpha.8 public installer evidence is limited to
 Linux x64 stock public bootstrap and Claude project configuration lifecycle: dry-run, install, doctor, reinstall, same-version prior-receipt rollback and uninstall/cache retention; the populated project configuration was restored exactly, including mode 0640. Complete platform,
@@ -46,7 +50,20 @@ This is public-installed Claude synthetic MCP component evidence only. Physical
 desktop, SSH, native Host, consent and complete frontend qualification remain
 open; Gateway/Junie remains deferred.
 
-### Installed Home Manager component evidence
+### Installed alpha.9 Home Manager component evidence
+
+On October 12, two fresh Claude Code CLI sessions used the installed alpha.9
+Home Manager package and shipped skill against an owned synthetic desktop.
+They observed four complete images, made and reversed two inputs, awaited two
+session releases and reconnected to the restored scene. Normal settings were
+retained without authentication, model or provider overrides. This is a
+canonical installed Home Manager synthetic MCP component observation, separate
+from the public bootstrap/configuration lifecycle. Real SSH, physical desktop,
+native Host, macOS consent, complete frontend, Gateway/Junie and product SLO
+qualification remain open. See the [current Home Manager pin and delivery
+scope](home-manager.md).
+
+### Historical alpha.8 Home Manager component evidence
 
 Separately, on October 11, two fresh Claude Code CLI sessions used the installed
 alpha.8 Home Manager package and shipped skill against an owned synthetic
@@ -58,6 +75,8 @@ installed Home Manager synthetic MCP component result; it does not transfer
 public-bootstrap, real SSH, physical desktop, native Host, macOS consent,
 complete frontend, Gateway/Junie or product SLO qualification. See the
 [current Home Manager pin and delivery scope](home-manager.md).
+
+These dated alpha.8 public-installed and Home Manager-installed components do not qualify alpha.9.
 
 ### Historical installation evidence
 
@@ -106,8 +125,8 @@ project bootstrap checks remain historical evidence for that release.
 ### Current install and recovery commands
 
 ```sh
-fruitctl install --agent codex --scope user --version v0.1.0-alpha.8 --target <profile> --dry-run
-fruitctl install --agent codex --scope user --version v0.1.0-alpha.8 --target <profile>
+fruitctl install --agent codex --scope user --version v0.1.0-alpha.9 --target <profile> --dry-run
+fruitctl install --agent codex --scope user --version v0.1.0-alpha.9 --target <profile>
 fruitctl doctor --agent codex --scope user
 fruitctl doctor --json
 fruitctl rollback --agent codex --scope user
@@ -130,7 +149,7 @@ manifest digest fail explicitly. No agent or GUI is launched and no root access
 or package-manager install scripts are needed.
 
 For one terminal operation, use the
-[published alpha.8 paste](install.md#one-terminal-paste-published-alpha-8).
+[published alpha.9 paste](install.md#one-terminal-paste-published-alpha-9).
 For installation by an agent, copy the
 [rendered prompt](https://fruitctl.clients.xoxd.ai/install-prompt.md).
 Replace `default` with your configured profile. Those routes select the same
@@ -149,20 +168,20 @@ process or service, create a target profile or credential, or grant macOS consen
 
 ## Install root and registration: current preview
 
-The current [v0.1.0-alpha.8 preview](https://github.com/xoxd-ai/fruitctl/releases/tag/v0.1.0-alpha.8)
+The current [v0.1.0-alpha.9 preview](https://github.com/xoxd-ai/fruitctl/releases/tag/v0.1.0-alpha.9)
 separates operational storage from adapter registration with
 `--install-root ABSOLUTE_DIRECTORY`. Its accepted public installer evidence is
-limited to the Linux x64 Claude project configuration lifecycle described above;
-Darwin alpha.8 runtime, installed SDK and actual frontend qualification remain
+limited to Linux x64 stock public bootstrap and Claude project configuration lifecycle: install, help, doctor, timed doctor, reinstall, same-version prior-receipt rollback and uninstall/cache retention; populated project configuration bytes and mode 0640 were restored;
+Darwin alpha.9 runtime, installed SDK and actual frontend qualification remain
 pending. **Alpha.4 does not support this option.**
 See the
 [explicit install-root guide](install.md#explicit-install-root-current-preview)
-for the exact alpha.8 bootstrap pin, storage layout and recovery commands.
+for the exact alpha.9 bootstrap pin, storage layout and recovery commands.
 
 An explicit-root installation requires an explicit `--scope`. Use
 `--scope project --project-dir <absolute-project-directory>` to choose the
 project's MCP and skill destinations independently of the runtime cache, private
-installer state and launcher beneath the install root. The alpha.8 bootstrap
+installer state and launcher beneath the install root. The alpha.9 bootstrap
 passes `--project-dir` through; project scope still uses the current directory
 when it is omitted. With `--scope user`, registration still uses the supported
 user configuration and adapter environment rules. Choosing a storage root does
@@ -183,6 +202,8 @@ capability before it can fall back to normal-home storage. Alpha.4's older API
 ignores an unknown `installRoot` property; passing it directly does not select
 storage. Omitting the option preserves the existing defaults, legacy receipts
 and older-release compatibility.
+
+Optional installer `--timings` is limited to the verified installed alpha.9 CLI and its installer commands; see [timing scope](install.md#optional-installer-timings). Do not pass it to the shell bootstrap, MCP or Host installer. Alpha.8 lacks that flag.
 
 ## Configuration destinations
 
