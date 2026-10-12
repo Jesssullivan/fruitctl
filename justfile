@@ -9,6 +9,10 @@ deps:
 test:
     npm run test:offline
 
+# Offline portable installer integrity, restoration and optional timing checks.
+test-installer node="node":
+    {{quote(node)}} --test --test-concurrency=1 test/fruitctl-install.test.js test/fruitctl-install-roots.test.js test/fruitctl-install-timings.test.js test/fruitctl-install-timings-cli.test.js
+
 # File-only Host installer fixtures; no app launch, Apple trust or desktop.
 test-host-installer node="node":
     {{quote(node)}} --test --test-concurrency=1 test/fruitctl-host-install.test.js

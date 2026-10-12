@@ -4,7 +4,7 @@ import { parseArgs } from 'node:util';
 import { readFile } from 'node:fs/promises';
 import { defaultConfigPath, defaultSocketPath, loadConfig } from '../lib/broker/paths.mjs';
 
-let values, positionals, command, socketPath, configPath;
+let values, positionals, command, socketPath, configPath, installerTimingsForError;
 
 async function packageVersion() {
   const metadata = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
@@ -33,6 +33,7 @@ try {
   agent: { type: 'string' }, scope: { type: 'string' }, version: { type: 'string' },
   'dry-run': { type: 'boolean' }, 'project-dir': { type: 'string' }, 'install-root': { type: 'string' },
   mux: { type: 'boolean' }, stdio: { type: 'boolean' }, json: { type: 'boolean' },
+  timings: { type: 'boolean' },
   help: { type: 'boolean' }, 'manifest-url': { type: 'string' },
 } }));
 command = positionals[0];
@@ -46,6 +47,9 @@ configPath = values.config || defaultConfigPath();
   if (command === 'install' && values['install-root'] !== undefined && !['user', 'project'].includes(values.scope)) {
     throw new Error('Installation with --install-root requires explicit --scope user|project');
   }
+  if (values.timings && command && !['install', 'doctor', 'rollback', 'uninstall'].includes(command)) {
+    throw new Error('--timings is supported only by install, doctor, rollback and uninstall');
+  }
   if (values.help || !command) {
     process.stdout.write('Fruitctl\n\nCommands: mcp, broker, relay, attach, install, doctor, rollback, uninstall\n' +
       '  mcp --target PROFILE [--socket PATH]\n' +
@@ -56,7 +60,8 @@ configPath = values.config || defaultConfigPath();
       '  rollback|uninstall --agent AGENT [--scope user|project] [--project-dir PATH] [--install-root ABSOLUTE_DIRECTORY]\n' +
       '\n--install-root selects Fruitctl runtime/state/launcher storage; registration still follows scope and project/user configuration.\n' +
       'Repeat the selected root for doctor, rollback and uninstall. Explicit-root installation requires explicit scope; omitted root preserves legacy paths.\n' +
-      'Install requires explicit --version TAG. Doctor writes JSON: exit 1 for drift, 0 for configured or not-installed.\n');
+      'Install requires explicit --version TAG. Doctor writes JSON: exit 1 for drift, 0 for configured or not-installed.\n' +
+      'Add --timings to installer commands for bounded aggregate timings; default output is unchanged.\n');
   } else if (command === 'broker') {
     const { createBroker } = await import('../lib/broker/server.mjs');
     const config = await loadConfig(configPath);
@@ -94,10 +99,12 @@ configPath = values.config || defaultConfigPath();
       throw new Error('Installation requires explicit --version TAG; use the exact published release tag');
     }
     const installer = await import('../lib/install/index.mjs');
+    if (values.timings) installerTimingsForError = installer.timingsForError;
     const result = await installer[command]({ agent: values.agent, scope: values.scope,
       version: values.version || await packageVersion(), target: values.target,
       dryRun: Boolean(values['dry-run']), projectDir: values['project-dir'],
       installRoot: values['install-root'],
+      timings: values.timings === true,
       configPath: values.config || process.env.FRUITCTL_CONFIG_PATH,
       manifestUrl: values['manifest-url'] });
     process.stdout.write(JSON.stringify(result, null, 2) + '\n');
@@ -106,4 +113,10 @@ configPath = values.config || defaultConfigPath();
 } catch (error) {
   process.stderr.write(`Fruitctl: ${error.message}\n`);
   process.exitCode = 1;
+  if (values?.timings === true && installerTimingsForError) {
+    try {
+      const timings = installerTimingsForError(error);
+      if (timings) process.stderr.write(JSON.stringify({ timings }) + '\n');
+    } catch { /* Optional diagnostics cannot replace the original command error. */ }
+  }
 }
