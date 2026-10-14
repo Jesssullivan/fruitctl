@@ -62,10 +62,6 @@ final class VNCBridge: @unchecked Sendable {
         let height: Int
         let connectionGeneration: Int
         let allocation: Int
-        /// nil: every pixel was received after the non-incremental request.
-        /// Otherwise the complete mirror was returned after this many quiet
-        /// milliseconds with no server reply and no input (see quiescence).
-        var quiescentMilliseconds: UInt64? = nil
         var inputContext: VNCInputContext {
             VNCInputContext(width: width, height: height,
                             connectionGeneration: connectionGeneration, allocation: allocation)
@@ -92,10 +88,6 @@ final class VNCBridge: @unchecked Sendable {
         var coverage: [UInt64] = []
         var pixelsRemaining = 0
         var copyRectanglePending = false
-        var admittedNs: UInt64 = 0
-        // Any rectangle, copy or completion after the request disqualifies the
-        // quiescent mirror: a partial reply must never complete a capture.
-        var serverRepliedAfterRequest = false
         init(session: UUID?, registeredNs: UInt64, expiresNs: UInt64) {
             self.session = session
             self.registeredNs = registeredNs
@@ -129,11 +121,6 @@ final class VNCBridge: @unchecked Sendable {
     private var lastUpdateRequestNs: UInt64 = 0
     private var lastFullUpdateRequestNs: UInt64?
     private static let incompleteFrameRefreshIntervalNs: UInt64 = 1_000_000_000
-    /// Silence required after the non-incremental request and the last input
-    /// before the complete mirror is treated as the current display.
-    static let quiescentObservationNs: UInt64 = 1_000_000_000
-    /// Only touched on messageQueue: the last pointer, key or clipboard write.
-    private var lastInputEventNs: UInt64 = 0
     private var reconnectCount = 0
     private let stateStreamStorage = OSAllocatedUnfairLock<AsyncStream<VNCConnectionState>.Continuation?>(initialState: nil)
     private var stateStreamContinuation: AsyncStream<VNCConnectionState>.Continuation? {
@@ -264,7 +251,6 @@ final class VNCBridge: @unchecked Sendable {
             $0.snapshot.rectangles &+= 1
             $0.lastCallbackNs = DispatchTime.now().uptimeNanoseconds
         }
-        noteServerReplyToFreshRequest()
         defer { frameDiagnostics.withLock { $0.snapshot.pixelsRemaining = framebufferPixelsRemaining } }
         // LibVNCClient emits GotFrameBufferUpdate after GotCopyRect too. The
         // copy callback has already propagated validity from its source region.
@@ -331,7 +317,6 @@ final class VNCBridge: @unchecked Sendable {
             $0.snapshot.copyRectangles &+= 1
             $0.lastCallbackNs = DispatchTime.now().uptimeNanoseconds
         }
-        noteServerReplyToFreshRequest()
         defer { frameDiagnostics.withLock { $0.snapshot.pixelsRemaining = framebufferPixelsRemaining } }
         copyRectanglePending = true
         // CopyRect can copy historical pixels. It never supplies fresh pixels.
@@ -397,7 +382,6 @@ final class VNCBridge: @unchecked Sendable {
             $0.snapshot.finishedUpdates &+= 1
             $0.lastCallbackNs = DispatchTime.now().uptimeNanoseconds
         }
-        noteServerReplyToFreshRequest()
         if let fresh = currentFreshCapture(for: native),
            fresh.pixelsRemaining == 0 {
             let diagnostics = framebufferDiagnostics
@@ -766,7 +750,6 @@ final class VNCBridge: @unchecked Sendable {
                         finishFreshCapture(waiter, .failure(VNCError.sendFailed("fresh framebuffer update request"))); return
                     }
                     waiter.requestStarted = true
-                    waiter.admittedNs = monotonicNanoseconds()
                 }
             }
             try Task.checkCancellation()
@@ -830,36 +813,6 @@ final class VNCBridge: @unchecked Sendable {
             return nil
         }
         return fresh
-    }
-
-    /// Only on messageQueue, from a decoder callback for the current client.
-    private func noteServerReplyToFreshRequest() {
-        guard let fresh = freshFrameWaiter.withLock({ $0 }), fresh.requestStarted else { return }
-        fresh.serverRepliedAfterRequest = true
-    }
-
-    /// RFC 6143 section 7.5.3 requires a reply to a non-incremental request,
-    /// but macOS Screen Sharing sends nothing at all while its display is
-    /// static (TIN-5008: finished_updates stayed flat until the 5 s deadline).
-    /// The bridge's framebuffer is a complete mirror: initial full coverage
-    /// plus every applied update on this same allocation. When the server has
-    /// held our whole-screen non-incremental request for the quiescence window
-    /// without sending any rectangle, copy or completion, and no input was
-    /// written in that window, return that mirror and label it. Any reply,
-    /// including a partial one, keeps the ordinary full-coverage requirement.
-    private func resolveQuiescentFreshCapture(_ native: UnsafeMutablePointer<rfbClient>) {
-        guard framebufferHasUpdate, !copyRectanglePending,
-              let fresh = currentFreshCapture(for: native),
-              !fresh.serverRepliedAfterRequest, !fresh.copyRectanglePending,
-              fresh.bytesPerPixel == 4, let pixels = native.pointee.frameBuffer else { return }
-        let quietSince = max(fresh.admittedNs, lastInputEventNs)
-        let now = monotonicNanoseconds()
-        guard now >= quietSince, now &- quietSince >= Self.quiescentObservationNs else { return }
-        var capture = FrameCapture(pixels: Data(bytes: pixels, count: fresh.byteCount),
-                                   width: fresh.width, height: fresh.height,
-                                   connectionGeneration: fresh.generation, allocation: fresh.allocation)
-        capture.quiescentMilliseconds = (now &- quietSince) / 1_000_000
-        finishFreshCapture(fresh, .success(capture))
     }
 
     /// Apple's built-in Screen Sharing server reads X11 Super as Command and
@@ -958,7 +911,6 @@ final class VNCBridge: @unchecked Sendable {
                 throw VNCError.sendFailed("Pointer coordinates outside current framebuffer")
             }
             if !releaseOnly { try inputPermit?.check(context: context) }
-            lastInputEventNs = monotonicNanoseconds()
             guard SendPointerEvent(client, nativeX, nativeY, Int32(buttonMask)) != 0 else {
                 throw VNCError.sendFailed("pointer event")
             }
@@ -977,7 +929,6 @@ final class VNCBridge: @unchecked Sendable {
             // Apple's server: Super is Command and Meta is Option.
             let wireKey = Self.wireKeysym(key, appleServer: isMacOS)
             if !releaseOnly { try inputPermit?.check(context: context) }
-            lastInputEventNs = monotonicNanoseconds()
             guard operations.sendKey(client, wireKey, down) else { throw VNCError.sendFailed("key event") }
         }
     }
@@ -993,7 +944,6 @@ final class VNCBridge: @unchecked Sendable {
             var cStr = Array(text.utf8CString)
             let len = Int32(cStr.count - 1)
             try inputPermit?.check(context: context)
-            lastInputEventNs = monotonicNanoseconds()
             guard SendClientCutText(client, &cStr, len) != 0 else { throw VNCError.sendFailed("clipboard text") }
         }
     }
@@ -1053,7 +1003,8 @@ final class VNCBridge: @unchecked Sendable {
                 // Keep the admitted non-incremental request the only one we
                 // add: a server that retains just its latest request must not
                 // see it superseded by our ~20/s incremental requests.
-                self.resolveQuiescentFreshCapture(client)
+                // Silence is not evidence that the remote display is unchanged.
+                // Wait for full received coverage or the original deadline.
             } else if now &- self.lastUpdateRequestNs > 50_000_000 {
                 self.frameDiagnostics.withLock { $0.snapshot.phase = .requestingIncrementalUpdate }
                 self.operations.incrementalUpdate(client)

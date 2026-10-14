@@ -1061,10 +1061,9 @@ final class VNCReconnectTests: XCTestCase {
         (down ? "down 0x" : "up 0x") + String(key, radix: 16, uppercase: true)
     }
 
-    /// macOS Screen Sharing leaves a non-incremental request unanswered while
-    /// its display is static. Silence for the quiescence window returns the
-    /// complete mirror, labelled, after exactly one non-incremental request.
-    func testStaticServerSilenceReturnsLabelledMirrorAfterNonIncrementalRequest() async throws {
+    /// A previously complete mirror cannot satisfy a new request, even when
+    /// the server sends nothing for the whole original deadline.
+    func testSilentServerKeepsOriginalFreshDeadlineWithoutIncrementalPolls() async throws {
         let native = FakeNative(polls: [])
         let scheduler = ManualScheduler(), deadline = ManualScheduler(), time = ManualTime()
         let registered = expectation(description: "fresh deadline registered")
@@ -1072,7 +1071,7 @@ final class VNCReconnectTests: XCTestCase {
         let bridge = VNCBridge(operations: native.operations, schedule: scheduler.schedule,
                                scheduleFrameDeadline: deadline.schedule, monotonicNanoseconds: time.now)
         try await bridge.connect(); try await bridge.waitForFramebuffer()
-        // The last damage before the screen went still, applied to the mirror.
+        // A is complete, but predates the new full request.
         native.beforePoll = { client in
             memset(client.pointee.frameBuffer, 0x44, 16)
             completePixelUpdate(client)
@@ -1086,22 +1085,22 @@ final class VNCReconnectTests: XCTestCase {
         XCTAssertEqual(bridge.framebufferWidth, 2) // flush the queued admission and send
         let originalDeadline = deadline.take()
         XCTAssertEqual(native.observedFullUpdates, 1)
-        time.advance(999_999_999); scheduler.runNext() // still inside the window
+        time.advance(1_100_000_000); scheduler.runNext()
         XCTAssertFalse(originalDeadline.work.isCancelled)
         XCTAssertEqual(native.observedIncrementalUpdates, incrementalBefore)
-        time.advance(1); scheduler.runNext()
-        let captured = try await waiting.value
-        XCTAssertEqual(captured.quiescentMilliseconds, 1000)
-        XCTAssertEqual(captured.connectionGeneration, 1)
-        XCTAssertEqual(captured.allocation, 1)
-        XCTAssertTrue(captured.withFramebuffer { buffer, width, height in
-            width == 2 && height == 2 && buffer.count == 16 && buffer.allSatisfy { $0 == 0x44 }
-        })
-        XCTAssertTrue(originalDeadline.work.isCancelled)
+        time.advance(3_899_999_999); scheduler.runNext()
+        XCTAssertFalse(originalDeadline.work.isCancelled)
+        XCTAssertEqual(native.observedIncrementalUpdates, incrementalBefore)
+        time.advance(1) // the immutable five-second cutoff, not a renewed window
         originalDeadline.queue.sync { originalDeadline.work.perform() }
-        // One non-incremental request, never superseded by our incremental ones.
+        do { _ = try await waiting.value; XCTFail("silent server returned historical pixels") }
+        catch VNCError.sendFailed(let reason) {
+            XCTAssertTrue(reason.hasPrefix("No fresh complete framebuffer update within 5 seconds"))
+        } catch { XCTFail("unexpected error: \(error)") }
+        XCTAssertTrue(originalDeadline.work.isCancelled)
         XCTAssertEqual(native.observedFullUpdates, 1)
         XCTAssertEqual(native.observedIncrementalUpdates, incrementalBefore)
+        originalDeadline.queue.sync { originalDeadline.work.perform() } // no second retirement
         time.advance(100_000_000); scheduler.runNext() // ordinary pacing resumes
         XCTAssertEqual(native.observedIncrementalUpdates, incrementalBefore + 1)
         bridge.disconnect(); XCTAssertEqual(bridge.framebufferWidth, 0)
@@ -1141,31 +1140,60 @@ final class VNCReconnectTests: XCTestCase {
         }
     }
 
-    /// Input written while the request is outstanding restarts the window.
-    func testInputDuringQuiescenceWindowRestartsIt() async throws {
+    /// A local input write followed by client silence cannot prove the target
+    /// stayed at A. Hold B's actual pixels past one second, then deliver them
+    /// inside the original deadline; only B may complete the observation.
+    func testDelayedFullPixelsAfterInputNeverResolveFromCachedMirror() async throws {
         let native = FakeNative(polls: [])
         let scheduler = ManualScheduler(), deadline = ManualScheduler(), time = ManualTime()
         let registered = expectation(description: "fresh deadline registered")
+        let finished = expectation(description: "delayed B completes the fresh capture")
         deadline.onSchedule = { registered.fulfill() }
         let keys = RecordedEvents()
         native.onKey = { key, down in keys.append(self.wire(key, down)) }
         let bridge = VNCBridge(operations: native.operations, schedule: scheduler.schedule,
                                scheduleFrameDeadline: deadline.schedule, monotonicNanoseconds: time.now)
         try await bridge.connect(); try await bridge.waitForFramebuffer()
-        let waiting = Task { try await bridge.captureFreshFramebuffer() }
-        await fulfillment(of: [registered], timeout: 3)
-        XCTAssertEqual(bridge.framebufferWidth, 2)
-        let originalDeadline = deadline.take()
-        time.advance(800_000_000)
+        native.beforePoll = { client in
+            memset(client.pointee.frameBuffer, 0x44, 16)
+            completePixelUpdate(client)
+        }
+        time.advance(100_000_000); scheduler.runNext()
+        native.beforePoll = nil
+        let incrementalBefore = native.observedIncrementalUpdates
         try await bridge.sendKeyEvent(key: 0x61, down: true)
         try await bridge.sendKeyEvent(key: 0x61, down: false)
         XCTAssertEqual(keys.values, ["down 0x61", "up 0x61"])
-        time.advance(800_000_000); scheduler.runNext() // 1.6 s after send, 0.8 s after input
+        let waiting = Task { try await bridge.captureFreshFramebuffer() }
+        let outcome = Task { () -> VNCBridge.FrameCapture? in
+            defer { finished.fulfill() }
+            do { return try await waiting.value }
+            catch { XCTFail("delayed full B refused: \(error)"); return nil }
+        }
+        await fulfillment(of: [registered], timeout: 3)
+        XCTAssertEqual(bridge.framebufferWidth, 2)
+        let originalDeadline = deadline.take()
+        time.advance(2_000_000_000); scheduler.runNext() // B is delayed, not unchanged
         XCTAssertFalse(originalDeadline.work.isCancelled)
-        time.advance(200_000_000); scheduler.runNext()
-        let captured = try await waiting.value
-        XCTAssertEqual(captured.quiescentMilliseconds, 1000)
+        XCTAssertEqual(native.observedFullUpdates, 1)
+        XCTAssertEqual(native.observedIncrementalUpdates, incrementalBefore)
+        native.beforePoll = { client in
+            memset(client.pointee.frameBuffer, 0x99, 16)
+            completePixelUpdate(client)
+        }
+        time.advance(100_000_000); scheduler.runNext()
+        await fulfillment(of: [finished], timeout: 2)
         originalDeadline.queue.sync { originalDeadline.work.perform() }
+        let captured = await outcome.value
+        XCTAssertTrue(originalDeadline.work.isCancelled)
+        XCTAssertEqual(native.observedFullUpdates, 1) // no replay while B was delayed
+        if let captured {
+            XCTAssertEqual(captured.connectionGeneration, 1)
+            XCTAssertEqual(captured.allocation, 1)
+            XCTAssertTrue(captured.withFramebuffer { buffer, width, height in
+                width == 2 && height == 2 && buffer.count == 16 && buffer.allSatisfy { $0 == 0x99 }
+            })
+        }
         bridge.disconnect(); XCTAssertEqual(bridge.framebufferWidth, 0)
         assertSingleClientAndBufferReleased(native)
     }
