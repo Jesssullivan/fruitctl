@@ -102,6 +102,19 @@ coordinate mapping, and a frame identifier. A changing test target is necessary
 to qualify action-to-observation behavior. A static screenshot cannot prove a
 fresh frame, and a partial update cannot be reported as complete pixels.
 
+The raw-VNC daemon asks for each observation with a non-incremental
+FramebufferUpdateRequest (RFC 6143 section 7.5.3) and adds no incremental
+request while that one is outstanding. macOS Screen Sharing can leave such a
+request unanswered while its display is static. If the server sends no
+rectangle, copy or completion for one second after the request and after the
+last input event, the daemon returns its complete mirror of the same
+allocation and labels the result `quiescent_mirror quiet_ms=<n>`. Any reply,
+including a partial one, keeps the full-coverage requirement and its
+five-second deadline.
+
+On Apple's server the daemon writes Command as `Super_L`/`Super_R` and Option
+as `Meta_L`/`Meta_R`; the `cmd` and `alt`/`option` key names are unchanged.
+
 Input and capture failures are distinct. If an input's execution is uncertain,
 report that uncertainty and avoid replay. If capture fails after known input,
 report both facts and stop until a complete observation is available.

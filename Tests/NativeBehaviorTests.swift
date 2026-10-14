@@ -1,6 +1,15 @@
 import XCTest
 import Foundation
 import AppKit
+import CLibVNCClient
+
+/// Ordered wire/pause trace shared by the owned fake client and sleeper.
+private final class WireTrace {
+    private let lock = NSLock()
+    private var events: [String] = []
+    func append(_ event: String) { lock.lock(); events.append(event); lock.unlock() }
+    var values: [String] { lock.lock(); defer { lock.unlock() }; return events }
+}
 
 final class NativeBehaviorTests: XCTestCase {
     private func request(_ method: String, _ params: String = "{}") throws -> PCRequest {
@@ -561,5 +570,72 @@ final class NativeBehaviorTests: XCTestCase {
             context: binding.context, scaledWidth: 1920, scaledHeight: 1081)
         XCTAssertThrowsError(try wrongScale.begin(binding: changed, sequence: 1))
         XCTAssertThrowsError(try wrongScale.begin(binding: binding, sequence: 2))
+    }
+
+    // MARK: - Apple modifier wire trace (TIN-5008)
+
+    /// A real VNCBridge over an owned in-memory client: real LibVNCClient
+    /// allocation, no socket, server or desktop. Polls are never scheduled.
+    private func ownedBridge(_ trace: WireTrace) async throws -> VNCBridge {
+        let operations = VNCClientOperations(make: { config in
+            rfbGetClient(config.bitsPerSample, config.samplesPerPixel, config.bytesPerPixel)
+        }, initialize: { client in
+            client.pointee.width = 2; client.pointee.height = 2
+            client.pointee.format.bitsPerPixel = 32
+            guard vncMallocFrameBuffer(client) != 0 else { VNCClientOperations.release(client); return false }
+            vncGotFrameBufferUpdate(client, 0, 0, 2, 2)
+            vncFinishedFrameBufferUpdate(client)
+            return true
+        }, cleanup: VNCClientOperations.release,
+        poll: { _, _, _ in true }, incrementalUpdate: { _ in }, fullUpdate: { _ in true },
+        sendKey: { _, key, down in
+            trace.append((down ? "down 0x" : "up 0x") + String(key, radix: 16, uppercase: true))
+            return true
+        })
+        let bridge = VNCBridge(operations: operations, schedule: { _, _, _ in })
+        try await bridge.connect()
+        try await bridge.waitForFramebuffer()
+        return bridge
+    }
+
+    func testOptionAndCommandNamesResolveToPortableKeysyms() {
+        XCTAssertEqual(namedKeyToKeysym("alt"), KeySym.altLeft)
+        XCTAssertEqual(namedKeyToKeysym("option"), KeySym.altLeft)
+        XCTAssertEqual(namedKeyToKeysym("opt"), KeySym.altLeft)
+        XCTAssertEqual(namedKeyToKeysym("cmd"), KeySym.metaLeft)
+        XCTAssertEqual(namedKeyToKeysym("command"), KeySym.metaLeft)
+        XCTAssertEqual(namedKeyToKeysym("n"), 0x6E)
+    }
+
+    /// alt+cmd+n through the real InputController and VNCBridge. On Apple's
+    /// server Option is written as Meta_L and Command as Super_L; Option goes
+    /// down first and comes up last, each step waits its configured settle,
+    /// and the string and keys-array forms write identical RFB events.
+    func testOptionCommandComboWireTraceOnAppleAndOtherServers() async throws {
+        for appleServer in [true, false] {
+            let trace = WireTrace()
+            let bridge = try await ownedBridge(trace)
+            bridge.isMacOS = appleServer
+            let input = InputController(vnc: bridge, sleeper: { trace.append("pause \($0)") })
+            input.context = VNCInputContext(bridge.framebufferDiagnostics)
+            let option = appleServer ? "0xFFE7" : "0xFFE9"
+            let command = appleServer ? "0xFFEB" : "0xFFE7"
+            let combo = ["down " + option, "pause 10000", "down " + command, "pause 10000",
+                         "down 0x6E", "pause 30000", "up 0x6E", "pause 10000",
+                         "up " + command, "pause 10000", "up " + option, "pause 10000"]
+            try await input.keyCombo("alt+cmd+n")
+            let keys = ["alt", "cmd", "n"].compactMap(namedKeyToKeysym)
+            XCTAssertEqual(keys.count, 3)
+            try await input.keyCombo(keys)
+            XCTAssertEqual(trace.values, combo + combo)
+            XCTAssertTrue(input.heldKeys.isEmpty)
+            // A configured settle applies to every modifier step.
+            input.timing.comboModUs = 50_000
+            let before = trace.values.count
+            try await input.keyCombo("alt+cmd+n")
+            XCTAssertEqual(Array(trace.values[before...]).filter { $0.hasPrefix("pause") },
+                           ["pause 50000", "pause 50000", "pause 30000", "pause 50000", "pause 50000", "pause 50000"])
+            bridge.disconnect(); XCTAssertEqual(bridge.framebufferWidth, 0)
+        }
     }
 }
