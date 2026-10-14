@@ -131,8 +131,9 @@ struct ClaudeKVMDaemon: AsyncParsableCommand {
 
             macOS DETECTION:
               Automatic via ARD auth type 30 credential request.
-              When detected, Meta_L keysyms are remapped to Super_L
-              for correct Command key behavior on Apple VNC servers.
+              When detected, Meta_L/R keysyms are written as Super_L/R
+              (Command) and Alt_L/R as Meta_L/R (Option), the modifiers
+              Apple's Screen Sharing server reads.
 
             EXAMPLES:
               Launched by the MCP proxy with --password-fd 3.

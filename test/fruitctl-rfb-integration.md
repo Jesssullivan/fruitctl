@@ -38,7 +38,7 @@ the native daemon on descriptor 3. The fixture removes its synthetic provider
 after stopping its owned children. `--mcp-route legacy-direct` selects the
 compatible `index.js` entrypoint instead.
 
-The native run has three scenarios. The MCP run adds four more:
+The native run has four scenarios. The MCP run adds four more:
 
 - For 100 captures per transport, decode the actual PNG, verify its CRCs,
   dimensions, allocation metadata and every RGB pixel, and require an increasing
@@ -50,6 +50,12 @@ The native run has three scenarios. The MCP run adds four more:
   become a successful fresh capture.
 - Advertise a full raw rectangle, send half its bytes and close the connection.
   Require an error with no image within ten seconds.
+- Native only: send `key_combo ["alt","cmd","n"]` and require Alt_L down,
+  Meta_L down, `n` down/up, then Meta_L and Alt_L up. Then stop answering
+  non-incremental requests, as macOS Screen Sharing does on a static display.
+  Require a labelled `quiescent_mirror` capture between one and five seconds
+  later that equals the last complete update, and no incremental request in
+  the first 0.9 seconds after the outstanding non-incremental one.
 - Through MCP, invoke all four compatible tools. Verify a two-action queue and
   its coordinate effect, active ownership release through `task_complete`, and
   active ownership release through `task_failed` in a separate scenario. The

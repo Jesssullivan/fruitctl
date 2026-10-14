@@ -82,7 +82,12 @@ def marker_color(sequence):
 
 
 class RfbFixture:
-    """One owned loopback connection with explicit full/partial/truncated modes."""
+    """One owned loopback connection with explicit full/partial/truncated/silent modes.
+
+    ``silent`` models macOS Screen Sharing on a static display (TIN-5008): it
+    records non-incremental requests but answers none of them, even though
+    RFC 6143 section 7.5.3 requires a reply.
+    """
 
     def __init__(self):
         self.listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -96,6 +101,7 @@ class RfbFixture:
         self.sequence = 0
         self.frames = {}
         self.events = []
+        self.requests = []
         self.errors = []
         self.pointer = None
         self.finished = threading.Event()
@@ -104,14 +110,14 @@ class RfbFixture:
         self.thread.start()
 
     def set_mode(self, mode):
-        require(mode in ("full", "partial", "truncated"), "invalid fixture mode")
+        require(mode in ("full", "partial", "truncated", "silent"), "invalid fixture mode")
         with self.lock:
             self.mode = mode
 
     def snapshot(self):
         with self.lock:
             return {"frames": dict(self.frames), "events": list(self.events),
-                    "errors": list(self.errors)}
+                    "requests": list(self.requests), "errors": list(self.errors)}
 
     def _serve(self):
         try:
@@ -147,9 +153,13 @@ class RfbFixture:
                     incremental, x, y, width, height = struct.unpack("!BHHHH", exact_read(connection, 9))
                     require(width > 0 and height > 0 and x + width <= WIDTH and y + height <= HEIGHT,
                             "out-of-bounds framebuffer request")
+                    with self.lock:
+                        self.requests.append({"incremental": incremental, "at": time.monotonic()})
+                        silent = self.mode == "silent"
                     # Incremental requests remain pending, as on an idle server.
-                    # Explicit nonincremental requests each supply new pixels.
-                    if not incremental:
+                    # Explicit nonincremental requests each supply new pixels,
+                    # except in silent mode, which answers nothing.
+                    if not incremental and not silent:
                         require((x, y, width, height) == (0, 0, WIDTH, HEIGHT), "non-full capture request")
                         if not self._update(connection):
                             return
@@ -595,6 +605,40 @@ def run_scenario(kind, mode, count, args):
                 report["mcpTools"] = {"vnc_command": "passed", "action_queue": "passed",
                                       "task_complete": "passed; active ownership released",
                                       "task_failed": "passed; repeated release"}
+        elif mode == "silent":
+            require(kind == "native", "silent scenario uses the native route")
+            combo = session.action("key_combo", keys=["alt", "cmd", "n"])
+            require(not combo["error"], "alt+cmd+n combo failed")
+            key_events = [(event["down"], event["key"]) for event in fixture.snapshot()["events"]
+                          if event["kind"] == "key"]
+            # This fixture is not Apple's server, so names keep portable keysyms:
+            # Option (Alt_L) first down and last up, Command (Meta_L) inside it.
+            require(key_events == [(1, 0xFFE9), (1, 0xFFE7), (1, 0x6E), (0, 0x6E), (0, 0xFFE7), (0, 0xFFE9)],
+                    "alt+cmd+n wire order/keysyms mismatch: %r" % key_events)
+            fixture.set_mode("silent")
+            start = time.monotonic()
+            response = session.action("screenshot")
+            elapsed = time.monotonic() - start
+            require(not response["error"] and response["image"],
+                    "static silent server capture failed: %r" % (response["error"],))
+            detail = response["metadata"].get("detail") or ""
+            require(re.fullmatch(r"quiescent_mirror quiet_ms=[0-9]+", detail), "capture lacks quiescent label")
+            require(1.0 <= elapsed < 5.0, "quiescent capture outside its 1 s window and 5 s deadline")
+            png = base64.b64decode(response["image"], validate=True)
+            width, height, pixels = decode_png(png)
+            require((width, height) == (WIDTH, HEIGHT), "PNG geometry mismatch")
+            require(pixels == bytes(marker_color(sequence) * (WIDTH * HEIGHT)),
+                    "quiescent capture is not the complete mirror of the last update")
+            requests = [request for request in fixture.snapshot()["requests"] if request["at"] >= start]
+            full = [request for request in requests if not request["incremental"]]
+            require(full, "no non-incremental request reached the silent server")
+            superseding = [request for request in requests
+                           if request["incremental"] and full[0]["at"] < request["at"] < full[0]["at"] + 0.9]
+            require(not superseding, "incremental requests superseded the outstanding full request")
+            report["quiescentCapture"] = {"detail": detail, "elapsedMilliseconds": round(elapsed * 1000, 3),
+                                          "nonIncrementalRequests": len(full), "mirrorMarker": sequence,
+                                          "pngSha256": hashlib.sha256(png).hexdigest()}
+            report["optionCommandComboKeyEvents"] = key_events
         elif mode == "task-failed":
             require(kind == "mcp", "task-failed scenario requires MCP")
             reason = "Offline fixture deliberate active task failure"
@@ -685,6 +729,8 @@ def main():
     try:
         for kind in (["native", "mcp"] if args.node else ["native"]):
             modes = ["full", "partial", "truncated"]
+            if kind == "native":
+                modes.append("silent")
             if kind == "mcp":
                 modes.append("task-failed")
             for mode in modes:

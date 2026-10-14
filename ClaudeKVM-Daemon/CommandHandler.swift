@@ -131,7 +131,8 @@ extension ClaudeKVMDaemon {
                 }
             }
             // Screen observations require newly received full pixel coverage,
-            // then encode an owned copy bound to the admitted generation.
+            // or a labelled quiescent mirror after a silent non-incremental
+            // request, then encode an owned copy bound to the admitted generation.
             let capturedFrame: VNCBridge.FrameCapture?
             switch req.method {
             case "screenshot", "cursor_crop", "diff_check", "set_baseline", "detect_elements":
@@ -158,7 +159,11 @@ extension ClaudeKVMDaemon {
                     throw VNCError.sendFailed("No framebuffer")
                 }
                 input.context = capturedFrame?.inputContext
-                respond(.success(id: id, image: imageData.base64EncodedString(),
+                // Disclose when a static server's silence, not new pixels,
+                // established that the complete mirror is current.
+                var freshness: String?
+                if let quiet = capturedFrame?.quiescentMilliseconds { freshness = "quiescent_mirror quiet_ms=\(quiet)" }
+                respond(.success(id: id, detail: freshness, image: imageData.base64EncodedString(),
                                   scaledWidth: scaling.scaledWidth, scaledHeight: scaling.scaledHeight,
                                   frameContext: capturedFrame?.inputContext))
 
