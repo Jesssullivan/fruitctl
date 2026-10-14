@@ -282,7 +282,7 @@ def main():
                   "OTHER_SWIFT_FLAGS=$(inherited) -file-prefix-map " + str(ROOT) + "=/fruitctl/source"
                   + " -debug-prefix-map " + str(ROOT) + "=/fruitctl/source"
                   + " -file-prefix-map " + str(output) + "=/fruitctl/build"
-                  + " -debug-prefix-map " + str(output) + "=/fruitctl/build",
+                  + " -debug-prefix-map " + str(output) + "=/fruitctl/build -num-threads 1 -j 1",
                   "OTHER_CFLAGS=$(inherited) -ffile-prefix-map=" + str(ROOT) + "=/fruitctl/source"
                   + " -fdebug-prefix-map=" + str(ROOT) + "=/fruitctl/source"
                   + " -ffile-prefix-map=" + str(output) + "=/fruitctl/build"

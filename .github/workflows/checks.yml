@@ -47,3 +47,109 @@ jobs:
           test -d "$TMPDIR" && test ! -L "$TMPDIR"
           test "$(stat -c '%d:%i:%u' "$TMPDIR")" = "$FRUITCTL_CI_RUNTIME_IDENTITY"
           rm -rf -- "$TMPDIR"
+  native-pure:
+    name: Native pure XCTest (Apple Silicon)
+    runs-on: macos-26
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
+      FRUITCTL_NATIVE_CI_OUTPUT: ${{ runner.temp }}/fruitctl-native-${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Check hosted ARM64 toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$RUNNER_ARCH" = ARM64
+          test "$(uname -m)" = arm64
+          test -d "$DEVELOPER_DIR"
+          test "$(xcodebuild -version)" = $'Xcode 26.6\nBuild version 17F113'
+          test "$(xcrun --sdk macosx --show-sdk-version)" = 26.5
+          test "$(cmake --version | sed -n '1p')" = 'cmake version 4.4.3'
+          python3 --version
+          xcodebuild -version
+          cmake --version
+          printf 'Hosted image: %s %s\n' "${ImageOS:-unknown}" "${ImageVersion:-unknown}"
+      - name: Prepare pinned XcodeGen
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          tools="$RUNNER_TEMP/fruitctl-xcodegen-2.46.0"
+          mkdir -m 700 "$tools"
+          curl --fail --show-error --silent --location --connect-timeout 15 --max-time 90 \
+            --output "$tools/xcodegen.zip" \
+            https://github.com/yonaskolb/XcodeGen/releases/download/2.46.0/xcodegen.zip
+          printf '%s  %s\n' \
+            4d9e34b62172d645eed6457cac13fc222569974098ef4ee9c3368bedf0196806 \
+            "$tools/xcodegen.zip" | shasum --algorithm 256 --check --status
+          /usr/bin/ditto -x -k "$tools/xcodegen.zip" "$tools"
+          test "$("$tools/xcodegen/bin/xcodegen" --version)" = 'Version: 2.46.0'
+          printf '%s\n' "$tools/xcodegen/bin" >> "$GITHUB_PATH"
+      - name: Build unsigned controller and run two pure suites
+        id: native-build
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./scripts/build-native.sh \
+            --output-dir "$FRUITCTL_NATIVE_CI_OUTPUT" \
+            --jobs 1 \
+            --build-scheme claude-kvm-daemon \
+            --test-scheme VNCReconnectTests \
+            --test-scheme NativeBehaviorTests \
+            --source-revision "$GITHUB_SHA"
+      - name: Report failed native command
+        if: failure()
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -I - "$FRUITCTL_NATIVE_CI_OUTPUT" <<'PY'
+          import json
+          from pathlib import Path
+          import sys
+          output = Path(sys.argv[1])
+          receipt = output / "build-receipt.json"
+          if receipt.is_file():
+              value = json.loads(receipt.read_text())
+              print("Native build:", value.get("status"), value.get("failureClass", ""))
+              label = (value.get("commands") or [{}])[-1].get("label")
+              if isinstance(label, str) and Path(label).name == label:
+                  log = output / "logs" / (label + ".log")
+                  if log.is_file():
+                      print("Final command:", label, "(last 60 lines, at most 16 KiB)")
+                      with log.open("rb") as stream:
+                          stream.seek(max(0, log.stat().st_size - 16384))
+                          print("\n".join(stream.read(16384).decode("utf-8", errors="replace").splitlines()[-60:]))
+          PY
+      - name: Report build receipt and XCTest summaries
+        if: always()
+        env:
+          NATIVE_BUILD_OUTCOME: ${{ steps.native-build.outcome }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if test "$NATIVE_BUILD_OUTCOME" = success; then
+            python3 -I - "$FRUITCTL_NATIVE_CI_OUTPUT/build-receipt.json" <<'PY'
+          import json
+          from pathlib import Path
+          import sys
+          value = json.loads(Path(sys.argv[1]).read_text())
+          report = {key: value[key] for key in ("status", "sourceRevision", "sourceTreeSha256", "inputManifestSha256")}
+          report["sourceFileCount"] = len(value["sourceFiles"])
+          report["tests"] = [{key: test[key] for key in ("scheme", "status")} for test in value["tests"]]
+          print(json.dumps(report, sort_keys=True))
+          PY
+          fi
+          for scheme in VNCReconnectTests NativeBehaviorTests; do
+            bundle="$FRUITCTL_NATIVE_CI_OUTPUT/$scheme.xcresult"
+            if test -d "$bundle"; then
+              xcrun xcresulttool get test-results summary --path "$bundle"
+            elif test "$NATIVE_BUILD_OUTCOME" = success; then
+              printf '::error::Missing XCTest result bundle: %s\n' "$scheme"
+              exit 1
+            fi
+          done
