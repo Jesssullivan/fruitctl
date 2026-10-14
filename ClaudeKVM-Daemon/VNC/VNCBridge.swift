@@ -761,16 +761,40 @@ final class VNCBridge: @unchecked Sendable {
 
     private func finishFreshCapture(_ waiter: FreshFrameWaiter,
                                     _ result: Result<FrameCapture, Error>, cancelled: Bool = false) {
-        let continuation = freshFrameWaiter.withLock { current -> CheckedContinuation<FrameCapture, Error>? in
-            if cancelled { waiter.cancelled = true }
-            guard current === waiter else { return nil }
-            current = nil
-            waiter.deadline?.cancel()
-            let continuation = waiter.continuation
-            waiter.continuation = nil
-            return continuation
+        // Success is claimed only after the owned pixel copy, under the same
+        // session -> waiter lock order as request admission. Failure preserves
+        // its original cause; neither native code nor continuation resumes here.
+        let resolution = desiredSession.withLock { desired in
+            freshFrameWaiter.withLock { current -> (CheckedContinuation<FrameCapture, Error>, Result<FrameCapture, Error>, Bool)? in
+                if cancelled { waiter.cancelled = true }
+                guard current === waiter else { return nil }
+                var completion = result
+                var expired = false
+                if case .success = result {
+                    if waiter.cancelled {
+                        completion = .failure(CancellationError())
+                    } else if let session = waiter.session, desired == session, clientSession == session {
+                        let now = monotonicNanoseconds()
+                        expired = now < waiter.registeredNs || now >= waiter.expiresNs
+                    } else {
+                        completion = .failure(VNCError.notConnected)
+                    }
+                }
+                current = nil
+                waiter.deadline?.cancel()
+                let continuation = waiter.continuation
+                waiter.continuation = nil
+                guard let continuation else { return nil }
+                return (continuation, completion, expired)
+            }
         }
-        continuation?.resume(with: result)
+        guard let (continuation, completion, expired) = resolution else { return }
+        if expired {
+            continuation.resume(throwing: VNCError.sendFailed(
+                "No fresh complete framebuffer update within 5 seconds; diagnostics=\(framebufferDiagnostics.encoded)"))
+        } else {
+            continuation.resume(with: completion)
+        }
     }
 
     private func refuseFreshCapture(_ error: Error) {
