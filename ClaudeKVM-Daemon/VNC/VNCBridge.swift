@@ -72,6 +72,8 @@ final class VNCBridge: @unchecked Sendable {
     }
     private final class FreshFrameWaiter {
         let session: UUID?
+        let registeredNs: UInt64
+        let expiresNs: UInt64
         var continuation: CheckedContinuation<FrameCapture, Error>?
         var deadline: DispatchWorkItem?
         var cancelled = false
@@ -86,7 +88,14 @@ final class VNCBridge: @unchecked Sendable {
         var coverage: [UInt64] = []
         var pixelsRemaining = 0
         var copyRectanglePending = false
-        init(session: UUID?) { self.session = session }
+        init(session: UUID?, registeredNs: UInt64, expiresNs: UInt64) {
+            self.session = session
+            self.registeredNs = registeredNs
+            self.expiresNs = expiresNs
+        }
+    }
+    private enum FreshCaptureAdmission {
+        case admitted, abandoned, disconnected, expired
     }
     // Single flight bounds additional coverage storage to one allocation.
     private let freshFrameWaiter = OSAllocatedUnfairLock<FreshFrameWaiter?>(initialState: nil)
@@ -106,6 +115,7 @@ final class VNCBridge: @unchecked Sendable {
     private let schedule: VNCWorkScheduler
     private let scheduleFrameDeadline: VNCWorkScheduler
     private let monotonicNanoseconds: () -> UInt64
+    private let beforeFreshCaptureAdmission: () -> Void
     private let messageQueue = DispatchQueue(label: "vnc.message-loop", qos: .userInteractive)
     /// Only touched on messageQueue (message loop).
     private var lastUpdateRequestNs: UInt64 = 0
@@ -124,12 +134,14 @@ final class VNCBridge: @unchecked Sendable {
          operations: VNCClientOperations = .native,
          schedule: @escaping VNCWorkScheduler = scheduleVNCWork,
          scheduleFrameDeadline: @escaping VNCWorkScheduler = scheduleVNCWork,
-         monotonicNanoseconds: @escaping () -> UInt64 = { DispatchTime.now().uptimeNanoseconds }) {
+         monotonicNanoseconds: @escaping () -> UInt64 = { DispatchTime.now().uptimeNanoseconds },
+         beforeFreshCaptureAdmission: @escaping () -> Void = {}) {
         self.config = config
         self.operations = operations
         self.schedule = schedule
         self.scheduleFrameDeadline = scheduleFrameDeadline
         self.monotonicNanoseconds = monotonicNanoseconds
+        self.beforeFreshCaptureAdmission = beforeFreshCaptureAdmission
         messageQueue.setSpecific(key: queueKey, value: 1)
     }
 
@@ -658,7 +670,13 @@ final class VNCBridge: @unchecked Sendable {
     /// newly received pixels and FinishedUpdate on that same allocation.
     func captureFreshFramebuffer() async throws -> FrameCapture {
         try Task.checkCancellation()
-        let waiter = FreshFrameWaiter(session: desiredSession.withLock { $0 })
+        let registeredNs = monotonicNanoseconds()
+        let (expiresNs, expiryOverflow) = registeredNs.addingReportingOverflow(5_000_000_000)
+        guard !expiryOverflow else {
+            throw VNCError.sendFailed("Fresh framebuffer deadline exceeds monotonic clock range")
+        }
+        let waiter = FreshFrameWaiter(session: desiredSession.withLock { $0 },
+                                     registeredNs: registeredNs, expiresNs: expiresNs)
         return try await withTaskCancellationHandler {
             let capture = try await withCheckedThrowingContinuation {
                 (continuation: CheckedContinuation<FrameCapture, Error>) in
@@ -703,6 +721,31 @@ final class VNCBridge: @unchecked Sendable {
                     waiter.byteCount = bytes
                     waiter.pixelsRemaining = pixels
                     waiter.coverage = Array(repeating: 0, count: (waiter.pixelsRemaining + 63) / 64)
+                    beforeFreshCaptureAdmission()
+                    // This short claim orders admission against session changes,
+                    // cancellation and the original deadline. Never hold these
+                    // locks across C code: callbacks can reenter both locks.
+                    let admission = desiredSession.withLock { desired in
+                        freshFrameWaiter.withLock { current -> FreshCaptureAdmission in
+                            guard current === waiter, !waiter.cancelled else { return .abandoned }
+                            guard let session = waiter.session, desired == session,
+                                  clientSession == session else { return .disconnected }
+                            let now = monotonicNanoseconds()
+                            guard now >= waiter.registeredNs, now < waiter.expiresNs else { return .expired }
+                            return .admitted
+                        }
+                    }
+                    switch admission {
+                    case .abandoned: return
+                    case .disconnected:
+                        finishFreshCapture(waiter, .failure(VNCError.notConnected)); return
+                    case .expired:
+                        finishFreshCapture(waiter, .failure(VNCError.sendFailed(
+                            "No fresh complete framebuffer update within 5 seconds; diagnostics=\(framebufferDiagnostics.encoded)"))); return
+                    case .admitted: break
+                    }
+                    // A later cancellation can refuse the caller, but cannot
+                    // undo this already-admitted native request.
                     guard operations.fullUpdate(client) else {
                         finishFreshCapture(waiter, .failure(VNCError.sendFailed("fresh framebuffer update request"))); return
                     }

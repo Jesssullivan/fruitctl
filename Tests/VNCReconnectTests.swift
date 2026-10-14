@@ -160,6 +160,20 @@ private final class FakeNative {
 }
 
 final class VNCReconnectTests: XCTestCase {
+    private func assertSingleClientAndBufferReleased(_ native: FakeNative,
+                                                     file: StaticString = #filePath, line: UInt = #line) {
+        let clients = native.counts, buffers = native.bufferCounts
+        XCTAssertEqual(clients.allocations, 1, file: file, line: line)
+        XCTAssertEqual(clients.releases, 1, file: file, line: line)
+        XCTAssertEqual(clients.failed, 0, file: file, line: line)
+        XCTAssertEqual(clients.duplicate, 0, file: file, line: line)
+        XCTAssertEqual(clients.live, 0, file: file, line: line)
+        XCTAssertEqual(buffers.allocated, 1, file: file, line: line)
+        XCTAssertEqual(buffers.released, 1, file: file, line: line)
+        XCTAssertEqual(buffers.live, 0, file: file, line: line)
+        XCTAssertEqual(buffers.duplicate, 0, file: file, line: line)
+    }
+
     func testPermitExpiryRefusesInputWaitingBehindAnOccupiedNativeDecoder() async throws {
         let native = FakeNative(polls: [true])
         let scheduler = ManualScheduler()
@@ -431,6 +445,258 @@ final class VNCReconnectTests: XCTestCase {
         XCTAssertEqual(bridge.framebufferWidth, 2)
         XCTAssertEqual(native.observedFullUpdates, 0) // expired queued request abandoned
         bridge.disconnect(); XCTAssertEqual(bridge.framebufferWidth, 0)
+    }
+
+    func testFreshCaptureCancellationBetweenLookupAndAdmissionSendsNothing() async throws {
+        let native = FakeNative(polls: [true])
+        let scheduler = ManualScheduler(), deadline = ManualScheduler(), time = ManualTime()
+        let entered = expectation(description: "fresh coverage ready before admission")
+        let finished = expectation(description: "cancellation completes while admission is paused")
+        let release = DispatchSemaphore(value: 0)
+        let bridge = VNCBridge(operations: native.operations, schedule: scheduler.schedule,
+                               scheduleFrameDeadline: deadline.schedule, monotonicNanoseconds: time.now,
+                               beforeFreshCaptureAdmission: {
+            entered.fulfill()
+            XCTAssertEqual(release.wait(timeout: .now() + 5), .success)
+        })
+        try await bridge.connect()
+        let waiting = Task { try await bridge.captureFreshFramebuffer() }
+        let outcome = Task {
+            defer { finished.fulfill() }
+            do { _ = try await waiting.value; XCTFail("cancelled fresh capture succeeded") }
+            catch is CancellationError {} catch { XCTFail("unexpected error: \(error)") }
+        }
+        await fulfillment(of: [entered], timeout: 3)
+        XCTAssertEqual(deadline.delays, [5])
+        let cancelling = Task.detached { waiting.cancel() }
+        // Release even when this expectation fails, so a lock regression can unwind.
+        await fulfillment(of: [finished], timeout: 2)
+        release.signal(); await cancelling.value; await outcome.value
+        XCTAssertEqual(bridge.framebufferWidth, 2) // flush the abandoned queued request
+        XCTAssertEqual(native.observedFullUpdates, 0)
+        XCTAssertEqual(deadline.delays, [5]) // no renewed deadline
+        deadline.runNext() // stale deadline cannot resume the completed continuation
+        native.beforePoll = { completePixelUpdate($0) }
+        scheduler.runNext()
+        XCTAssertEqual(native.observedFullUpdates, 0)
+        bridge.disconnect(); XCTAssertEqual(bridge.framebufferWidth, 0)
+        assertSingleClientAndBufferReleased(native)
+    }
+
+    func testFreshCaptureDeadlineBetweenLookupAndAdmissionSendsNothing() async throws {
+        let native = FakeNative(polls: [true])
+        let scheduler = ManualScheduler(), deadline = ManualScheduler(), time = ManualTime()
+        let entered = expectation(description: "fresh coverage ready before deadline refusal")
+        let finished = expectation(description: "original deadline completes before admission resumes")
+        let release = DispatchSemaphore(value: 0)
+        let bridge = VNCBridge(operations: native.operations, schedule: scheduler.schedule,
+                               scheduleFrameDeadline: deadline.schedule, monotonicNanoseconds: time.now,
+                               beforeFreshCaptureAdmission: {
+            entered.fulfill()
+            XCTAssertEqual(release.wait(timeout: .now() + 5), .success)
+        })
+        try await bridge.connect()
+        let waiting = Task { try await bridge.captureFreshFramebuffer() }
+        let outcome = Task {
+            defer { finished.fulfill() }
+            do { _ = try await waiting.value; XCTFail("expired fresh capture succeeded") }
+            catch VNCError.sendFailed(let reason) {
+                XCTAssertTrue(reason.hasPrefix("No fresh complete framebuffer update within 5 seconds"))
+            } catch { XCTFail("unexpected error: \(error)") }
+        }
+        await fulfillment(of: [entered], timeout: 3)
+        let originalDeadline = deadline.take()
+        XCTAssertEqual(originalDeadline.delay, 5)
+        let firing = Task.detached { originalDeadline.queue.sync { originalDeadline.work.perform() } }
+        await fulfillment(of: [finished], timeout: 2)
+        release.signal(); await firing.value; await outcome.value
+        XCTAssertEqual(bridge.framebufferWidth, 2)
+        XCTAssertEqual(native.observedFullUpdates, 0)
+        XCTAssertTrue(originalDeadline.work.isCancelled)
+        XCTAssertEqual(deadline.delays, [])
+        originalDeadline.queue.sync { originalDeadline.work.perform() }
+        native.beforePoll = { completePixelUpdate($0) }
+        scheduler.runNext()
+        XCTAssertEqual(native.observedFullUpdates, 0)
+        bridge.disconnect(); XCTAssertEqual(bridge.framebufferWidth, 0)
+        assertSingleClientAndBufferReleased(native)
+    }
+
+    func testFreshCaptureDisconnectBetweenLookupAndAdmissionSendsNothing() async throws {
+        let native = FakeNative(polls: [true])
+        let scheduler = ManualScheduler(), deadline = ManualScheduler(), time = ManualTime()
+        let entered = expectation(description: "fresh coverage ready before session retirement")
+        let retired = expectation(description: "desired session retires without waiting for native queue")
+        let finished = expectation(description: "fresh capture refuses retired session")
+        let release = DispatchSemaphore(value: 0)
+        let bridge = VNCBridge(operations: native.operations, schedule: scheduler.schedule,
+                               scheduleFrameDeadline: deadline.schedule, monotonicNanoseconds: time.now,
+                               beforeFreshCaptureAdmission: {
+            entered.fulfill()
+            XCTAssertEqual(release.wait(timeout: .now() + 5), .success)
+        })
+        try await bridge.connect()
+        let waiting = Task { try await bridge.captureFreshFramebuffer() }
+        let outcome = Task {
+            defer { finished.fulfill() }
+            do { _ = try await waiting.value; XCTFail("retired session supplied fresh pixels") }
+            catch VNCError.notConnected {} catch { XCTFail("unexpected error: \(error)") }
+        }
+        await fulfillment(of: [entered], timeout: 3)
+        XCTAssertEqual(deadline.delays, [5])
+        let disconnecting = Task.detached { bridge.disconnect(); retired.fulfill() }
+        await fulfillment(of: [retired], timeout: 2)
+        // Cleanup is queued behind the paused request; do not synchronously flush it yet.
+        release.signal(); await disconnecting.value
+        await fulfillment(of: [finished], timeout: 3)
+        await outcome.value
+        XCTAssertEqual(bridge.framebufferWidth, 0)
+        XCTAssertEqual(native.observedFullUpdates, 0)
+        XCTAssertEqual(deadline.delays, [5])
+        deadline.runNext()
+        bridge.disconnect(); XCTAssertEqual(bridge.framebufferWidth, 0)
+        assertSingleClientAndBufferReleased(native)
+    }
+
+    func testFreshCaptureAbsoluteDeadlineRefusesSendWhenTimerCallbackIsDelayed() async throws {
+        let native = FakeNative(polls: [true])
+        let scheduler = ManualScheduler(), deadline = ManualScheduler(), time = ManualTime()
+        let registered = expectation(description: "original fresh deadline registered before final admission")
+        let entered = expectation(description: "fresh coverage ready before absolute deadline claim")
+        let finished = expectation(description: "absolute cutoff refuses send without timer callback")
+        let release = DispatchSemaphore(value: 0)
+        deadline.onSchedule = { registered.fulfill() }
+        let bridge = VNCBridge(operations: native.operations, schedule: scheduler.schedule,
+                               scheduleFrameDeadline: deadline.schedule, monotonicNanoseconds: time.now,
+                               beforeFreshCaptureAdmission: {
+            entered.fulfill()
+            XCTAssertEqual(release.wait(timeout: .now() + 5), .success)
+        })
+        try await bridge.connect()
+        let waiting = Task { try await bridge.captureFreshFramebuffer() }
+        let outcome = Task {
+            defer { finished.fulfill() }
+            do { _ = try await waiting.value; XCTFail("exact-cutoff request admitted") }
+            catch VNCError.sendFailed(let reason) {
+                XCTAssertTrue(reason.hasPrefix("No fresh complete framebuffer update within 5 seconds"))
+            } catch { XCTFail("unexpected error: \(error)") }
+        }
+        await fulfillment(of: [registered, entered], timeout: 3)
+        let originalDeadline = deadline.take()
+        XCTAssertEqual(originalDeadline.delay, 5)
+        // Expire after lookup and coverage setup, not merely before queue entry.
+        time.advance(5_000_000_000) // exactly the original cutoff; timer has not run
+        release.signal()
+        await fulfillment(of: [finished], timeout: 2)
+        // A missing clock check may leave the reader pending. Fire its old deadline
+        // after the assertion to unwind, without allowing that callback to prove admission.
+        let sendsBeforeTimer = native.observedFullUpdates
+        let refusedBeforeTimer = originalDeadline.work.isCancelled
+        originalDeadline.queue.sync { originalDeadline.work.perform() }
+        await outcome.value
+        XCTAssertEqual(sendsBeforeTimer, 0)
+        XCTAssertTrue(refusedBeforeTimer)
+        XCTAssertEqual(bridge.framebufferWidth, 2)
+        XCTAssertEqual(native.observedFullUpdates, 0)
+        XCTAssertEqual(deadline.delays, [])
+        bridge.disconnect(); XCTAssertEqual(bridge.framebufferWidth, 0)
+        assertSingleClientAndBufferReleased(native)
+    }
+
+    func testFreshCaptureBeforeCutoffStillRequiresReceivedPixels() async throws {
+        let native = FakeNative(polls: [true, true])
+        let scheduler = ManualScheduler(), deadline = ManualScheduler(), time = ManualTime()
+        let registered = expectation(description: "fresh positive original deadline registered")
+        let finished = expectation(description: "received pixels complete the fresh positive capture")
+        deadline.onSchedule = { registered.fulfill() }
+        let events = RecordedEvents()
+        let bridge = VNCBridge(operations: native.operations, schedule: scheduler.schedule,
+                               scheduleFrameDeadline: deadline.schedule, monotonicNanoseconds: time.now,
+                               beforeFreshCaptureAdmission: {
+            time.advance(4_999_999_999)
+            events.append("admission before cutoff")
+        })
+        try await bridge.connect()
+        native.beforeFullUpdate = { client in
+            events.append("native send")
+            completePixelUpdate(client) // synchronous callback still precedes requestStarted
+            return true
+        }
+        let waiting = Task { try await bridge.captureFreshFramebuffer() }
+        let outcome = Task { () -> VNCBridge.FrameCapture? in
+            defer { finished.fulfill() }
+            do { return try await waiting.value }
+            catch { XCTFail("fresh received pixels refused: \(error)"); return nil }
+        }
+        await fulfillment(of: [registered], timeout: 3)
+        let originalDeadline = deadline.take()
+        XCTAssertEqual(originalDeadline.delay, 5)
+        XCTAssertEqual(bridge.framebufferWidth, 2)
+        XCTAssertEqual(native.observedFullUpdates, 1)
+        XCTAssertEqual(events.values, ["admission before cutoff", "native send"])
+        XCTAssertFalse(originalDeadline.work.isCancelled)
+        native.beforePoll = { vncFinishedFrameBufferUpdate($0) }
+        scheduler.runNext() // metadata cannot complete the current fresh request
+        XCTAssertFalse(originalDeadline.work.isCancelled)
+        native.beforePoll = { client in
+            memset(client.pointee.frameBuffer, 0x5a, 16)
+            completePixelUpdate(client)
+        }
+        scheduler.runNext()
+        await fulfillment(of: [finished], timeout: 2)
+        let completedBeforeTimer = originalDeadline.work.isCancelled
+        originalDeadline.queue.sync { originalDeadline.work.perform() }
+        let captured = await outcome.value
+        XCTAssertTrue(completedBeforeTimer)
+        XCTAssertTrue(originalDeadline.work.isCancelled)
+        XCTAssertEqual(deadline.delays, [])
+        bridge.disconnect(); XCTAssertEqual(bridge.framebufferWidth, 0)
+        if let captured {
+            XCTAssertEqual(captured.connectionGeneration, 1)
+            XCTAssertEqual(captured.allocation, 1)
+            XCTAssertTrue(captured.withFramebuffer { buffer, width, height in
+                width == 2 && height == 2 && buffer.count == 16 && buffer.allSatisfy { $0 == 0x5a }
+            })
+        }
+        originalDeadline.queue.sync { originalDeadline.work.perform() }
+        XCTAssertEqual(native.observedFullUpdates, 1)
+        assertSingleClientAndBufferReleased(native)
+    }
+
+    func testFreshCaptureCancellationAfterAdmissionDoesNotHoldLocksAcrossNativeSend() async throws {
+        let native = FakeNative(polls: [true])
+        let scheduler = ManualScheduler(), deadline = ManualScheduler(), time = ManualTime()
+        let entered = expectation(description: "already-admitted native send occupied")
+        let finished = expectation(description: "cancelled caller completes before admitted send returns")
+        let release = DispatchSemaphore(value: 0)
+        let bridge = VNCBridge(operations: native.operations, schedule: scheduler.schedule,
+                               scheduleFrameDeadline: deadline.schedule, monotonicNanoseconds: time.now)
+        try await bridge.connect()
+        native.beforeFullUpdate = { client in
+            entered.fulfill() // FakeNative counted this one admitted request before the hook
+            XCTAssertEqual(release.wait(timeout: .now() + 5), .success)
+            completePixelUpdate(client) // cancelled/synchronous callback cannot supply a capture
+            return true
+        }
+        let waiting = Task { try await bridge.captureFreshFramebuffer() }
+        let outcome = Task {
+            defer { finished.fulfill() }
+            do { _ = try await waiting.value; XCTFail("cancelled admitted request supplied pixels") }
+            catch is CancellationError {} catch { XCTFail("unexpected error: \(error)") }
+        }
+        await fulfillment(of: [entered], timeout: 3)
+        XCTAssertEqual(native.observedFullUpdates, 1)
+        XCTAssertEqual(deadline.delays, [5])
+        let cancelling = Task.detached { waiting.cancel() }
+        await fulfillment(of: [finished], timeout: 2)
+        release.signal(); await cancelling.value; await outcome.value
+        XCTAssertEqual(bridge.framebufferWidth, 2)
+        deadline.runNext()
+        native.beforePoll = { completePixelUpdate($0) }
+        scheduler.runNext()
+        XCTAssertEqual(native.observedFullUpdates, 1) // cancellation does not replay or undo an admitted send
+        bridge.disconnect(); XCTAssertEqual(bridge.framebufferWidth, 0)
+        assertSingleClientAndBufferReleased(native)
     }
 
     func testFreshCaptureRefusesOversizedOrFailedAllocationBeforeCoverageStorageOrSend() async throws {
