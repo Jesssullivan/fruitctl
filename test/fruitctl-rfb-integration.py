@@ -84,9 +84,9 @@ def marker_color(sequence):
 class RfbFixture:
     """One owned loopback connection with explicit full/partial/truncated/silent modes.
 
-    ``silent`` models macOS Screen Sharing on a static display (TIN-5008): it
-    records non-incremental requests but answers none of them, even though
-    RFC 6143 section 7.5.3 requires a reply.
+    ``silent`` records non-incremental requests but answers none of them.
+    A prior complete mirror must not turn this missing response into a fresh
+    observation. This synthetic mode does not qualify any real server.
     """
 
     def __init__(self):
@@ -619,25 +619,28 @@ def run_scenario(kind, mode, count, args):
             start = time.monotonic()
             response = session.action("screenshot")
             elapsed = time.monotonic() - start
-            require(not response["error"] and response["image"],
-                    "static silent server capture failed: %r" % (response["error"],))
-            detail = response["metadata"].get("detail") or ""
-            require(re.fullmatch(r"quiescent_mirror quiet_ms=[0-9]+", detail), "capture lacks quiescent label")
-            require(1.0 <= elapsed < 5.0, "quiescent capture outside its 1 s window and 5 s deadline")
-            png = base64.b64decode(response["image"], validate=True)
-            width, height, pixels = decode_png(png)
-            require((width, height) == (WIDTH, HEIGHT), "PNG geometry mismatch")
-            require(pixels == bytes(marker_color(sequence) * (WIDTH * HEIGHT)),
-                    "quiescent capture is not the complete mirror of the last update")
+            require(response["error"] and not response["image"],
+                    "silent server returned cached pixels as a fresh capture")
+            require(isinstance(response["error"], dict) and
+                    "No fresh complete framebuffer update within 5 seconds" in response["error"].get("message", ""),
+                    "silent capture failed for a reason other than its original deadline")
+            require(5.0 <= elapsed < 10.0, "silent capture did not retain its bounded five-second deadline")
             requests = [request for request in fixture.snapshot()["requests"] if request["at"] >= start]
             full = [request for request in requests if not request["incremental"]]
-            require(full, "no non-incremental request reached the silent server")
+            require(len(full) == 1, "silent capture must send exactly one non-incremental request")
+            # This interval is wholly inside the original five-second budget.
+            # Requests after waiter retirement may resume ordinary pacing.
             superseding = [request for request in requests
-                           if request["incremental"] and full[0]["at"] < request["at"] < full[0]["at"] + 0.9]
+                           if request["incremental"] and full[0]["at"] < request["at"] < start + 4.0]
             require(not superseding, "incremental requests superseded the outstanding full request")
-            report["quiescentCapture"] = {"detail": detail, "elapsedMilliseconds": round(elapsed * 1000, 3),
-                                          "nonIncrementalRequests": len(full), "mirrorMarker": sequence,
-                                          "pngSha256": hashlib.sha256(png).hexdigest()}
+            blocked = session.action("key_tap", key="b")
+            require(blocked["error"], "failed observation authorized subsequent input")
+            require([(event["down"], event["key"]) for event in fixture.snapshot()["events"]
+                     if event["kind"] == "key"] == key_events,
+                    "input reached the server after the fresh observation failed")
+            report["silentCaptureRefusal"] = {"error": response["error"], "elapsedMilliseconds": round(elapsed * 1000, 3),
+                                              "nonIncrementalRequests": len(full), "priorCompleteFrameMarker": sequence,
+                                              "imageReturned": False, "subsequentInputRefused": True}
             report["optionCommandComboKeyEvents"] = key_events
         elif mode == "task-failed":
             require(kind == "mcp", "task-failed scenario requires MCP")

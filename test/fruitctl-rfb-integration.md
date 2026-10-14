@@ -52,10 +52,11 @@ The native run has four scenarios. The MCP run adds four more:
   Require an error with no image within ten seconds.
 - Native only: send `key_combo ["alt","cmd","n"]` and require Alt_L down,
   Meta_L down, `n` down/up, then Meta_L and Alt_L up. Then stop answering
-  non-incremental requests, as macOS Screen Sharing does on a static display.
-  Require a labelled `quiescent_mirror` capture between one and five seconds
-  later that equals the last complete update, and no incremental request in
-  the first 0.9 seconds after the outstanding non-incremental one.
+  non-incremental requests. Require the original five-second fresh-capture
+  timeout with no image, no superseding incremental request during the pending
+  capture, and refusal of subsequent input until a new complete observation.
+  This synthetic silence is not qualification of macOS static-screen behavior
+  or Apple's Option interpretation.
 - Through MCP, invoke all four compatible tools. Verify a two-action queue and
   its coordinate effect, active ownership release through `task_complete`, and
   active ownership release through `task_failed` in a separate scenario. The
