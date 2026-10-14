@@ -48,7 +48,7 @@ jobs:
           test "$(stat -c '%d:%i:%u' "$TMPDIR")" = "$FRUITCTL_CI_RUNTIME_IDENTITY"
           rm -rf -- "$TMPDIR"
   native-pure:
-    name: Native pure XCTest (Apple Silicon)
+    name: Native XCTest and loopback RFB (validation only)
     runs-on: macos-26
     timeout-minutes: 45
     permissions:
@@ -110,6 +110,39 @@ jobs:
             --test-scheme VNCReconnectTests \
             --test-scheme NativeBehaviorTests \
             --source-revision "$GITHUB_SHA"
+      - name: Exercise native synthetic loopback RFB
+        id: native-rfb
+        timeout-minutes: 5
+        env:
+          FRUITCTL_NATIVE_CI_OUTPUT: ${{ runner.temp }}/fruitctl-native-${{ github.run_id }}-${{ github.run_attempt }}
+          FRUITCTL_RFB_CI_OUTPUT: ${{ runner.temp }}/fruitctl-rfb-${{ github.run_id }}-${{ github.run_attempt }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          python3 -I - "$FRUITCTL_NATIVE_CI_OUTPUT" <<'PY'
+          import hashlib
+          import json
+          from pathlib import Path
+          import sys
+          output = Path(sys.argv[1])
+          receipt_bytes = (output / "build-receipt.json").read_bytes()
+          receipt = json.loads(receipt_bytes)
+          daemon = output / "unstripped-unsigned/claude-kvm-daemon"
+          expected = receipt["unstrippedUnsignedArtifacts"]["claude-kvm-daemon"]
+          assert receipt["status"] == "passed"
+          assert daemon.is_file() and not daemon.is_symlink()
+          assert daemon.stat().st_size == expected["bytes"]
+          assert hashlib.sha256(daemon.read_bytes()).hexdigest() == expected["sha256"]
+          print(json.dumps({"buildReceiptSha256": hashlib.sha256(receipt_bytes).hexdigest(),
+                            "sourceRevision": receipt["sourceRevision"],
+                            "sourceTreeSha256": receipt["sourceTreeSha256"],
+                            "unstrippedDaemon": expected}, sort_keys=True))
+          PY
+          python3 -I test/fruitctl-rfb-integration.py \
+            --daemon "$FRUITCTL_NATIVE_CI_OUTPUT/unstripped-unsigned/claude-kvm-daemon" \
+            --output-dir "$FRUITCTL_RFB_CI_OUTPUT" \
+            --captures 100
       - name: Report failed native command
         if: failure()
         env:
@@ -164,3 +197,57 @@ jobs:
               exit 1
             fi
           done
+      - name: Report synthetic RFB receipts and bounded failure diagnostics
+        if: always()
+        env:
+          FRUITCTL_RFB_CI_OUTPUT: ${{ runner.temp }}/fruitctl-rfb-${{ github.run_id }}-${{ github.run_attempt }}
+          NATIVE_RFB_OUTCOME: ${{ steps.native-rfb.outcome }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -I - "$FRUITCTL_RFB_CI_OUTPUT" "$NATIVE_RFB_OUTCOME" <<'PY'
+          import json
+          from pathlib import Path
+          import sys
+          output, outcome = Path(sys.argv[1]), sys.argv[2]
+          receipt_path = output / "receipt.json"
+          if receipt_path.is_file():
+              receipt = json.loads(receipt_path.read_text())
+              keys = ("status", "proofKind", "daemonSha256", "fixtureSha256", "rfbVersion", "authentication",
+                      "credentialDelivery", "frameDimensions", "startedAtUnixSeconds", "finishedAtUnixSeconds", "failure")
+              report = {key: receipt[key] for key in keys if key in receipt}
+              report["scenarios"] = []
+              for mode in ("full", "partial", "truncated", "silent"):
+                  path = output / ("native-" + mode + ".json")
+                  if not path.is_file():
+                      continue
+                  scenario = json.loads(path.read_text())
+                  keys = ("transport", "scenario", "status", "route", "processExitCode", "coordinateRoundtrips",
+                          "buttonAndKeyReleaseRoundtrip", "refusal", "silentCaptureRefusal",
+                          "optionCommandComboKeyEvents", "fixtureErrors", "failure")
+                  summary = {key: scenario[key] for key in keys if key in scenario}
+                  summary["recordedCaptures"] = len(scenario["captures"])
+                  report["scenarios"].append(summary)
+              print(json.dumps(report, sort_keys=True))
+          elif outcome == "success":
+              raise RuntimeError("successful synthetic fixture omitted receipt.json")
+          if outcome == "failure":
+              for mode in ("full", "partial", "truncated", "silent"):
+                  path = output / ("native-" + mode + ".stderr.txt")
+                  if path.is_file():
+                      print("Native", mode, "stderr (last 40 lines, at most 16 KiB)")
+                      with path.open("rb") as stream:
+                          stream.seek(max(0, path.stat().st_size - 16384))
+                          print("\n".join(stream.read(16384).decode("utf-8", errors="replace").splitlines()[-40:]))
+          PY
+      - name: Preserve public synthetic JSON and PNG evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: fruitctl-native-rfb-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/fruitctl-native-${{ github.run_id }}-${{ github.run_attempt }}/build-receipt.json
+            ${{ runner.temp }}/fruitctl-rfb-${{ github.run_id }}-${{ github.run_attempt }}/*.json
+            ${{ runner.temp }}/fruitctl-rfb-${{ github.run_id }}-${{ github.run_attempt }}/*.png
+          if-no-files-found: warn
+          retention-days: 7
