@@ -14,6 +14,8 @@ struct VNCClientOperations {
     var fullUpdate: (Client) -> Bool
     var allocateFramebuffer: (Int) -> UnsafeMutablePointer<UInt8>? = { malloc($0)?.assumingMemoryBound(to: UInt8.self) }
     var freeFramebuffer: (UnsafeMutablePointer<UInt8>) -> Void = { free($0) }
+    /// Writes one already-mapped RFB KeyEvent. Tests record the wire sequence.
+    var sendKey: (Client, UInt32, Bool) -> Bool = { SendKeyEvent($0, $1, $2 ? -1 : 0) != 0 }
 
     static let native = VNCClientOperations(
         make: { rfbGetClient($0.bitsPerSample, $0.samplesPerPixel, $0.bytesPerPixel) },

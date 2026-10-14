@@ -38,7 +38,7 @@ the native daemon on descriptor 3. The fixture removes its synthetic provider
 after stopping its owned children. `--mcp-route legacy-direct` selects the
 compatible `index.js` entrypoint instead.
 
-The native run has three scenarios. The MCP run adds four more:
+The native run has four scenarios. The MCP run adds four more:
 
 - For 100 captures per transport, decode the actual PNG, verify its CRCs,
   dimensions, allocation metadata and every RGB pixel, and require an increasing
@@ -50,6 +50,13 @@ The native run has three scenarios. The MCP run adds four more:
   become a successful fresh capture.
 - Advertise a full raw rectangle, send half its bytes and close the connection.
   Require an error with no image within ten seconds.
+- Native only: send `key_combo ["alt","cmd","n"]` and require Alt_L down,
+  Meta_L down, `n` down/up, then Meta_L and Alt_L up. Then stop answering
+  non-incremental requests. Require the original five-second fresh-capture
+  timeout with no image, no superseding incremental request during the pending
+  capture, and refusal of subsequent input until a new complete observation.
+  This synthetic silence is not qualification of macOS static-screen behavior
+  or Apple's Option interpretation.
 - Through MCP, invoke all four compatible tools. Verify a two-action queue and
   its coordinate effect, active ownership release through `task_complete`, and
   active ownership release through `task_failed` in a separate scenario. The

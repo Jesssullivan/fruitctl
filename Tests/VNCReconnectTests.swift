@@ -71,6 +71,8 @@ private final class FakeNative {
     var afterFramebufferAllocation: (() -> Void)?
     var beforePoll: ((VNCClientOperations.Client) -> Void)?
     var beforeFullUpdate: ((VNCClientOperations.Client) -> Bool)?
+    /// Receives every RFB KeyEvent exactly as the bridge would write it.
+    var onKey: ((UInt32, Bool) -> Void)?
 
     init(outcomes: [Bool] = [true], polls: [Bool] = [false]) {
         self.outcomes = outcomes; self.polls = polls
@@ -155,6 +157,9 @@ private final class FakeNative {
             if owned { buffersReleased += 1 } else { duplicateBufferReleases += 1 }
             lock.unlock()
             if owned { free(buffer) }
+        }, sendKey: { [self] _, key, down in
+            onKey?(key, down)
+            return true
         })
     }
 }
@@ -1048,6 +1053,161 @@ final class VNCReconnectTests: XCTestCase {
         XCTAssertEqual(try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]), data,
                        "diagnostics must be compact, sorted JSON", file: file, line: line)
         return object
+    }
+
+    // MARK: - Static server and Apple modifier mapping (TIN-5008)
+
+    private func wire(_ key: UInt32, _ down: Bool) -> String {
+        (down ? "down 0x" : "up 0x") + String(key, radix: 16, uppercase: true)
+    }
+
+    /// A previously complete mirror cannot satisfy a new request, even when
+    /// the server sends nothing for the whole original deadline.
+    func testSilentServerKeepsOriginalFreshDeadlineWithoutIncrementalPolls() async throws {
+        let native = FakeNative(polls: [])
+        let scheduler = ManualScheduler(), deadline = ManualScheduler(), time = ManualTime()
+        let registered = expectation(description: "fresh deadline registered")
+        deadline.onSchedule = { registered.fulfill() }
+        let bridge = VNCBridge(operations: native.operations, schedule: scheduler.schedule,
+                               scheduleFrameDeadline: deadline.schedule, monotonicNanoseconds: time.now)
+        try await bridge.connect(); try await bridge.waitForFramebuffer()
+        // A is complete, but predates the new full request.
+        native.beforePoll = { client in
+            memset(client.pointee.frameBuffer, 0x44, 16)
+            completePixelUpdate(client)
+        }
+        time.advance(100_000_000); scheduler.runNext()
+        native.beforePoll = nil
+        let incrementalBefore = native.observedIncrementalUpdates
+        XCTAssertEqual(incrementalBefore, 1)
+        let waiting = Task { try await bridge.captureFreshFramebuffer() }
+        await fulfillment(of: [registered], timeout: 3)
+        XCTAssertEqual(bridge.framebufferWidth, 2) // flush the queued admission and send
+        let originalDeadline = deadline.take()
+        XCTAssertEqual(native.observedFullUpdates, 1)
+        time.advance(1_100_000_000); scheduler.runNext()
+        XCTAssertFalse(originalDeadline.work.isCancelled)
+        XCTAssertEqual(native.observedIncrementalUpdates, incrementalBefore)
+        time.advance(3_899_999_999); scheduler.runNext()
+        XCTAssertFalse(originalDeadline.work.isCancelled)
+        XCTAssertEqual(native.observedIncrementalUpdates, incrementalBefore)
+        time.advance(1) // the immutable five-second cutoff, not a renewed window
+        originalDeadline.queue.sync { originalDeadline.work.perform() }
+        do { _ = try await waiting.value; XCTFail("silent server returned historical pixels") }
+        catch VNCError.sendFailed(let reason) {
+            XCTAssertTrue(reason.hasPrefix("No fresh complete framebuffer update within 5 seconds"))
+        } catch { XCTFail("unexpected error: \(error)") }
+        XCTAssertTrue(originalDeadline.work.isCancelled)
+        XCTAssertEqual(native.observedFullUpdates, 1)
+        XCTAssertEqual(native.observedIncrementalUpdates, incrementalBefore)
+        originalDeadline.queue.sync { originalDeadline.work.perform() } // no second retirement
+        time.advance(100_000_000); scheduler.runNext() // ordinary pacing resumes
+        XCTAssertEqual(native.observedIncrementalUpdates, incrementalBefore + 1)
+        bridge.disconnect(); XCTAssertEqual(bridge.framebufferWidth, 0)
+        assertSingleClientAndBufferReleased(native)
+    }
+
+    /// A partial reply is a reply: the mirror never completes a capture then.
+    func testAnyServerReplyAfterNonIncrementalRequestKeepsFullCoverageRequirement() async throws {
+        for reply in ["partial", "metadata"] {
+            let native = FakeNative(polls: [])
+            let scheduler = ManualScheduler(), deadline = ManualScheduler(), time = ManualTime()
+            let registered = expectation(description: "fresh deadline registered")
+            deadline.onSchedule = { registered.fulfill() }
+            let bridge = VNCBridge(operations: native.operations, schedule: scheduler.schedule,
+                                   scheduleFrameDeadline: deadline.schedule, monotonicNanoseconds: time.now)
+            try await bridge.connect(); try await bridge.waitForFramebuffer()
+            let waiting = Task { try await bridge.captureFreshFramebuffer() }
+            await fulfillment(of: [registered], timeout: 3)
+            XCTAssertEqual(bridge.framebufferWidth, 2)
+            let originalDeadline = deadline.take()
+            native.beforePoll = { client in
+                if reply == "partial" { vncGotFrameBufferUpdate(client, 0, 0, 2, 1) }
+                vncFinishedFrameBufferUpdate(client)
+            }
+            time.advance(10_000_000); scheduler.runNext()
+            native.beforePoll = nil
+            time.advance(2_000_000_000); scheduler.runNext()
+            XCTAssertFalse(originalDeadline.work.isCancelled)
+            originalDeadline.queue.sync { originalDeadline.work.perform() }
+            do { _ = try await waiting.value; XCTFail("\(reply) reply completed a fresh capture") }
+            catch VNCError.sendFailed(let reason) {
+                XCTAssertTrue(reason.hasPrefix("No fresh complete framebuffer update within 5 seconds"))
+            } catch { XCTFail("unexpected error: \(error)") }
+            XCTAssertEqual(native.observedFullUpdates, 1)
+            bridge.disconnect(); XCTAssertEqual(bridge.framebufferWidth, 0)
+            assertSingleClientAndBufferReleased(native)
+        }
+    }
+
+    /// A local input write followed by client silence cannot prove the target
+    /// stayed at A. Hold B's actual pixels past one second, then deliver them
+    /// inside the original deadline; only B may complete the observation.
+    func testDelayedFullPixelsAfterInputNeverResolveFromCachedMirror() async throws {
+        let native = FakeNative(polls: [])
+        let scheduler = ManualScheduler(), deadline = ManualScheduler(), time = ManualTime()
+        let registered = expectation(description: "fresh deadline registered")
+        let finished = expectation(description: "delayed B completes the fresh capture")
+        deadline.onSchedule = { registered.fulfill() }
+        let keys = RecordedEvents()
+        native.onKey = { key, down in keys.append(self.wire(key, down)) }
+        let bridge = VNCBridge(operations: native.operations, schedule: scheduler.schedule,
+                               scheduleFrameDeadline: deadline.schedule, monotonicNanoseconds: time.now)
+        try await bridge.connect(); try await bridge.waitForFramebuffer()
+        native.beforePoll = { client in
+            memset(client.pointee.frameBuffer, 0x44, 16)
+            completePixelUpdate(client)
+        }
+        time.advance(100_000_000); scheduler.runNext()
+        native.beforePoll = nil
+        let incrementalBefore = native.observedIncrementalUpdates
+        try await bridge.sendKeyEvent(key: 0x61, down: true)
+        try await bridge.sendKeyEvent(key: 0x61, down: false)
+        XCTAssertEqual(keys.values, ["down 0x61", "up 0x61"])
+        let waiting = Task { try await bridge.captureFreshFramebuffer() }
+        let outcome = Task { () -> VNCBridge.FrameCapture? in
+            defer { finished.fulfill() }
+            do { return try await waiting.value }
+            catch { XCTFail("delayed full B refused: \(error)"); return nil }
+        }
+        await fulfillment(of: [registered], timeout: 3)
+        XCTAssertEqual(bridge.framebufferWidth, 2)
+        let originalDeadline = deadline.take()
+        time.advance(2_000_000_000); scheduler.runNext() // B is delayed, not unchanged
+        XCTAssertFalse(originalDeadline.work.isCancelled)
+        XCTAssertEqual(native.observedFullUpdates, 1)
+        XCTAssertEqual(native.observedIncrementalUpdates, incrementalBefore)
+        native.beforePoll = { client in
+            memset(client.pointee.frameBuffer, 0x99, 16)
+            completePixelUpdate(client)
+        }
+        time.advance(100_000_000); scheduler.runNext()
+        await fulfillment(of: [finished], timeout: 2)
+        originalDeadline.queue.sync { originalDeadline.work.perform() }
+        let captured = await outcome.value
+        XCTAssertTrue(originalDeadline.work.isCancelled)
+        XCTAssertEqual(native.observedFullUpdates, 1) // no replay while B was delayed
+        if let captured {
+            XCTAssertEqual(captured.connectionGeneration, 1)
+            XCTAssertEqual(captured.allocation, 1)
+            XCTAssertTrue(captured.withFramebuffer { buffer, width, height in
+                width == 2 && height == 2 && buffer.count == 16 && buffer.allSatisfy { $0 == 0x99 }
+            })
+        }
+        bridge.disconnect(); XCTAssertEqual(bridge.framebufferWidth, 0)
+        assertSingleClientAndBufferReleased(native)
+    }
+
+    func testWireKeysymMapsAppleCommandAndOptionOnly() {
+        // Alt_L/R -> Meta_L/R (Option); Meta_L/R -> Super_L/R (Command).
+        let apple: [(UInt32, UInt32)] = [
+            (0xFFE9, 0xFFE7), (0xFFEA, 0xFFE8), (0xFFE7, 0xFFEB), (0xFFE8, 0xFFEC),
+            (0xFFEB, 0xFFEB), (0xFFEC, 0xFFEC), (0xFFE1, 0xFFE1), (0xFFE3, 0xFFE3), (0x6E, 0x6E),
+        ]
+        for (named, wire) in apple {
+            XCTAssertEqual(VNCBridge.wireKeysym(named, appleServer: true), wire)
+            XCTAssertEqual(VNCBridge.wireKeysym(named, appleServer: false), named)
+        }
     }
 
     func testFailedRetriesContinueAndRecoverWithBoundedBackoff() async throws {
