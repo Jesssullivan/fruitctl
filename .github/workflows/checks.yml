@@ -55,7 +55,6 @@ jobs:
       contents: read
     env:
       DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
-      FRUITCTL_NATIVE_CI_OUTPUT: ${{ runner.temp }}/fruitctl-native-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -92,6 +91,8 @@ jobs:
           printf '%s\n' "$tools/xcodegen/bin" >> "$GITHUB_PATH"
       - name: Build unsigned controller and run two pure suites
         id: native-build
+        env:
+          FRUITCTL_NATIVE_CI_OUTPUT: ${{ runner.temp }}/fruitctl-native-${{ github.run_id }}-${{ github.run_attempt }}
         shell: bash
         run: |
           set -euo pipefail
@@ -104,6 +105,8 @@ jobs:
             --source-revision "$GITHUB_SHA"
       - name: Report failed native command
         if: failure()
+        env:
+          FRUITCTL_NATIVE_CI_OUTPUT: ${{ runner.temp }}/fruitctl-native-${{ github.run_id }}-${{ github.run_attempt }}
         shell: bash
         run: |
           set -euo pipefail
@@ -128,6 +131,7 @@ jobs:
       - name: Report build receipt and XCTest summaries
         if: always()
         env:
+          FRUITCTL_NATIVE_CI_OUTPUT: ${{ runner.temp }}/fruitctl-native-${{ github.run_id }}-${{ github.run_attempt }}
           NATIVE_BUILD_OUTCOME: ${{ steps.native-build.outcome }}
         shell: bash
         run: |
