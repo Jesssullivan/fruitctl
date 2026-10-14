@@ -2,7 +2,7 @@
 let
   evaluate = system: settings:
     let
-      targetPkgs = import fruitctlFlake.inputs.nixpkgs { inherit system; };
+      targetPkgs = packageSets.${system};
       hm = import "${homeManagerSource}/modules" {
         pkgs = targetPkgs;
         configuration = {
@@ -45,6 +45,8 @@ let
   };
   disabledDarwin = evaluate "aarch64-darwin" { };
   systems = [ "aarch64-darwin" "x86_64-darwin" "aarch64-linux" "x86_64-linux" ];
+  packageSets = pkgs.lib.genAttrs systems (system:
+    import fruitctlFlake.inputs.nixpkgs { inherit system; });
   installations = pkgs.lib.genAttrs systems (system: evaluate system {
     enable = true;
     installOnly = true;
