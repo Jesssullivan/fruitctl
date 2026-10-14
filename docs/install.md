@@ -17,6 +17,13 @@ version or source checkout. Portable Host-installer payload/help supplies no
 FruitctlHost app, native Host bundle or automatic setup; Apple trust, consent
 retention and physical capture/Stop remain unqualified.
 
+Alpha.9 also has separate [Home Manager-installed Claude synthetic MCP
+component evidence](home-manager.md). Two fresh CLI sessions observed complete
+images, made and reversed input, released their sessions and reconnected.
+That acceptance covers the installed Home Manager package and synthetic
+desktop; public-bootstrap frontend and physical desktop qualification remain
+pending.
+
 Historical alpha.8 is immutable at producer `ceb1d4643b8f3c66f744f536777214285a4d20ad`.
 Its thirteen anonymous asset checks and Linux x64 stock public bootstrap/Claude
 project configuration lifecycle cover dry-run, install, doctor, reinstall,
@@ -242,8 +249,10 @@ The published [v0.1.0-alpha.9 preview](https://github.com/xoxd-ai/fruitctl/relea
 implements `--install-root ABSOLUTE_DIRECTORY` for
 `install`, `doctor`, `rollback` and `uninstall`, and the stock bootstrap.
 Its accepted public installer evidence covers only the Linux x64 Claude project
-configuration lifecycle described above. Installed SDK, real frontend, Darwin
-alpha.9 runtime and desktop qualification remain pending. The published
+configuration lifecycle described above. Public-bootstrap frontend, installed
+SDK, Darwin alpha.9 runtime and physical desktop qualification remain pending;
+alpha.9's separate Home Manager-installed Claude component is described above.
+The published
 **alpha.4 bootstrap and runtime do not support
 `--install-root`**. The pinned alpha.9 user-scope paste above deliberately keeps
 the normal-home storage behavior by omitting that option.
@@ -378,9 +387,9 @@ daemon paths. Omit `--install-root` from doctor and retain the recorded agent,
 scope and project; the doctor example below uses explicit-root storage.
 Keep your real `HOME`.
 
-These are current configuration instructions. Alpha.8's accepted public
-installer scope is the Linux x64 Claude project lifecycle; the Darwin runtime,
-SSH journey and actual frontends remain unqualified.
+These are current configuration instructions. Alpha.9's accepted public
+installer scope is the Linux x64 Claude project lifecycle. The Darwin runtime,
+real SSH journey and actual frontend use of that bridge remain unqualified.
 
 **Darwin controller.** Use Apple Silicon macOS 15+ and the unchanged bundled
 signed controller. The target owner enables Screen Sharing and handles any
