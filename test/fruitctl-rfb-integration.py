@@ -373,18 +373,20 @@ class NativeSession(JsonProcess):
                      "os.close(fd) if fd!=3 else None; os.execv(sys.argv[2],sys.argv[2:])")
         env = dict(os.environ)
         env.pop("VNC_PASSWORD", None)
+        started = False
         try:
-            super().__init__([sys.executable, "-I", "-c", bootstrap, str(read_fd), str(daemon),
-                              "--host", "127.0.0.1", "--port", str(port), "--password-fd", "3",
-                              "--no-reconnect", "--connect-timeout", "2"], env=env, pass_fds=(read_fd,))
-            os.close(read_fd)
-            read_fd = None
-            os.write(write_fd, struct.pack("!I", len(SYNTHETIC_CREDENTIAL)) + SYNTHETIC_CREDENTIAL)
-        finally:
-            if read_fd is not None:
+            try:
+                super().__init__([sys.executable, "-I", "-c", bootstrap, str(read_fd), str(daemon),
+                                  "--host", "127.0.0.1", "--port", str(port), "--password-fd", "3",
+                                  "--no-reconnect", "--connect-timeout", "2"], env=env, pass_fds=(read_fd,))
+                started = True
                 os.close(read_fd)
-            os.close(write_fd)
-        try:
+                read_fd = None
+                os.write(write_fd, struct.pack("!I", len(SYNTHETIC_CREDENTIAL)) + SYNTHETIC_CREDENTIAL)
+            finally:
+                if read_fd is not None:
+                    os.close(read_fd)
+                os.close(write_fd)
             deadline = time.monotonic() + 12
             while True:
                 message = self.messages.get(timeout=max(0.01, deadline - time.monotonic()))
@@ -396,7 +398,8 @@ class NativeSession(JsonProcess):
                     validate_native_ready(message.get("params"))
                     break
         except Exception:
-            self.close()
+            if started:
+                self.close()
             raise
 
     def action(self, action, **params):
@@ -609,6 +612,9 @@ def run_scenario(kind, mode, count, args):
             require(kind == "native", "silent scenario uses the native route")
             combo = session.action("key_combo", keys=["alt", "cmd", "n"])
             require(not combo["error"], "alt+cmd+n combo failed")
+            # A local write acknowledgment need not mean the server has read
+            # the key events. A later full response orders its processing.
+            sequence, _, _ = inspect_capture(session.action("screenshot"), fixture, sequence)
             key_events = [(event["down"], event["key"]) for event in fixture.snapshot()["events"]
                           if event["kind"] == "key"]
             # This fixture is not Apple's server, so names keep portable keysyms:
