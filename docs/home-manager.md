@@ -36,15 +36,17 @@ package. This is a dated delivery observation, not broader fleet enablement or
 a Darwin Home Manager installation.
 
 A separate October 12 canonical component check used the installed Home Manager
-package and shipped skill in two fresh Claude Code CLI sessions against an
-owned synthetic desktop. They observed four complete images, made and reversed
+package and shipped skill in two fresh Claude Code 2.1.295 CLI sessions using
+the existing configured `claude-opus-5-5` model against an owned synthetic
+desktop. They observed four complete images, made and reversed
 two inputs, awaited two session releases and reconnected to the restored scene.
 The run used normal settings without authentication, model or provider
 overrides; recorded settings digests and metadata remained intact at the bound
 checks. This is installed Home Manager synthetic MCP component evidence,
 separate from the [public stock installer/configuration journey](agents.md).
-Physical desktop, real SSH, native Host, macOS consent, complete frontend and
-product SLO qualification remain open; Gateway/Junie remains deferred.
+Physical desktop, real SSH, native Host, macOS consent, other frontend
+combinations and product SLO qualification remain open; Gateway/Junie remains
+deferred.
 
 Repin reviewed code changes after their own package check. Documentation-only
 commits may advance `main` without changing the last tested code-source pin.
