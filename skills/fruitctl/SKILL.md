@@ -15,7 +15,23 @@ The real MCP tools are `vnc_command`, `action_queue`, `task_complete`, and
 `task_failed`. Use their discovered schemas. Frontends may prefix these names;
 do not invent computer-use tools or infer capabilities from another agent.
 
-Observe with `vnc_command` action `health`, then `screenshot`. Inspect the current
+## Doctor
+
+Before controlling a macOS target, run `fruitctl doctor --macos --target
+<profile>`, or add `--target-ssh <user@host>` for a raw VNC profile. It runs
+read-only checks of the target over SSH.
+
+- Any typed `targetPreflight.failures` entry means stop and report it. Examples
+  are a macOS version other than 26.6.1+ or 27, Screen Sharing off, observe-only
+  access, a High Performance session, the login window or a locked screen.
+- Report each `warnings` entry and each `unknowns` entry as-is. Do not change
+  target settings or grants yourself.
+
+## Control
+
+Observe with `vnc_command` action `health`, then `screenshot`. Every result's
+`route` and `indicator` say which route answered. The raw route always reports
+`indicator: absent`. Inspect the current
 image and its scaled coordinates, perform authorized bounded input, and obtain
 a new screenshot to verify the result. OCR, a process health response, or an
 input acknowledgement alone does not prove that the requested desktop change

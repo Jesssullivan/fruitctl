@@ -13,6 +13,7 @@ The installer interface is:
 ```text
 fruitctl install --agent <agent> --scope <user|project> --version <exact-tag> --target <profile> --dry-run
 fruitctl doctor --agent <agent> --scope <user|project>
+fruitctl doctor --macos --target <profile> [--target-ssh <user@host>]
 fruitctl uninstall --agent <agent> --scope <user|project>
 fruitctl rollback --agent <agent> --scope <user|project>
 ```
@@ -38,6 +39,10 @@ headless permission grant or work around a refused permission.
 For generic Home Manager installation, use the release's pinned signed
 artifact/module. Preserve the signed bytes and application identity. Consumer
 installation does not patch, rebuild, or re-sign the native client.
+
+`doctor --macos` adds read-only target checks: the macOS 26.6.1+/27 floor,
+the Screen Sharing or Remote Management mode, the session state and the Host
+grants. A typed failure is a stop condition.
 
 For failures, run the scoped doctor and distinguish missing artifacts,
 configuration, credential-provider access, SSH connectivity, target Screen

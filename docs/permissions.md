@@ -117,7 +117,8 @@ the supported macOS version, not assumed from signature validity.
 
 `fruitctl doctor` reports installed runtime and adapter configuration. Its
 `configured` result does not test the target connection, Host consent or screen
-capture. For a separately installed resident Host, distinguish these results:
+capture. `fruitctl doctor --macos` adds the target preflight below. For a
+separately installed resident Host, distinguish these results:
 
 | Observation | What it establishes |
 | --- | --- |
@@ -133,6 +134,87 @@ can help locate a failure without exposing raw Apple error text or private
 paths. A code alone is not permission status. A retired input lane remains
 unavailable after a refusal; repair the known cause and establish a fresh
 session rather than replaying uncertain actions.
+
+## Target preflight
+
+`fruitctl doctor --macos` checks the target over SSH. It writes a
+`targetPreflight` object into doctor's JSON and exits 1 on any typed failure.
+
+```sh
+fruitctl doctor --macos --target PROFILE
+fruitctl doctor --macos --target-ssh USER@HOST
+```
+
+It reaches the target in one of two ways:
+
+- Through the profile's `hostHelper.sshHost`.
+- Through `--target-ssh`, which raw VNC profiles need because they do not
+  record an SSH host.
+
+The SSH session runs one fixed script with no TTY, no forwarding and no agent
+connection. The script does the following:
+
+- Reads `sw_vers` and the console owner.
+- Reads the Screen Sharing launchd override and filtered service state.
+- Reads the Remote Management activation marker and four named
+  `com.apple.RemoteManagement` keys.
+- Reads the console session from the root IORegistry, including the Secure
+  Input holder.
+- Reads `pmset` settings and assertions, and the display list.
+- Reads the Host bundle's identifier and version.
+- Reads the Host's rows in TCC.db.
+
+It does not:
+
+- read the environment or logs;
+- show prompts or launch apps;
+- change services or settings.
+
+| Result | Meaning |
+| --- | --- |
+| `os.supported` | macOS 26.6.1 or later, or any macOS 27 release ([compatibility](compatibility.md#macos-target-support)) |
+| `screenSharing.mode` | `remote_management`, `screen_sharing`, `off` or `unknown` |
+| `failures` | Typed codes; the target is not usable as sampled |
+| `warnings` | Deviations from the Fruitctl-ready target profile |
+| `unknowns` | Facts the probes could not establish |
+
+The current warnings are listed below. The full target profile is later work.
+
+| Warning | Condition |
+| --- | --- |
+| `legacy_vnc_password_enabled` | The legacy VNC password is on (CVE-2026-43760, CVE-2026-43665). |
+| `secure_input_held` | Another process holds Secure Input; typed input may be refused. |
+| `screen_sharing_input_recent` | Another Screen Sharing client sent input recently. Each Mac should have only one input owner. |
+| `additional_gui_sessions` | GUI sessions exist off the console. |
+| `display_sleep_enabled` | The display sleeps. |
+| `no_online_display` | No display is online. |
+| `host_not_installed` | The Host is not installed. Only the raw VNC route is available, with no indicator. |
+| `host_installed_raw_route` | The Host is installed, but the profile still uses the raw route. Configure `hostHelper` to make the Host the default. |
+| `host_screen_recording_not_granted` | The Host has no Screen Recording grant. |
+| `host_accessibility_not_granted` | The Host has no Accessibility grant. |
+| `host_grants_unverified` | The SSH session could not read TCC.db. |
+
+The Host route with Screen Recording and Accessibility granted is the standard
+macOS install. Raw VNC with no grants is the degraded fallback. The current
+image-only Host does not yet use Accessibility; the warning tracks the planned
+standard install.
+
+Reading TCC.db needs Full Disk Access for the SSH session, which is Remote
+Login's "Allow full disk access for remote users" setting. Without it, both
+grants are `unknown`; doctor never reports them as missing. Doctor never
+requests or grants access.
+
+macOS 27 delivers managed grants through Declarative Device Management. The
+TCC.db layout on 27 has not been sampled yet.
+
+Every MCP tool result carries `route` (`host` or `raw`) and `indicator`
+(`present`, `absent` or `unknown`) in its structured output, and `health`
+also prints them as text:
+
+- The raw VNC route always reports `indicator: absent`.
+- The Host route reports `present` only while its activity receipt confirms
+  the overlay. Otherwise it reports `unknown`.
+- A broker that predates these labels reports both values as `unknown`.
 
 ## Persistent Content Capture: operator request checklist
 
