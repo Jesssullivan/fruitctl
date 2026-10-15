@@ -68,11 +68,15 @@ per request mode. The MCP run adds four more:
   request of a connection; `silent` answers nothing. `latest-wins` must return
   three fresh captures, as must `first-wins` in `on-demand` mode; their
   screenshot, `cursor_crop`, `diff_check`, `set_baseline` and
-  `detect_elements` results must each carry capture provenance. Every other
+  `detect_elements` results must each carry capture provenance. On demand,
+  each must report no request outstanding at admission and
+  `ordered_after_prior_input: true`; in stream mode, LibVNC's re-arm is
+  outstanding, so each must report `false`. Every other
   combination must return JSON-RPC `-32010` with `data.reason`
   `server_silent` within the original five-second deadline and no image. Each
   scenario runs the daemon with `--rfb-wire-ledger` and requires the ledger's
-  request counts to equal the requests the server received, one shared
+  written (not `suppressed`) request counts to equal the requests the server
+  received, one shared
   ClientInit, no Key/Pointer/Cut message inside any capture window and, in
   `on-demand` mode, zero incremental requests. These models are not Apple's
   server.

@@ -137,14 +137,8 @@ extension ClaudeKVMDaemon {
             case "screenshot", "cursor_crop", "diff_check", "set_baseline", "detect_elements":
                 // Revoke the prior observation before a refresh can fail.
                 input.context = nil
-                do { capturedFrame = try await vnc.captureFreshFramebuffer() }
-                catch {
-                    // Every capture-path failure leaves as a typed stale_screen.
-                    if let stale = VNCError.classifyStaleScreen(error, diagnostics: vnc.framebufferDiagnostics) {
-                        throw stale
-                    }
-                    throw error
-                }
+                // Every capture-path failure leaves as a typed stale_screen.
+                capturedFrame = try await vnc.captureFreshObservation()
             default: capturedFrame = nil
             }
             if let frame = capturedFrame {

@@ -142,21 +142,27 @@ struct ClaudeKVMDaemon: AsyncParsableCommand {
 
             REQUEST MODES (--rfb-request-mode):
               stream     Default. Incremental polls while idle; LibVNC re-arms an
-                         incremental request after every update.
+                         incremental request after every update, so results
+                         report ordered_after_prior_input false.
               on-demand  No incremental request is written. Each observation
                          sends one whole-screen request; results carry
-                         provenance with the request counts.
+                         provenance with the request counts and report
+                         ordered_after_prior_input true only when no earlier
+                         request was outstanding.
 
             ERRORS:
               Screen observations that obtain no fresh complete frame return
               code -32010 with data.reason (server_silent, metadata_only,
-              incomplete_coverage, allocation_changed, disconnected,
-              request_failed, capture_busy, cancelled) and data.diagnostics.
+              incomplete_coverage, late_complete, allocation_changed,
+              disconnected, request_failed, capture_busy, cancelled) and
+              data.diagnostics.
 
             OUTPUT:
               stdout  PC responses and notifications (NDJSON).
               stderr  Verbose logs (-v), errors ([ERROR] prefix) and, with
-                      --rfb-wire-ledger, [RFB-WIRE] header-only lines.
+                      --rfb-wire-ledger, [RFB-WIRE] header-only lines. Input
+                      is coalesced into one line per run (no counts, timing
+                      or lengths).
               exit 0  Clean shutdown.
               exit 1  Connection failure.
             """
@@ -201,7 +207,7 @@ struct ClaudeKVMDaemon: AsyncParsableCommand {
     // MARK: - RFB Diagnostics
 
     @Flag(name: .customLong("rfb-wire-ledger"),
-          help: "Write a header-only client-to-server RFB ledger to stderr (type, incremental flag, length, monotonic ms; never payloads).")
+          help: "Write a header-only client-to-server RFB ledger to stderr (request type, incremental flag, length, monotonic ms; input coalesced without counts, timing or lengths; never payloads).")
     var rfbWireLedger: Bool = false
 
     @Option(name: .customLong("rfb-request-mode"),

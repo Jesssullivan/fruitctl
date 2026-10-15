@@ -42,10 +42,16 @@ struct VNCFramebufferDiagnostics: Codable, Sendable {
     var complete = false
     var phase = VNCDecoderPhase.disconnected
     // Connection-scoped request accounting. RFB requests carry no identifier,
-    // so both values are inferred: full requests written since the last update
-    // that carried any rectangle, and LibVNC's own post-update incremental
-    // request (rfbclient.c:2564), counted when its request gate was open.
+    // so these values are inferred and err high, never low. A full request
+    // stays counted until an update whose rectangles alone cover the whole
+    // allocation retires one; a server that answers several full requests
+    // with one update leaves the count high. Incremental requests (the
+    // bridge's stream polls and LibVNC's re-arms) are retired by the next
+    // update that carries any rectangle. autoRearmObserved counts LibVNC's
+    // own post-update incremental request (rfbclient.c:2564), written while
+    // its request gate was open.
     var unansweredFullRequests = 0
+    var unansweredIncrementalRequests = 0
     var autoRearmObserved = 0
     // On-demand mode: times the closed request gate was found reopened by a
     // server SupportedMessages rectangle, then closed again.
@@ -64,6 +70,7 @@ struct VNCFramebufferDiagnostics: Codable, Sendable {
         case skippedCopyRectangles = "skipped_copy_rectangles"
         case complete, phase
         case unansweredFullRequests = "unanswered_full_requests"
+        case unansweredIncrementalRequests = "unanswered_incremental_requests"
         case autoRearmObserved = "auto_rearm_observed"
         case requestGateLeaks = "request_gate_leaks"
         case lastCallbackAgeMilliseconds = "last_callback_age_milliseconds"
@@ -128,9 +135,13 @@ struct VNCCaptureProvenance: Encodable, Equatable, Sendable {
     var requestMode: VNCRequestMode
     /// Requests written while this capture was pending, its own included.
     var requests = Requests()
-    /// Inferred full requests still unanswered when this capture was admitted.
-    var priorUnansweredRequests = 0
-    /// False when a leaked LibVNC request may have reordered this capture.
+    /// Inferred requests of each kind still unanswered when this capture's
+    /// own request was admitted.
+    var priorUnansweredRequests = Requests()
+    /// True only when no request was believed outstanding at admission and no
+    /// LibVNC request leaked through the on-demand gate while pending: every
+    /// update that completed this capture then answers a request written after
+    /// any earlier input. Stream mode always has LibVNC's re-arm outstanding.
     var orderedAfterPriorInput = true
     var elapsedMilliseconds: UInt64 = 0
 
@@ -166,6 +177,8 @@ enum VNCStaleScreenReason: String, CaseIterable, Sendable {
     case metadataOnly = "metadata_only"
     /// Rectangles arrived without covering every pixel before the deadline.
     case incompleteCoverage = "incomplete_coverage"
+    /// Every pixel arrived after the request, but only at or after the deadline.
+    case lateComplete = "late_complete"
     case allocationChanged = "allocation_changed"
     case disconnected
     /// The request could not be written before the deadline.

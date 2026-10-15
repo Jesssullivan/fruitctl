@@ -775,8 +775,8 @@ def run_scenario(kind, mode, count, args):
     return report
 
 
-WIRE_LINE = re.compile(r"^\[RFB-WIRE\] ms=(\d+) dir=c2s type=(\d+) incremental=([01-]) length=(\d+) "
-                       r"origin=(bridge|libvnc-init|libvnc-rearm)$")
+WIRE_LINE = re.compile(r"^\[RFB-WIRE\] ms=(\d+) dir=c2s type=(\d+|input) incremental=([01-]) length=(\d+|-) "
+                       r"origin=(bridge|libvnc-init|libvnc-rearm|suppressed)(?: kinds=([0-7](?:,[0-7])*))?$")
 
 
 def wire_ledger(stderr):
@@ -786,9 +786,15 @@ def wire_ledger(stderr):
         if line.startswith("[RFB-WIRE]"):
             match = WIRE_LINE.match(line)
             require(match, "malformed wire ledger line")
-            entries.append({"ms": int(match.group(1)), "type": int(match.group(2)),
-                            "incremental": match.group(3), "length": int(match.group(4)),
-                            "origin": match.group(5)})
+            coalesced = match.group(2) == "input"
+            # Input is coalesced: no count, length or per-message timing.
+            require(coalesced == (match.group(4) == "-") == (match.group(6) is not None)
+                    and (not coalesced or match.group(3) == "-"), "malformed wire ledger input line")
+            entries.append({"ms": int(match.group(1)),
+                            "type": "input" if coalesced else int(match.group(2)),
+                            "incremental": match.group(3),
+                            "length": None if coalesced else int(match.group(4)),
+                            "origin": match.group(5), "kinds": match.group(6)})
     return entries
 
 
@@ -803,12 +809,23 @@ def require_provenance(metadata, request_mode, method):
                                 "ordered_after_prior_input", "elapsed_ms", "elicited_input"},
             "%s provenance fields %r" % (method, sorted(provenance)))
     require(provenance["source"] == "in_session" and provenance["coverage"] == "complete_received_after_request"
-            and provenance["request_mode"] == request_mode and provenance["elicited_input"] is None
-            and provenance["ordered_after_prior_input"] is True, "%s provenance %r" % (method, provenance))
-    requests = provenance["requests"]
+            and provenance["request_mode"] == request_mode and provenance["elicited_input"] is None,
+            "%s provenance %r" % (method, provenance))
+    requests, prior = provenance["requests"], provenance["prior_unanswered_requests"]
     require(isinstance(requests, dict) and requests.get("full", 0) >= 1, "%s provenance requests" % method)
+    require(isinstance(prior, dict) and set(prior) == {"full", "incremental"}
+            and all(isinstance(value, int) and value >= 0 for value in prior.values()),
+            "%s prior unanswered requests %r" % (method, prior))
+    # Ordering is claimed only when nothing was outstanding at admission. In
+    # stream mode LibVNC's re-arm always is; on demand, after an answered
+    # connect request with no leak, nothing is.
     if request_mode == "on-demand":
         require(requests.get("incremental") == 0, "%s on-demand capture wrote incremental requests" % method)
+        require(prior == {"full": 0, "incremental": 0} and provenance["ordered_after_prior_input"] is True,
+                "%s on-demand ordering %r" % (method, provenance))
+    else:
+        require(prior["incremental"] >= 1 and provenance["ordered_after_prior_input"] is False,
+                "%s stream mode claimed ordering %r" % (method, provenance))
     return provenance
 
 
@@ -898,11 +915,13 @@ def run_model_scenario(model, request_mode, args):
             require(not [t for t in snapshot["eventTimes"] if any(a <= t["at"] <= b for a, b in windows)],
                     "input message inside a capture window")
             ledger = wire_ledger(session.stderr if session else b"")
-            requests_ledger = [e for e in ledger if e["type"] == 3]
+            requests_ledger = [e for e in ledger if e["type"] == 3 and e["origin"] != "suppressed"]
             report["wireLedger"] = {"lines": len(ledger),
                                     "full": sum(1 for e in requests_ledger if e["incremental"] == "0"),
                                     "incremental": sum(1 for e in requests_ledger if e["incremental"] == "1"),
-                                    "inferred": sum(1 for e in ledger if e["origin"] != "bridge")}
+                                    "inferred": sum(1 for e in ledger
+                                                    if e["origin"] in ("libvnc-init", "libvnc-rearm")),
+                                    "suppressed": sum(1 for e in ledger if e["origin"] == "suppressed")}
             require(all(e["length"] == 10 for e in requests_ledger), "ledger request length is not 10")
             require(not [e for e in ledger if e["type"] != 3], "ledger lists input in an observation-only scenario")
             require((report["wireLedger"]["full"], report["wireLedger"]["incremental"]) ==

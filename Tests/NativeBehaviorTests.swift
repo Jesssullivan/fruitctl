@@ -576,11 +576,12 @@ final class NativeBehaviorTests: XCTestCase {
 
     func testStaleScreenTaxonomyEncoding() throws {
         XCTAssertEqual(VNCStaleScreenReason.allCases.map(\.rawValue), [
-            "server_silent", "metadata_only", "incomplete_coverage", "allocation_changed",
-            "disconnected", "request_failed", "capture_busy", "cancelled",
+            "server_silent", "metadata_only", "incomplete_coverage", "late_complete",
+            "allocation_changed", "disconnected", "request_failed", "capture_busy", "cancelled",
         ])
         var diagnostics = VNCFramebufferDiagnostics()
         diagnostics.unansweredFullRequests = 2
+        diagnostics.unansweredIncrementalRequests = 4
         diagnostics.autoRearmObserved = 3
         diagnostics.lastCallbackAgeMilliseconds = 7
         let embedded = try XCTUnwrap(JSONSerialization.jsonObject(
@@ -608,6 +609,7 @@ final class NativeBehaviorTests: XCTestCase {
             let wire = try XCTUnwrap(data["diagnostics"] as? [String: Any])
             XCTAssertEqual(Set(wire.keys), Set(embedded.keys))
             XCTAssertEqual(wire["unanswered_full_requests"] as? Int, 2)
+            XCTAssertEqual(wire["unanswered_incremental_requests"] as? Int, 4)
             XCTAssertEqual(wire["auto_rearm_observed"] as? Int, 3)
             XCTAssertEqual(wire["last_callback_age_milliseconds"] as? Int, 7)
         }
@@ -646,7 +648,7 @@ final class NativeBehaviorTests: XCTestCase {
             vncFinishedFrameBufferUpdate(client)
             return true
         }, cleanup: VNCClientOperations.release,
-        poll: { _, _, _ in true }, incrementalUpdate: { _ in }, fullUpdate: { _ in true },
+        poll: { _, _, _ in true }, incrementalUpdate: { _ in true }, fullUpdate: { _ in true },
         sendKey: { _, key, down in
             trace.append((down ? "down 0x" : "up 0x") + String(key, radix: 16, uppercase: true))
             return true
