@@ -326,7 +326,7 @@ test('diagnosed startup refusal survives the offline broker and MCP after confir
         `[1] screenshot: ERROR — ${message}`);
       if (kind === 'queue') assert.deepEqual(result.structuredContent, { completed: 0, failedIndex: 1,
         route: 'raw', indicator: 'absent' });
-      else assert.deepEqual(result.structuredContent, { route: 'raw', indicator: 'absent' });
+      else assert.deepEqual(result.structuredContent, { error: message, route: 'raw', indicator: 'absent' });
       assert.deepEqual(vnc.calls, []);
       assert.deepEqual(host.requests.map(request => request.action), ['health']);
       assert.deepEqual(host.child.kills, ['SIGTERM']);
@@ -365,7 +365,7 @@ test('broker keeps release-unconfirmed and sanitized capture cause with partial 
       // The failed Host route stays labelled host; its indicator is unattested.
       if (kind === 'queue') assert.deepEqual(result.structuredContent, { completed: 1, failedIndex: 2,
         route: 'host', indicator: 'unknown' });
-      else assert.deepEqual(result.structuredContent, { route: 'host', indicator: 'unknown' });
+      else assert.deepEqual(result.structuredContent, { error: message, route: 'host', indicator: 'unknown' });
       assert.deepEqual(vnc.calls.map(action => action.action), kind === 'command' ? [] : ['wait']);
       assert.equal(host.requests.filter(request => request.action === 'capture').length, 1);
       await assert.rejects(client.execute([{ action: 'key_tap', key: 'tab' }]), error => {
