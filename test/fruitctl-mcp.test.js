@@ -8,6 +8,8 @@ import { NdjsonParser, ResponseBudget, responseMetadata, validateResponse,
   encodeRequest, MAX_REQUEST_FRAME_BYTES } from '../lib/mcp/protocol.js';
 
 const success = (result = {}) => ({ result });
+// Fake executors declare no route; the session labels them unknown.
+const undeclared = { route: 'unknown', indicator: 'unknown' };
 
 test('framing preserves split UTF-8, multiple frames and CRLF without logging payloads', () => {
   const received = [];
@@ -145,7 +147,7 @@ test('queue is one executor operation and first daemon error reports completed a
   ] });
   assert.equal(invocations, 1);
   assert.equal(result.isError, true);
-  assert.deepEqual(result.structuredContent, { completed: 1, failedIndex: 2 });
+  assert.deepEqual(result.structuredContent, { completed: 1, failedIndex: 2, ...undeclared });
   assert.match(result.content[0].text, /\[1\] mouse_click: clicked\n\[2\] key_tap: ERROR/);
 });
 
@@ -158,7 +160,7 @@ test('queue transport failure retains partial progress and incomplete success is
   } });
   const result = await failed.queue({ actions });
   assert.equal(result.isError, true);
-  assert.deepEqual(result.structuredContent, { completed: 1, failedIndex: 2 });
+  assert.deepEqual(result.structuredContent, { completed: 1, failedIndex: 2, ...undeclared });
   assert.match(result.content[0].text, /first finished/);
   const incomplete = await new McpSession({ async execute() { return [success()]; } }).queue({ actions });
   assert.equal(incomplete.isError, true);
@@ -178,7 +180,7 @@ test('MCP admits aggregate response bytes and refuses oversized or malformed par
   const result = await session.queue({ actions });
   assert.equal(result.isError, true);
   assert.equal(aborted, true);
-  assert.deepEqual(result.structuredContent, { completed: 1, failedIndex: 2 });
+  assert.deepEqual(result.structuredContent, { completed: 1, failedIndex: 2, ...undeclared });
   assert.match(result.content[0].text, /Batch response exceeds byte limit/);
   const malformed = new McpSession({ async execute() {
     const error = new Error('lost transport');
@@ -187,7 +189,7 @@ test('MCP admits aggregate response bytes and refuses oversized or malformed par
   } });
   const partial = await malformed.queue({ actions });
   assert.equal(partial.isError, true);
-  assert.deepEqual(partial.structuredContent, { completed: 1, failedIndex: 2 });
+  assert.deepEqual(partial.structuredContent, { completed: 1, failedIndex: 2, ...undeclared });
   assert.match(partial.content[0].text, /Invalid daemon response shape/);
 });
 
@@ -202,7 +204,7 @@ test('MCP progress limits cancel the executor before excess metadata can be reta
   const result = await session.queue({ actions: [{ action: 'wait' }, { action: 'wait' }] });
   assert.equal(aborted, true);
   assert.equal(result.isError, true);
-  assert.deepEqual(result.structuredContent, { completed: 1, failedIndex: 2 });
+  assert.deepEqual(result.structuredContent, { completed: 1, failedIndex: 2, ...undeclared });
 });
 
 test('batch deadline includes every action, aborts executor and keeps completed progress', async () => {
@@ -215,7 +217,7 @@ test('batch deadline includes every action, aborts executor and keeps completed 
   const result = await session.queue({ actions: [{ action: 'wait' }, { action: 'wait' }] });
   assert.equal(aborted, true);
   assert.equal(result.isError, true);
-  assert.deepEqual(result.structuredContent, { completed: 1, failedIndex: 2 });
+  assert.deepEqual(result.structuredContent, { completed: 1, failedIndex: 2, ...undeclared });
   assert.match(result.content[0].text, /timed out after 20ms/);
 });
 
