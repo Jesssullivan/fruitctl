@@ -136,7 +136,12 @@ names which one is on. Some results stay `unknown` and are listed as such:
 
 - Curtain mode, which has no passive host-side signal.
 - Observe-only under plain Screen Sharing, which the viewer chooses.
-- Remote Management privileges that are not readable.
+- Remote Management privileges that are not readable. Per-user privileges are
+  read for the profile's VNC account, which governs input, and are `unknown`
+  when that account is not known.
+- Whether Remote Management or plain Screen Sharing is on, when the Remote
+  Management activation marker is absent or unreadable. Readable privileges
+  are still checked in that case.
 
 Each run is a single sample of the target. It does not qualify capture or input.
 

@@ -158,11 +158,16 @@ connection. The script does the following:
 - Reads the Screen Sharing launchd override and filtered service state.
 - Reads the Remote Management activation marker and four named
   `com.apple.RemoteManagement` keys.
-- Reads the console session from the root IORegistry, including the Secure
-  Input holder.
+- Reads the `naprivs` privileges of the profile's VNC account
+  (`vnc.username`). The name is sent only if it is a plain macOS short name;
+  otherwise per-user privileges are reported `unknown`.
+- Reads the console session from the root IORegistry, including the console
+  session's own Secure Input holder.
 - Reads `pmset` settings and assertions, and the display list.
-- Reads the Host bundle's identifier and version.
-- Reads the Host's rows in TCC.db.
+- Reads the Host bundle's identifier and version in the console user's
+  `~/Applications` (found through `dscl`) and in `/Applications`.
+- Reads the Host's rows in the system TCC.db, which decides Screen Recording
+  and Accessibility. Per-user TCC databases are not read.
 
 It does not:
 
@@ -184,7 +189,7 @@ The current warnings are listed below. The full target profile is later work.
 | --- | --- |
 | `legacy_vnc_password_enabled` | The legacy VNC password is on (CVE-2026-43760, CVE-2026-43665). |
 | `secure_input_held` | Another process holds Secure Input; typed input may be refused. |
-| `screen_sharing_input_recent` | Another Screen Sharing client sent input recently. Each Mac should have only one input owner. |
+| `screen_sharing_input_recent` | A Screen Sharing client sent input recently. This may be Fruitctl's own session; otherwise another client is active, and each Mac should have only one input owner. |
 | `additional_gui_sessions` | GUI sessions exist off the console. |
 | `display_sleep_enabled` | The display sleeps. |
 | `no_online_display` | No display is online. |
@@ -192,17 +197,28 @@ The current warnings are listed below. The full target profile is later work.
 | `host_installed_raw_route` | The Host is installed, but the profile still uses the raw route. Configure `hostHelper` to make the Host the default. |
 | `host_screen_recording_not_granted` | The Host has no Screen Recording grant. |
 | `host_accessibility_not_granted` | The Host has no Accessibility grant. |
-| `host_grants_unverified` | The SSH session could not read TCC.db. |
+| `host_grants_unverified` | The SSH session could not read the system TCC.db. |
 
 The Host route with Screen Recording and Accessibility granted is the standard
 macOS install. Raw VNC with no grants is the degraded fallback. The current
 image-only Host does not yet use Accessibility; the warning tracks the planned
 standard install.
 
-Reading TCC.db needs Full Disk Access for the SSH session, which is Remote
-Login's "Allow full disk access for remote users" setting. Without it, both
-grants are `unknown`; doctor never reports them as missing. Doctor never
-requests or grants access.
+Reading TCC.db needs Full Disk Access for the SSH session. Doctor does not
+need it, and it is optional. Without it, both grants read as `unknown`;
+doctor never reports them as missing, and it never requests or grants access.
+
+**Caution:** macOS grants this only through Remote Login's "Allow full disk
+access for remote users" setting. That setting gives every SSH session for
+every allowed user Full Disk Access, not just doctor. Turn it on only if the
+target's SSH access is already trusted at that level. Leaving it off is a
+supported configuration.
+
+When doctor cannot establish a fact, it lists it in `unknowns` instead of
+reporting a pass. That includes an unreadable Screen Sharing override, an
+absent or unreadable Remote Management marker, a missing IOConsoleUsers list
+(screen lock and Secure Input), and a console user home that cannot be
+checked for the Host.
 
 macOS 27 delivers managed grants through Declarative Device Management. The
 TCC.db layout on 27 has not been sampled yet.
