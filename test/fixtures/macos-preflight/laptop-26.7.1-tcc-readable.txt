@@ -1,0 +1,136 @@
+
+@@fruitctl-probe sw_vers@@
+ProductName:		macOS
+ProductVersion:		26.7.1
+BuildVersion:		25G313
+
+@@fruitctl-status sw_vers 0@@
+
+@@fruitctl-probe arch@@
+arm64
+
+@@fruitctl-status arch 0@@
+
+@@fruitctl-probe console@@
+operator
+
+@@fruitctl-status console 0@@
+
+@@fruitctl-probe screensharing_override@@
+		"com.apple.screensharing" => enabled
+
+@@fruitctl-status screensharing_override 0@@
+
+@@fruitctl-probe screensharing_service@@
+	state = not running
+	runs = 0
+	last exit code = (never exited)
+
+@@fruitctl-status screensharing_service 0@@
+
+@@fruitctl-probe remote_management_marker@@
+enabled
+@@fruitctl-status remote_management_marker 0@@
+
+@@fruitctl-probe remote_management_prefs@@
+
+@@fruitctl-status remote_management_prefs 0@@
+
+@@fruitctl-probe console_naprivs@@
+
+@@fruitctl-status console_naprivs 0@@
+
+@@fruitctl-probe ioreg_console@@
+      "IOConsoleLocked" = No
+      "IOConsoleUsers" = ({"kCGSSessionOnConsoleKey"=Yes,"kSCSecuritySessionID"=100002,"kCGSSessionSystemSafeBoot"=No,"kCGSessionLoginDoneKey"=Yes,"kCGSSessionIDKey"=257,"kCGSSessionUserNameKey"="operator","kCGSSessionGroupIDKey"=20,"CGSSessionUniqueSessionUUID"="00000000-0000-0000-0000-000000000000","kCGSessionLongUserNameKey"="Operator","kCGSSessionAuditIDKey"=100002,"kCGSSessionLoginwindowSafeLogin"=No,"kCGSSessionUserIDKey"=501})
+
+@@fruitctl-status ioreg_console 0@@
+
+@@fruitctl-probe secure_input_process@@
+
+@@fruitctl-status secure_input_process 0@@
+
+@@fruitctl-probe pmset_assertions@@
+2026-10-15 00:00:00 +0000
+Assertion status system-wide:
+   BackgroundTask                 0
+   ApplePushServiceTask           0
+   UserIsActive                   1
+   PreventUserIdleDisplaySleep    0
+   SoftwareUpdateTask             0
+   PreventSystemSleep             0
+   ExternalMedia                  1
+   InternalPreventDisplaySleep    1
+   PreventUserIdleSystemSleep     1
+   NetworkClientActive            0
+Listed by owning process:
+   pid 66707(caffeinate): [0x00041ea60001a493] 00:00:38 PreventUserIdleSystemSleep named: "caffeinate command-line tool"  
+	Details: caffeinate asserting for 300 secs
+	Localized=THE CAFFEINATE TOOL IS PREVENTING SLEEP.
+	Timeout will fire in 262 secs Action=TimeoutActionRelease
+   pid 178(bluetoothd): [0x00041ebf0001a495] 00:00:12 PreventUserIdleSystemSleep named: "com.apple.BTStack"  
+   pid 178(bluetoothd): [0x0000d23600099136] 00:44:04 UserIsActive named: "Bluetooth LE HID Activity"  
+   pid 126(powerd): [0x0000002600018001] 74:59:50 PreventUserIdleSystemSleep named: "Powerd - Prevent sleep while display is on"  
+   pid 126(powerd): [0x00000037000880e0] 74:59:33 ExternalMedia named: "com.apple.powermanagement.externalmediamounted"  
+   pid 126(powerd): [0x0000002600098002] 74:59:50 UserIsActive named: "com.apple.powerd.ws.initialize"  
+   pid 126(powerd): [0x00041e1400108595] 00:03:03 InternalPreventDisplaySleep named: "com.apple.powermanagement.delayDisplayOff"  
+	Timeout will fire in 116 secs Action=TimeoutActionTurnOff
+   pid 59307(caffeinate): [0x00041e000001a452] 00:03:23 PreventUserIdleSystemSleep named: "caffeinate command-line tool"  
+	Details: caffeinate asserting for 300 secs
+	Localized=THE CAFFEINATE TOOL IS PREVENTING SLEEP.
+	Timeout will fire in 97 secs Action=TimeoutActionRelease
+   pid 67948(caffeinate): [0x00041ec20001a496] 00:00:09 PreventUserIdleSystemSleep named: "caffeinate command-line tool"  
+	Details: caffeinate asserting for 300 secs
+	Localized=THE CAFFEINATE TOOL IS PREVENTING SLEEP.
+	Timeout will fire in 291 secs Action=TimeoutActionRelease
+   pid 63004(caffeinate): [0x00041e520001a48c] 00:02:01 PreventUserIdleSystemSleep named: "caffeinate command-line tool"  
+	Details: caffeinate asserting for 300 secs
+	Localized=THE CAFFEINATE TOOL IS PREVENTING SLEEP.
+	Timeout will fire in 178 secs Action=TimeoutActionRelease
+   pid 197(coreaudiod): [0x00041a860001a185] 00:18:13 PreventUserIdleSystemSleep named: "com.apple.audio.example.context.preventuseridlesleep"  
+	Created for PID: 1001. 
+	Resources: audio-out exampleoutput 
+   pid 58126(caffeinate): [0x00041ded0001a44d] 00:03:42 PreventUserIdleSystemSleep named: "caffeinate command-line tool"  
+	Details: caffeinate asserting for 300 secs
+	Localized=THE CAFFEINATE TOOL IS PREVENTING SLEEP.
+	Timeout will fire in 78 secs Action=TimeoutActionRelease
+   pid 185(WindowServer): [0x0000002b00098072] 00:00:00 UserIsActive named: "com.apple.iohideventsystem.queue.tickle serviceID:0 service:AppleHIDKeyboardEventDriverV2 product:Apple Internal Keyboard eventType:3"  
+   pid 44620(ExampleBrowser): [0x00041b6b0001a3b9] 00:14:24 NoIdleSleepAssertion named: "Playing audio"  
+Kernel Assertions: 0x104=USB,MAGICWAKE
+
+@@fruitctl-status pmset_assertions 0@@
+
+@@fruitctl-probe pmset_settings@@
+System-wide power settings:
+Currently in use:
+ standby              1
+ Sleep On Power Button 1
+ hibernatefile        /var/vm/sleepimage
+ powernap             1
+ networkoversleep     0
+ disksleep            0
+ sleep                1 (sleep prevented by caffeinate, bluetoothd, powerd, caffeinate, caffeinate, caffeinate, coreaudiod, caffeinate, ExampleBrowser)
+ hibernatemode        3
+ ttyskeepawake        1
+ displaysleep         0
+ tcpkeepalive         1
+ lowpowermode         0
+ womp                 1
+
+@@fruitctl-status pmset_settings 0@@
+
+@@fruitctl-probe displays@@
+display=Color LCD
+online=Yes
+
+@@fruitctl-status displays 0@@
+
+@@fruitctl-probe host_app@@
+
+@@fruitctl-status host_app 0@@
+
+@@fruitctl-probe tcc@@
+system|readable
+user|readable
+
+@@fruitctl-status tcc 0@@
