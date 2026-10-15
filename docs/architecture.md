@@ -103,13 +103,35 @@ to qualify action-to-observation behavior. A static screenshot cannot prove a
 fresh frame, and a partial update cannot be reported as complete pixels.
 
 The raw-VNC daemon asks for each observation with a non-incremental
-FramebufferUpdateRequest (RFC 6143 section 7.5.3) and adds no incremental
-request while that capture is pending. Every screen observation still requires
-new full pixel coverage and a completed update on the same allocation within
-the original five-second deadline. A complete cached mirror, server silence,
-partial pixels or a metadata-only update cannot establish current pixels or
-authorize further input. Static-screen behavior on macOS Screen Sharing still
-requires native and attended qualification.
+FramebufferUpdateRequest (RFC 6143 section 7.5.3). While that capture is
+pending, the daemon's own message loop adds no incremental request. LibVNC
+0.9.15 still writes its own incremental request after every
+FramebufferUpdate it processes (`rfbclient.c:2564`), before the completion
+callback. Any update that arrives during a pending capture therefore leaves
+an incremental request outstanding at the server. Every screen observation
+still requires new full pixel coverage and a completed update on the same
+allocation within the original five-second deadline. A complete cached mirror,
+server silence, partial pixels or a metadata-only update cannot establish
+current pixels or authorize further input. Static-screen behavior on macOS
+Screen Sharing still requires native and attended qualification.
+
+A failed observation returns JSON-RPC code `-32010` (`stale_screen`). Its
+message keeps the prefix `No fresh complete framebuffer update within 5
+seconds` for deadline failures, and `data.reason` is one of `server_silent`,
+`metadata_only`, `incomplete_coverage`, `allocation_changed`, `disconnected`,
+`request_failed`, `capture_busy` or `cancelled`. `data.diagnostics` carries
+only control-flow counters, including the inferred `unanswered_full_requests`
+and `auto_rearm_observed`. The MCP server keeps this code and data in the
+tool result's structured `error` object (`{code, message, data}`, the shape
+every failed result uses) beside the compatible error text and the D7 `route`
+and `indicator` labels; a failed `action_queue` reports its first failure in
+the same object.
+
+`--rfb-wire-ledger` writes one stderr line per client-to-server message:
+message type, incremental flag, length and monotonic milliseconds, never
+payloads. Bridge writes are exact. LibVNC's initial request and post-update
+re-arm are inferred; its SetPixelFormat, SetEncodings and resize requests are
+not listed, so a header-only packet capture remains the wire authority.
 
 On Apple's server the daemon writes Command as `Super_L`/`Super_R` and Option
 as `Meta_L`/`Meta_R`; the `cmd` and `alt`/`option` key names are unchanged.

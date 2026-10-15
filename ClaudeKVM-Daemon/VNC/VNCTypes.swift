@@ -41,7 +41,29 @@ struct VNCFramebufferDiagnostics: Codable, Sendable {
     var skippedCopyRectangles = 0
     var complete = false
     var phase = VNCDecoderPhase.disconnected
+    // Connection-scoped request accounting. RFB requests carry no identifier,
+    // so both values are inferred: full requests written since the last update
+    // that carried any rectangle, and LibVNC's own post-update incremental
+    // request (rfbclient.c:2564), counted when its request gate was open.
+    var unansweredFullRequests = 0
+    var autoRearmObserved = 0
     var lastCallbackAgeMilliseconds: UInt64?
+
+    // Explicit wire names keep `encoded` and typed error data identical.
+    enum CodingKeys: String, CodingKey {
+        case connectionGeneration = "connection_generation"
+        case allocations, width, height
+        case pixelsRemaining = "pixels_remaining"
+        case rectangles
+        case copyRectangles = "copy_rectangles"
+        case finishedUpdates = "finished_updates"
+        case rejectedRectangles = "rejected_rectangles"
+        case skippedCopyRectangles = "skipped_copy_rectangles"
+        case complete, phase
+        case unansweredFullRequests = "unanswered_full_requests"
+        case autoRearmObserved = "auto_rearm_observed"
+        case lastCallbackAgeMilliseconds = "last_callback_age_milliseconds"
+    }
 
     var encoded: String {
         let encoder = JSONEncoder()
@@ -78,6 +100,29 @@ enum VNCConnectionState: Sendable, CustomStringConvertible {
 
 // MARK: - Errors
 
+/// Stable reasons a screen observation produced no fresh complete frame.
+/// The raw values are the public JSON-RPC `data.reason` vocabulary.
+enum VNCStaleScreenReason: String, CaseIterable, Sendable {
+    /// The request was written and no update arrived before the deadline.
+    case serverSilent = "server_silent"
+    /// Updates arrived, but none carried a framebuffer rectangle.
+    case metadataOnly = "metadata_only"
+    /// Rectangles arrived without covering every pixel before the deadline.
+    case incompleteCoverage = "incomplete_coverage"
+    case allocationChanged = "allocation_changed"
+    case disconnected
+    /// The request could not be written before the deadline.
+    case requestFailed = "request_failed"
+    case captureBusy = "capture_busy"
+    case cancelled
+}
+
+/// Typed failure data: a bounded message plus control-flow diagnostics only.
+struct VNCStaleScreenData: Sendable {
+    let message: String
+    let diagnostics: VNCFramebufferDiagnostics
+}
+
 enum VNCError: LocalizedError {
     case notConnected
     case connectionFailed(String)
@@ -85,6 +130,12 @@ enum VNCError: LocalizedError {
     case messageLoopFailed
     case framebufferAllocationFailed
     case sendFailed(String)
+    case staleScreen(reason: VNCStaleScreenReason, data: VNCStaleScreenData)
+
+    /// JSON-RPC error code for every stale_screen observation failure.
+    static let staleScreenCode = -32010
+    /// Deadline failures keep this compatible message prefix.
+    static let staleScreenDeadlineMessage = "No fresh complete framebuffer update within 5 seconds"
 
     var errorDescription: String? {
         switch self {
@@ -94,7 +145,27 @@ enum VNCError: LocalizedError {
         case .messageLoopFailed: "VNC message loop encountered an error."
         case .framebufferAllocationFailed: "Failed to allocate framebuffer."
         case .sendFailed(let msg): "Failed to send VNC event: \(msg)"
+        case .staleScreen(_, let data): data.message
         }
+    }
+
+    /// Classify a fresh-capture failure. Disconnection and cancellation keep
+    /// their own Swift types inside the bridge; only the wire sees this form.
+    static func classifyStaleScreen(_ error: Error,
+                                    diagnostics: VNCFramebufferDiagnostics) -> VNCError? {
+        if let typed = error as? VNCError {
+            switch typed {
+            case .staleScreen: return typed
+            case .notConnected:
+                return .staleScreen(reason: .disconnected, data: VNCStaleScreenData(
+                    message: typed.errorDescription ?? "Not connected to VNC server.",
+                    diagnostics: diagnostics))
+            default: return nil
+            }
+        }
+        guard error is CancellationError else { return nil }
+        return .staleScreen(reason: .cancelled, data: VNCStaleScreenData(
+            message: "Fresh framebuffer capture cancelled", diagnostics: diagnostics))
     }
 }
 
@@ -113,4 +184,6 @@ struct VNCConfiguration {
     var reconnectDelay: TimeInterval = 2.0
     var maxReconnectAttempts: Int = 10
     var messageLoopInterval: UInt32 = 500
+    /// Write a header-only client-to-server ledger to stderr (no payloads).
+    var wireLedger: Bool = false
 }

@@ -140,9 +140,16 @@ struct ClaudeKVMDaemon: AsyncParsableCommand {
               Descriptor 3 carries a bounded credential frame; stdin remains PC NDJSON.
               Plaintext password arguments and environment fallbacks are unsupported.
 
+            ERRORS:
+              Screen observations that obtain no fresh complete frame return
+              code -32010 with data.reason (server_silent, metadata_only,
+              incomplete_coverage, allocation_changed, disconnected,
+              request_failed, capture_busy, cancelled) and data.diagnostics.
+
             OUTPUT:
               stdout  PC responses and notifications (NDJSON).
-              stderr  Verbose logs (-v) and errors ([ERROR] prefix).
+              stderr  Verbose logs (-v), errors ([ERROR] prefix) and, with
+                      --rfb-wire-ledger, [RFB-WIRE] header-only lines.
               exit 0  Clean shutdown.
               exit 1  Connection failure.
             """
@@ -183,6 +190,12 @@ struct ClaudeKVMDaemon: AsyncParsableCommand {
 
     @Flag(name: .long, help: "Disable auto-reconnect on connection loss.")
     var noReconnect: Bool = false
+
+    // MARK: - RFB Diagnostics
+
+    @Flag(name: .customLong("rfb-wire-ledger"),
+          help: "Write a header-only client-to-server RFB ledger to stderr (type, incremental flag, length, monotonic ms; never payloads).")
+    var rfbWireLedger: Bool = false
 
     // MARK: - General
 
@@ -228,6 +241,7 @@ struct ClaudeKVMDaemon: AsyncParsableCommand {
         if let delay = reconnectDelay { vncConfig.reconnectDelay = delay }
         if let max = maxReconnectAttempts { vncConfig.maxReconnectAttempts = max }
         if noReconnect { vncConfig.autoReconnect = false }
+        vncConfig.wireLedger = rfbWireLedger
 
         let vnc = VNCBridge(config: vncConfig)
         vnc.verbose = verbose

@@ -16,6 +16,15 @@ struct VNCClientOperations {
     var freeFramebuffer: (UnsafeMutablePointer<UInt8>) -> Void = { free($0) }
     /// Writes one already-mapped RFB KeyEvent. Tests record the wire sequence.
     var sendKey: (Client, UInt32, Bool) -> Bool = { SendKeyEvent($0, $1, $2 ? -1 : 0) != 0 }
+    /// Writes one RFB PointerEvent (x, y, button mask). Every input write
+    /// crosses a seam, so tests can prove a capture path writes no input.
+    var sendPointer: (Client, Int32, Int32, Int32) -> Bool = { SendPointerEvent($0, $1, $2, $3) != 0 }
+    /// Writes one RFB ClientCutText from a NUL-terminated buffer. The wire
+    /// length excludes the terminator.
+    var sendClientCutText: (Client, [CChar]) -> Bool = { client, text in
+        var bytes = text
+        return SendClientCutText(client, &bytes, Int32(bytes.count - 1)) != 0
+    }
 
     static let native = VNCClientOperations(
         make: { rfbGetClient($0.bitsPerSample, $0.samplesPerPixel, $0.bytesPerPixel) },

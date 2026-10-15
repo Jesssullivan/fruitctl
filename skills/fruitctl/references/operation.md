@@ -60,7 +60,8 @@ successful desktop workflow.
 Use it only for a short confident sequence on an observed stable state. It
 must fit within the 30-second operation budget, including waits and typing;
 use individual actions when the whole sequence cannot be bounded. It
-stops on the first error; earlier actions may already have executed. Inspect
+stops on the first error; earlier actions may already have executed. Its
+structured result reports `completed`, `failedIndex` and that first `error`. Inspect
 the outcome and do not automatically replay a failed or timed-out sequence.
 Take a new screenshot after a batch. Do not construct a blind sequence through
 unobserved dialogs or permission prompts.

@@ -306,8 +306,9 @@ final class VNCReconnectTests: XCTestCase {
         XCTAssertEqual(deadline.delays, [5])
         deadline.runNext()
         do { _ = try await waiting.value; XCTFail("historical pixels admitted as fresh") }
-        catch VNCError.sendFailed(let reason) {
-            XCTAssertTrue(reason.hasPrefix("No fresh complete framebuffer update within 5 seconds"))
+        catch VNCError.staleScreen(let staleReason, let data) {
+            XCTAssertTrue(data.message.hasPrefix("No fresh complete framebuffer update within 5 seconds"))
+            XCTAssertEqual(staleReason, .metadataOnly)
         } catch { XCTFail("unexpected error") }
         // Existing cached consumers retain their original semantics.
         try await bridge.waitForFramebuffer()
@@ -384,7 +385,10 @@ final class VNCReconnectTests: XCTestCase {
         await fulfillment(of: [registered], timeout: 3)
         XCTAssertEqual(bridge.framebufferWidth, 2)
         do { _ = try await bridge.captureFreshFramebuffer(); XCTFail("overlapping capture admitted") }
-        catch VNCError.sendFailed(let reason) { XCTAssertEqual(reason, "Fresh framebuffer capture already in progress") }
+        catch VNCError.staleScreen(let reason, let data) {
+            XCTAssertEqual(reason, .captureBusy)
+            XCTAssertEqual(data.message, "Fresh framebuffer capture already in progress")
+        }
         catch { XCTFail("unexpected error") }
         waiting.cancel()
         do { _ = try await waiting.value; XCTFail("cancelled capture admitted") }
@@ -392,7 +396,10 @@ final class VNCReconnectTests: XCTestCase {
         deadline.onSchedule = nil
         native.beforeFullUpdate = { _ in false }
         do { _ = try await bridge.captureFreshFramebuffer(); XCTFail("failed send admitted") }
-        catch VNCError.sendFailed(let reason) { XCTAssertEqual(reason, "fresh framebuffer update request") }
+        catch VNCError.staleScreen(let reason, let data) {
+            XCTAssertEqual(reason, .requestFailed)
+            XCTAssertEqual(data.message, "Fresh framebuffer update request failed")
+        }
         catch { XCTFail("unexpected error") }
         bridge.disconnect(); XCTAssertEqual(bridge.framebufferWidth, 0)
     }
@@ -418,9 +425,10 @@ final class VNCReconnectTests: XCTestCase {
                 scheduler.runNext()
             } else { bridge.disconnect(); XCTAssertEqual(bridge.framebufferWidth, 0) }
             do { _ = try await waiting.value; XCTFail("capture rebound to another allocation") }
-            catch VNCError.sendFailed(let reason) {
+            catch VNCError.staleScreen(let reason, let data) {
                 XCTAssertTrue(resize)
-                XCTAssertEqual(reason, "Framebuffer allocation changed during fresh capture")
+                XCTAssertEqual(reason, .allocationChanged)
+                XCTAssertEqual(data.message, "Framebuffer allocation changed during fresh capture")
             } catch VNCError.notConnected { XCTAssertFalse(resize) }
             catch { XCTFail("unexpected error") }
             bridge.disconnect(); XCTAssertEqual(bridge.framebufferWidth, 0)
@@ -444,7 +452,7 @@ final class VNCReconnectTests: XCTestCase {
         await fulfillment(of: [registered], timeout: 3)
         deadline.runNext()
         do { _ = try await waiting.value; XCTFail("occupied queue admitted stale pixels") }
-        catch VNCError.sendFailed(let reason) { XCTAssertTrue(reason.hasPrefix("No fresh complete framebuffer update within 5 seconds")) }
+        catch VNCError.staleScreen(let staleReason, let data) { XCTAssertTrue(data.message.hasPrefix("No fresh complete framebuffer update within 5 seconds")); XCTAssertEqual(staleReason, .requestFailed) }
         catch { XCTFail("unexpected error") }
         release.signal(); await polling.value
         XCTAssertEqual(bridge.framebufferWidth, 2)
@@ -505,8 +513,9 @@ final class VNCReconnectTests: XCTestCase {
         let outcome = Task {
             defer { finished.fulfill() }
             do { _ = try await waiting.value; XCTFail("expired fresh capture succeeded") }
-            catch VNCError.sendFailed(let reason) {
-                XCTAssertTrue(reason.hasPrefix("No fresh complete framebuffer update within 5 seconds"))
+            catch VNCError.staleScreen(let staleReason, let data) {
+                XCTAssertTrue(data.message.hasPrefix("No fresh complete framebuffer update within 5 seconds"))
+                XCTAssertEqual(staleReason, .requestFailed)
             } catch { XCTFail("unexpected error: \(error)") }
         }
         await fulfillment(of: [entered], timeout: 3)
@@ -582,8 +591,9 @@ final class VNCReconnectTests: XCTestCase {
         let outcome = Task {
             defer { finished.fulfill() }
             do { _ = try await waiting.value; XCTFail("exact-cutoff request admitted") }
-            catch VNCError.sendFailed(let reason) {
-                XCTAssertTrue(reason.hasPrefix("No fresh complete framebuffer update within 5 seconds"))
+            catch VNCError.staleScreen(let staleReason, let data) {
+                XCTAssertTrue(data.message.hasPrefix("No fresh complete framebuffer update within 5 seconds"))
+                XCTAssertEqual(staleReason, .requestFailed)
             } catch { XCTFail("unexpected error: \(error)") }
         }
         await fulfillment(of: [registered, entered], timeout: 3)
@@ -764,8 +774,9 @@ final class VNCReconnectTests: XCTestCase {
             let outcome = Task {
                 defer { finished.fulfill() }
                 do { _ = try await waiting.value; events.append("success") }
-                catch VNCError.sendFailed(let reason) {
-                    XCTAssertTrue(reason.hasPrefix("No fresh complete framebuffer update within 5 seconds"))
+                catch VNCError.staleScreen(let staleReason, let data) {
+                    XCTAssertTrue(data.message.hasPrefix("No fresh complete framebuffer update within 5 seconds"))
+                    XCTAssertEqual(staleReason, .incompleteCoverage)
                     events.append("timeout")
                 } catch { XCTFail("unexpected late result error: \(error)"); events.append("unexpected error") }
             }
@@ -808,8 +819,9 @@ final class VNCReconnectTests: XCTestCase {
         let firstOutcome = Task {
             defer { refused.fulfill() }
             do { _ = try await first.value; XCTFail("expired first capture succeeded") }
-            catch VNCError.sendFailed(let reason) {
-                XCTAssertTrue(reason.hasPrefix("No fresh complete framebuffer update within 5 seconds"))
+            catch VNCError.staleScreen(let staleReason, let data) {
+                XCTAssertTrue(data.message.hasPrefix("No fresh complete framebuffer update within 5 seconds"))
+                XCTAssertEqual(staleReason, .incompleteCoverage)
             } catch { XCTFail("unexpected first result error: \(error)") }
         }
         await fulfillment(of: [registered], timeout: 3)
@@ -914,7 +926,10 @@ final class VNCReconnectTests: XCTestCase {
         let outcome = Task {
             defer { finished.fulfill() }
             do { _ = try await waiting.value; XCTFail("failed send supplied a capture") }
-            catch VNCError.sendFailed(let reason) { XCTAssertEqual(reason, "fresh framebuffer update request") }
+            catch VNCError.staleScreen(let reason, let data) {
+                XCTAssertEqual(reason, .requestFailed)
+                XCTAssertEqual(data.message, "Fresh framebuffer update request failed")
+            }
             catch { XCTFail("unexpected failed-send error: \(error)") }
         }
         await fulfillment(of: [registered, finished], timeout: 3)
@@ -946,8 +961,9 @@ final class VNCReconnectTests: XCTestCase {
             }
             scheduler.runNext()
             do { _ = try await bridge.captureFreshFramebuffer(); XCTFail("invalid allocation admitted") }
-            catch VNCError.sendFailed(let reason) {
-                XCTAssertEqual(reason, "Fresh framebuffer allocation is unavailable or invalid")
+            catch VNCError.staleScreen(let reason, let data) {
+                XCTAssertEqual(reason, .allocationChanged)
+                XCTAssertEqual(data.message, "Fresh framebuffer allocation is unavailable or invalid")
             } catch { XCTFail("unexpected error") }
             XCTAssertEqual(native.observedFullUpdates, 0)
             XCTAssertEqual(native.observedAllocationRequests, failedAllocation ? [16, 1156] : [16])
@@ -1034,7 +1050,8 @@ final class VNCReconnectTests: XCTestCase {
         let required: Set<String> = [
             "connection_generation", "allocations", "width", "height", "pixels_remaining",
             "rectangles", "copy_rectangles", "finished_updates", "rejected_rectangles",
-            "skipped_copy_rectangles", "complete", "phase"
+            "skipped_copy_rectangles", "complete", "phase",
+            "unanswered_full_requests", "auto_rearm_observed"
         ]
         let keys = Set(object.keys)
         XCTAssertTrue(required.isSubset(of: keys), file: file, line: line)
@@ -1094,8 +1111,9 @@ final class VNCReconnectTests: XCTestCase {
         time.advance(1) // the immutable five-second cutoff, not a renewed window
         originalDeadline.queue.sync { originalDeadline.work.perform() }
         do { _ = try await waiting.value; XCTFail("silent server returned historical pixels") }
-        catch VNCError.sendFailed(let reason) {
-            XCTAssertTrue(reason.hasPrefix("No fresh complete framebuffer update within 5 seconds"))
+        catch VNCError.staleScreen(let staleReason, let data) {
+            XCTAssertTrue(data.message.hasPrefix("No fresh complete framebuffer update within 5 seconds"))
+            XCTAssertEqual(staleReason, .serverSilent)
         } catch { XCTFail("unexpected error: \(error)") }
         XCTAssertTrue(originalDeadline.work.isCancelled)
         XCTAssertEqual(native.observedFullUpdates, 1)
@@ -1131,8 +1149,9 @@ final class VNCReconnectTests: XCTestCase {
             XCTAssertFalse(originalDeadline.work.isCancelled)
             originalDeadline.queue.sync { originalDeadline.work.perform() }
             do { _ = try await waiting.value; XCTFail("\(reply) reply completed a fresh capture") }
-            catch VNCError.sendFailed(let reason) {
-                XCTAssertTrue(reason.hasPrefix("No fresh complete framebuffer update within 5 seconds"))
+            catch VNCError.staleScreen(let staleReason, let data) {
+                XCTAssertTrue(data.message.hasPrefix("No fresh complete framebuffer update within 5 seconds"))
+                XCTAssertEqual(staleReason, reply == "partial" ? VNCStaleScreenReason.incompleteCoverage : VNCStaleScreenReason.metadataOnly)
             } catch { XCTFail("unexpected error: \(error)") }
             XCTAssertEqual(native.observedFullUpdates, 1)
             bridge.disconnect(); XCTAssertEqual(bridge.framebufferWidth, 0)
