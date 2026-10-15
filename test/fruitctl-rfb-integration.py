@@ -19,6 +19,7 @@ import os
 from pathlib import Path
 import queue
 import re
+import select
 import socket
 import statistics
 import stat
@@ -35,6 +36,12 @@ POINTER_COLOR = (251, 17, 199)
 SYNTHETIC_CREDENTIAL = b"fruitctl-offline-fixture-only"
 PIXEL_FORMAT = struct.Struct("!BBBBHHHBBB3x")
 MAX_LINE = 8 * 1024 * 1024
+# How a static screen answers FramebufferUpdateRequests (TIN-5509). Only
+# "immediate" is the historical fixture behavior; none qualifies Apple.
+REQUEST_MODELS = ("immediate", "latest-wins", "first-wins", "session-start-only", "silent")
+# Synthetic hypotheses for Apple's idle-screen behavior, run per request mode.
+MODEL_SCENARIOS = ("latest-wins", "first-wins", "session-start-only", "silent")
+STALE_SCREEN_CODE = -32010
 
 
 def require(condition, message):
@@ -82,27 +89,45 @@ def marker_color(sequence):
 
 
 class RfbFixture:
-    """One owned loopback connection with explicit full/partial/truncated/silent modes.
+    """Owned loopback RFB server with full/partial/truncated/silent content modes.
 
     ``silent`` records non-incremental requests but answers none of them.
     A prior complete mirror must not turn this missing response into a fresh
-    observation. This synthetic mode does not qualify any real server.
+    observation. Each accepted connection has its own request state. A request
+    model decides which requests a static screen answers; incremental requests
+    are never answered because nothing changes:
+
+    - ``immediate`` (default): every non-incremental request on arrival.
+    - ``latest-wins``: only when the newest outstanding request is full.
+    - ``first-wins``: the oldest outstanding request absorbs later ones, so a
+      full request behind an outstanding incremental waits forever.
+    - ``session-start-only``: only the first full request on a connection.
+    - ``silent``: nothing.
+
+    One answer satisfies every request it absorbed. These synthetic models
+    pin predicted behaviors; none qualifies any real server.
     """
 
-    def __init__(self):
+    def __init__(self, request_model="immediate"):
+        require(request_model in REQUEST_MODELS, "invalid fixture request model")
         self.listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.listener.bind(("127.0.0.1", 0))
         self.listener.listen(1)
-        self.listener.settimeout(15)
+        self.listener.settimeout(0.25)
         self.port = self.listener.getsockname()[1]
         self.connection = None
         self.lock = threading.Lock()
         self.mode = "full"
+        self.request_model = request_model
         self.sequence = 0
         self.frames = {}
         self.events = []
+        # Receipt time and connection for each event, kept apart so event
+        # records keep their exact historical shape.
+        self.event_times = []
         self.requests = []
         self.errors = []
+        self.connections = []
         self.pointer = None
         self.finished = threading.Event()
         self.stopping = False
@@ -117,11 +142,52 @@ class RfbFixture:
     def snapshot(self):
         with self.lock:
             return {"frames": dict(self.frames), "events": list(self.events),
-                    "requests": list(self.requests), "errors": list(self.errors)}
+                    "eventTimes": list(self.event_times),
+                    "requests": list(self.requests), "errors": list(self.errors),
+                    "connections": [dict(record) for record in self.connections]}
 
     def _serve(self):
+        deadline = time.monotonic() + 15
         try:
-            connection, address = self.listener.accept()
+            while not self.stopping:
+                try:
+                    connection, address = self.listener.accept()
+                except socket.timeout:
+                    require(self.connections or time.monotonic() < deadline, "no fixture client connected")
+                    continue
+                self._serve_connection(connection, address)
+        except (EOFError, OSError) as error:
+            if not self.stopping and not isinstance(error, EOFError):
+                with self.lock:
+                    self.errors.append(type(error).__name__ + ": " + str(error))
+        except Exception as error:
+            with self.lock:
+                self.errors.append(type(error).__name__ + ": " + str(error))
+
+    @staticmethod
+    def _quiet(connection):
+        # Let back-to-back client writes arrive before deciding what is newest.
+        readable, _, _ = select.select([connection], [], [], 0.005)
+        return not readable
+
+    def _answers(self, outstanding, answered_full):
+        model = self.request_model
+        if model == "latest-wins":
+            return outstanding[-1] == 0
+        if model == "first-wins":
+            return outstanding[0] == 0
+        if model == "session-start-only":
+            return answered_full == 0 and 0 in outstanding
+        return False
+
+    def _serve_connection(self, connection, address):
+        with self.lock:
+            index = len(self.connections)
+            record = {"index": index, "shared": None, "requestModel": self.request_model,
+                      "acceptedAt": time.monotonic(), "closedAt": None}
+            self.connections.append(record)
+        outstanding, answered_full = [], 0  # Per-connection server request state.
+        try:
             require(address[0] == "127.0.0.1", "non-loopback fixture peer")
             self.connection = connection
             connection.settimeout(15)
@@ -131,7 +197,9 @@ class RfbFixture:
             connection.sendall(b"\x01\x01")  # One security type: None.
             require(exact_read(connection, 1) == b"\x01", "None-auth was not selected")
             connection.sendall(struct.pack("!I", 0))
-            exact_read(connection, 1)  # ClientInit.shared
+            shared = exact_read(connection, 1)[0]  # ClientInit.shared
+            with self.lock:
+                record["shared"] = shared
             format_bytes = PIXEL_FORMAT.pack(32, 24, 0, 1, 255, 255, 255, 0, 8, 16)
             name = b"Fruitctl owned offline RFB fixture"
             connection.sendall(struct.pack("!HH", WIDTH, HEIGHT) + format_bytes
@@ -154,33 +222,46 @@ class RfbFixture:
                     require(width > 0 and height > 0 and x + width <= WIDTH and y + height <= HEIGHT,
                             "out-of-bounds framebuffer request")
                     with self.lock:
-                        self.requests.append({"incremental": incremental, "at": time.monotonic()})
+                        self.requests.append({"incremental": incremental, "at": time.monotonic(),
+                                              "connection": index})
                         silent = self.mode == "silent"
-                    # Incremental requests remain pending, as on an idle server.
-                    # Explicit nonincremental requests each supply new pixels,
-                    # except in silent mode, which answers nothing.
-                    if not incremental and not silent:
+                    if not incremental:
                         require((x, y, width, height) == (0, 0, WIDTH, HEIGHT), "non-full capture request")
-                        if not self._update(connection):
-                            return
+                    if self.request_model == "immediate":
+                        # Incremental requests remain pending, as on an idle server.
+                        # Explicit nonincremental requests each supply new pixels,
+                        # except in silent mode, which answers nothing.
+                        if not incremental and not silent:
+                            if not self._update(connection):
+                                return
+                    else:
+                        outstanding.append(incremental)
                 elif kind == 4:  # KeyEvent
                     down, key = struct.unpack("!B2xI", exact_read(connection, 7))
                     with self.lock:
                         self.events.append({"kind": "key", "down": down, "key": key})
+                        self.event_times.append({"at": time.monotonic(), "connection": index})
                 elif kind == 5:  # PointerEvent
                     mask, x, y = struct.unpack("!BHH", exact_read(connection, 5))
                     require(x < WIDTH and y < HEIGHT, "out-of-bounds pointer event")
                     with self.lock:
                         self.pointer = (x, y)
                         self.events.append({"kind": "pointer", "mask": mask, "x": x, "y": y})
+                        self.event_times.append({"at": time.monotonic(), "connection": index})
                 elif kind == 6:  # ClientCutText (no real clipboard involved).
                     length = struct.unpack("!3xI", exact_read(connection, 7))[0]
                     require(length <= 1024 * 1024, "unbounded fixture clipboard message")
                     exact_read(connection, length)
                     with self.lock:
                         self.events.append({"kind": "clipboard", "bytes": length})
+                        self.event_times.append({"at": time.monotonic(), "connection": index})
                 else:
                     raise AssertionError("unsupported fixture client message type %d" % kind)
+                if outstanding and self._quiet(connection) and self._answers(outstanding, answered_full):
+                    outstanding.clear()
+                    answered_full += 1
+                    if not self._update(connection):
+                        return
         except (EOFError, OSError) as error:
             if not self.stopping and not isinstance(error, EOFError):
                 with self.lock:
@@ -189,8 +270,9 @@ class RfbFixture:
             with self.lock:
                 self.errors.append(type(error).__name__ + ": " + str(error))
         finally:
-            if self.connection:
-                self.connection.close()
+            connection.close()
+            with self.lock:
+                record["closedAt"] = time.monotonic()
             self.finished.set()
 
     def _pixel(self, color):
@@ -202,7 +284,7 @@ class RfbFixture:
         with self.lock:
             self.sequence += 1
             sequence, mode, pointer = self.sequence, self.mode, self.pointer
-            self.frames[sequence] = {"mode": mode, "pointer": pointer}
+            self.frames[sequence] = {"mode": mode, "pointer": pointer, "at": time.monotonic()}
         width = WIDTH // 2 if mode == "partial" else WIDTH
         body = bytearray(self._pixel(marker_color(sequence)) * (width * HEIGHT))
         if pointer and pointer[0] < width:
@@ -363,7 +445,7 @@ class JsonProcess:
 
 
 class NativeSession(JsonProcess):
-    def __init__(self, daemon, port):
+    def __init__(self, daemon, port, extra_args=()):
         read_fd, write_fd = os.pipe()
         # The bootstrap preserves descriptor 3 without preexec_fn in a process
         # already running the fixture's server thread. The credential is never
@@ -378,7 +460,8 @@ class NativeSession(JsonProcess):
             try:
                 super().__init__([sys.executable, "-I", "-c", bootstrap, str(read_fd), str(daemon),
                                   "--host", "127.0.0.1", "--port", str(port), "--password-fd", "3",
-                                  "--no-reconnect", "--connect-timeout", "2"], env=env, pass_fds=(read_fd,))
+                                  "--no-reconnect", "--connect-timeout", "2", *extra_args],
+                                 env=env, pass_fds=(read_fd,))
                 started = True
                 os.close(read_fd)
                 read_fd = None
@@ -692,6 +775,118 @@ def run_scenario(kind, mode, count, args):
     return report
 
 
+WIRE_LINE = re.compile(r"^\[RFB-WIRE\] ms=(\d+) dir=c2s type=(\d+) incremental=([01-]) length=(\d+) "
+                       r"origin=(bridge|libvnc-init|libvnc-rearm)$")
+
+
+def wire_ledger(stderr):
+    """Parse the daemon's header-only ledger; it must never carry payloads."""
+    entries = []
+    for line in bytes(stderr).decode("utf-8", errors="replace").splitlines():
+        if line.startswith("[RFB-WIRE]"):
+            match = WIRE_LINE.match(line)
+            require(match, "malformed wire ledger line")
+            entries.append({"ms": int(match.group(1)), "type": int(match.group(2)),
+                            "incremental": match.group(3), "length": int(match.group(4)),
+                            "origin": match.group(5)})
+    return entries
+
+
+def run_model_scenario(model, request_mode, args):
+    """One synthetic Apple idle-screen hypothesis against one request mode."""
+    name = model + "-" + request_mode
+    fixture = RfbFixture(request_model=model)
+    session = None
+    # latest-wins answers the newest full request; first-wins needs no
+    # request outstanding before the capture's own. The other models never
+    # answer an in-session request and must end in a typed failure.
+    expect_fresh = model == "latest-wins" or (model == "first-wins" and request_mode == "on-demand")
+    report = {"transport": "native", "scenario": name, "requestModel": model, "requestMode": request_mode,
+              "expectFresh": expect_fresh, "loopbackPort": fixture.port, "status": "failed", "captures": [],
+              "claimedScope": "synthetic-loopback-RFB-only; not a model of any qualified server"}
+    windows = []
+    try:
+        flags = ["--rfb-wire-ledger"]
+        if request_mode != "stream":
+            flags += ["--rfb-request-mode", request_mode]
+        session = NativeSession(args.daemon, fixture.port, flags)
+        report["route"] = "native-PC"
+        time.sleep(0.3)  # an idle desktop: connect-time exchange and stream polls settle
+        sequence = 0
+        for ordinal in range(3 if expect_fresh else 1):
+            start = time.monotonic()
+            response = session.action("screenshot")
+            elapsed = time.monotonic() - start
+            windows.append((start, time.monotonic()))
+            if expect_fresh:
+                sequence, png, _ = inspect_capture(response, fixture, sequence)
+                report["captures"].append({"ordinal": ordinal + 1, "serverMarker": sequence,
+                                           "pngSha256": hashlib.sha256(png).hexdigest(),
+                                           "latencyMilliseconds": round(elapsed * 1000, 3)})
+                time.sleep(0.2)
+                continue
+            error = response["error"]
+            require(error and not response["image"], "%s returned pixels without a fresh answer" % name)
+            require(error.get("code") == STALE_SCREEN_CODE, "%s failure is not typed stale_screen" % name)
+            require(error.get("message", "").startswith("No fresh complete framebuffer update within 5 seconds"),
+                    "%s stale_screen lost its compatible message prefix" % name)
+            data = error.get("data") or {}
+            require(data.get("reason") == "server_silent", "%s reason %r" % (name, data.get("reason")))
+            require(isinstance(data.get("diagnostics"), dict), "%s stale_screen omitted diagnostics" % name)
+            require(5.0 <= elapsed < 10.0, "%s did not keep its five-second deadline" % name)
+            report["staleScreen"] = {"code": error["code"], "reason": data["reason"],
+                                     "unansweredFullRequests": data["diagnostics"].get("unanswered_full_requests"),
+                                     "autoRearmObserved": data["diagnostics"].get("auto_rearm_observed"),
+                                     "elapsedMilliseconds": round(elapsed * 1000, 3), "imageReturned": False}
+        report["status"] = "passed"
+    except Exception as error:
+        report["failure"] = type(error).__name__ + ": " + str(error)
+    finally:
+        if session:
+            report["processExitCode"] = session.close()
+            (args.output_dir / ("native-" + name + ".stderr.txt")).write_bytes(session.stderr)
+        fixture.finished.wait(3)  # every client byte is read before counting
+        fixture.close()
+        snapshot = fixture.snapshot()
+        report["serverFrames"] = len(snapshot["frames"])
+        report["fixtureErrors"] = snapshot["errors"]
+        report["connections"] = snapshot["connections"]
+        requests, events = snapshot["requests"], snapshot["events"]
+        report["requests"] = {"full": sum(1 for r in requests if not r["incremental"]),
+                              "incremental": sum(1 for r in requests if r["incremental"])}
+        try:
+            require(report["status"] == "passed", report.get("failure", "scenario failed"))
+            require(not snapshot["errors"], "fixture protocol errors: %r" % snapshot["errors"])
+            require(report.get("processExitCode") == 0, "owned native process did not exit with zero")
+            require([record["shared"] for record in snapshot["connections"]] == [1],
+                    "expected one shared ClientInit connection")
+            # Observation never writes input: no Key/Pointer/Cut message at all,
+            # and none inside any capture window.
+            require(not events, "input reached the server during an observation-only scenario")
+            require(not [t for t in snapshot["eventTimes"] if any(a <= t["at"] <= b for a, b in windows)],
+                    "input message inside a capture window")
+            ledger = wire_ledger(session.stderr if session else b"")
+            requests_ledger = [e for e in ledger if e["type"] == 3]
+            report["wireLedger"] = {"lines": len(ledger),
+                                    "full": sum(1 for e in requests_ledger if e["incremental"] == "0"),
+                                    "incremental": sum(1 for e in requests_ledger if e["incremental"] == "1"),
+                                    "inferred": sum(1 for e in ledger if e["origin"] != "bridge")}
+            require(all(e["length"] == 10 for e in requests_ledger), "ledger request length is not 10")
+            require(not [e for e in ledger if e["type"] != 3], "ledger lists input in an observation-only scenario")
+            require((report["wireLedger"]["full"], report["wireLedger"]["incremental"]) ==
+                    (report["requests"]["full"], report["requests"]["incremental"]),
+                    "wire ledger %r disagrees with server-received requests %r"
+                    % (report["wireLedger"], report["requests"]))
+            if request_mode == "on-demand":
+                require(report["requests"]["incremental"] == 0, "on-demand mode wrote incremental requests")
+        except Exception as error:
+            report["status"] = "failed"
+            report["failure"] = report.get("failure") or (type(error).__name__ + ": " + str(error))
+        (args.output_dir / ("native-" + name + ".json")).write_text(json.dumps(report, indent=2) + "\n")
+    require(report["status"] == "passed", report.get("failure", "fixture failed"))
+    return report
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--daemon", type=Path, required=True, help="existing compiled unsigned native daemon")
@@ -701,7 +896,12 @@ def main():
     parser.add_argument("--source-dir", type=Path, help="matching staged source with node_modules for real MCP")
     parser.add_argument("--mcp-route", choices=("shared-broker", "legacy-direct"), default="shared-broker")
     parser.add_argument("--runtime-archive", type=Path, help="optional exact runtime archive to hash into the receipt")
+    parser.add_argument("--request-modes", default="stream",
+                        help="comma-separated daemon request modes for the request-model scenarios")
     args = parser.parse_args()
+    args.request_modes = [mode for mode in args.request_modes.split(",") if mode]
+    require(args.request_modes and all(mode in ("stream",) for mode in args.request_modes),
+            "the only request mode is stream")
     require(1 <= args.captures <= 1000, "captures must be 1...1000")
     require(bool(args.node) == bool(args.source_dir), "--node and --source-dir are required together")
     args.daemon = args.daemon.resolve(strict=True)
@@ -745,6 +945,10 @@ def main():
             for mode in modes:
                 print("Running %s %s fixture" % (kind, mode), flush=True)
                 receipt["scenarios"].append(run_scenario(kind, mode, args.captures, args))
+        for request_mode in args.request_modes:
+            for model in MODEL_SCENARIOS:
+                print("Running native %s request model in %s mode" % (model, request_mode), flush=True)
+                receipt["scenarios"].append(run_model_scenario(model, request_mode, args))
         receipt["status"] = "passed"
     except Exception as error:
         receipt["failure"] = type(error).__name__ + ": " + str(error)

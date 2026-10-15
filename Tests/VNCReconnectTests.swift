@@ -44,6 +44,20 @@ private final class ManualScheduler {
     }
 }
 
+/// Static-screen request handling hypotheses for Apple's server (TIN-5509).
+/// None is a qualified Apple model; each pins one predicted behavior.
+private enum FakeServerModel {
+    /// Only the newest outstanding request counts; a full one is answered.
+    case latestWins
+    /// The oldest outstanding request absorbs later ones; a static screen
+    /// never answers an outstanding incremental, so a full one behind it waits.
+    case firstWins
+    /// Only the first full request on the connection is ever answered.
+    case sessionStartOnly
+    /// Nothing is ever answered.
+    case silent
+}
+
 private final class FakeNative {
     private let lock = NSLock()
     private var outcomes: [Bool]
@@ -63,6 +77,19 @@ private final class FakeNative {
     private var allocationRequests: [Int] = []
     private var fullUpdateRequests = 0
     private var incrementalUpdateRequests = 0
+    // Modeled wire state, per connection. LibVNC returns success without
+    // writing while its FramebufferUpdateRequest gate is closed.
+    private var outstandingRequests: [Bool] = [] // true = incremental
+    private var writtenFullRequests = 0
+    private var writtenIncrementalRequests = 0
+    private var autoRearmWrites = 0
+    private var suppressedRequests = 0
+    private var answeredFullRequests = 0
+    private var serverFrames = 0
+    private var inputWrites: [String] = []
+    /// When set, every poll lets this server model answer outstanding
+    /// requests with a complete frame (after beforePoll runs).
+    var serverModel: FakeServerModel?
     var allocateBeforeFailure = false
     // Existing lifecycle cases model a complete initial update during init.
     // First-frame cases turn this off and deliver the actual callback later.
@@ -86,6 +113,71 @@ private final class FakeNative {
     var observedAllocationRequests: [Int] { lock.lock(); defer { lock.unlock() }; return allocationRequests }
     var observedFullUpdates: Int { lock.lock(); defer { lock.unlock() }; return fullUpdateRequests }
     var observedIncrementalUpdates: Int { lock.lock(); defer { lock.unlock() }; return incrementalUpdateRequests }
+    /// Requests that reached the modeled wire, including LibVNC's own.
+    var wire: (full: Int, incremental: Int, autoRearm: Int, suppressed: Int, outstanding: [Bool], frames: Int) {
+        lock.lock(); defer { lock.unlock() }
+        return (writtenFullRequests, writtenIncrementalRequests, autoRearmWrites, suppressedRequests,
+                outstandingRequests, serverFrames)
+    }
+    /// Every pointer, key and clipboard write, in order.
+    var observedInputWrites: [String] { lock.lock(); defer { lock.unlock() }; return inputWrites }
+
+    /// rfbclient.c:1497-1502: no bytes while the gate is closed or a client
+    /// resize is pending, yet the call still reports success.
+    private func requestGateOpen(_ client: VNCClientOperations.Client) -> Bool {
+        SupportsClient2Server(client, VNCBridge.framebufferUpdateRequestType) != 0
+            && client.pointee.requestedResize == 0
+    }
+
+    private func writeRequest(_ client: VNCClientOperations.Client, incremental: Bool, autoRearm: Bool = false) {
+        let open = requestGateOpen(client)
+        lock.lock(); defer { lock.unlock() }
+        guard open else { suppressedRequests += 1; return }
+        outstandingRequests.append(incremental)
+        if incremental { writtenIncrementalRequests += 1 } else { writtenFullRequests += 1 }
+        if autoRearm { autoRearmWrites += 1 }
+    }
+
+    /// One server FramebufferUpdate as HandleRFBServerMessage processes it:
+    /// rectangle callbacks, then LibVNC's own incremental re-arm
+    /// (rfbclient.c:2564) unless the gate is closed, then FinishedUpdate.
+    /// An empty list is a metadata-only update. `reopenGate` models a
+    /// SupportedMessages pseudo-rectangle rewriting the request bitmap in
+    /// the same message (rfbclient.c:2184-2186), before the re-arm.
+    func deliverUpdate(_ client: VNCClientOperations.Client, rects: [(Int32, Int32, Int32, Int32)],
+                       reopenGate: Bool = false) {
+        lock.lock(); serverFrames += 1; let marker = UInt8(truncatingIfNeeded: serverFrames); lock.unlock()
+        if let pixels = client.pointee.frameBuffer, !rects.isEmpty {
+            memset(pixels, Int32(marker), Int(client.pointee.width) * Int(client.pointee.height) * 4)
+        }
+        for (x, y, width, height) in rects { vncGotFrameBufferUpdate(client, x, y, width, height) }
+        if reopenGate { Self.setDefaultSupportedMessages(client) }
+        writeRequest(client, incremental: true, autoRearm: true)
+        vncFinishedFrameBufferUpdate(client)
+    }
+
+    /// DefaultSupportedMessages (rfbclient.c:226-238), run during the real
+    /// protocol handshake; rfbGetClient alone leaves the bitmap zeroed.
+    static func setDefaultSupportedMessages(_ client: VNCClientOperations.Client) {
+        // SetPixelFormat 0, SetEncodings 2, FramebufferUpdateRequest 3,
+        // KeyEvent 4, PointerEvent 5, ClientCutText 6.
+        client.pointee.supportedMessages.client2server.0 |= 0b0111_1101
+    }
+
+    private func serverStep(_ client: VNCClientOperations.Client) {
+        guard let model = serverModel else { return }
+        lock.lock()
+        let answer: Bool
+        switch model {
+        case .latestWins: answer = outstandingRequests.last == false
+        case .firstWins: answer = outstandingRequests.first == false
+        case .sessionStartOnly: answer = answeredFullRequests == 0 && outstandingRequests.contains(false)
+        case .silent: answer = false
+        }
+        if answer { outstandingRequests.removeAll(); answeredFullRequests += 1 }
+        lock.unlock()
+        if answer { deliverUpdate(client, rects: [(0, 0, client.pointee.width, client.pointee.height)]) }
+    }
     var bufferCounts: (allocated: Int, released: Int, live: Int, duplicate: Int) {
         lock.lock(); defer { lock.unlock() }
         return (buffersAllocated, buffersReleased, buffers.count, duplicateBufferReleases)
@@ -107,6 +199,7 @@ private final class FakeNative {
             guard let client = rfbGetClient(config.bitsPerSample, config.samplesPerPixel, config.bytesPerPixel) else { return nil }
             lock.lock()
             allocations += 1; live.insert(UInt(bitPattern: client)); peakLive = max(peakLive, live.count)
+            outstandingRequests = []; answeredFullRequests = 0 // a new server connection
             lock.unlock()
             return client
         }, initialize: { [self] client in
@@ -116,12 +209,15 @@ private final class FakeNative {
             let success = outcomes.isEmpty ? true : outcomes.removeFirst()
             lock.unlock()
             if success || allocateBeforeFailure {
+                Self.setDefaultSupportedMessages(client)
                 client.pointee.width = 2; client.pointee.height = 2
                 client.pointee.format.bitsPerPixel = 32
                 if vncMallocFrameBuffer(client) == 0 {
                     release(client, failed: true)
                     return false
                 }
+                // rfbInitConnection's own whole-screen request (vncviewer.c:423).
+                writeRequest(client, incremental: false)
                 afterFramebufferAllocation?()
                 if completeDuringInitialize { completePixelUpdate(client) }
             }
@@ -134,15 +230,19 @@ private final class FakeNative {
         poll: { [self] client, interval, phase in
             phase(.handlingServerMessage)
             beforePoll?(client)
+            serverStep(client)
             phase(.idle)
             lock.lock(); defer { lock.unlock() }
             pollIntervals.append(interval)
             return polls.isEmpty ? true : polls.removeFirst()
-        }, incrementalUpdate: { [self] _ in
+        }, incrementalUpdate: { [self] client in
             lock.lock(); incrementalUpdateRequests += 1; lock.unlock()
+            writeRequest(client, incremental: true)
         }, fullUpdate: { [self] client in
             lock.lock(); fullUpdateRequests += 1; lock.unlock()
-            return beforeFullUpdate?(client) ?? true
+            let sent = beforeFullUpdate?(client) ?? true
+            if sent { writeRequest(client, incremental: false) }
+            return sent
         }, allocateFramebuffer: { [self] size in
             lock.lock(); allocationRequests.append(size); lock.unlock()
             // The owned fixture never allocates a server-sized large buffer,
@@ -158,7 +258,14 @@ private final class FakeNative {
             lock.unlock()
             if owned { free(buffer) }
         }, sendKey: { [self] _, key, down in
+            lock.lock(); inputWrites.append("key"); lock.unlock()
             onKey?(key, down)
+            return true
+        }, sendPointer: { [self] _, _, _, _ in
+            lock.lock(); inputWrites.append("pointer"); lock.unlock()
+            return true
+        }, sendClientCutText: { [self] _, _ in
+            lock.lock(); inputWrites.append("clipboard"); lock.unlock()
             return true
         })
     }
@@ -1215,6 +1322,123 @@ final class VNCReconnectTests: XCTestCase {
         }
         bridge.disconnect(); XCTAssertEqual(bridge.framebufferWidth, 0)
         assertSingleClientAndBufferReleased(native)
+    }
+
+    // MARK: - Apple static-screen request models (TIN-5509)
+
+    private struct ModelHarness {
+        let native: FakeNative
+        let scheduler: ManualScheduler
+        let deadline: ManualScheduler
+        let time: ManualTime
+        let bridge: VNCBridge
+    }
+
+    /// Connect under one server model, take the initial frame from that
+    /// model, then idle so the stream loop stacks its incremental polls.
+    private func connectModel(_ model: FakeServerModel, config: VNCConfiguration = .init(),
+                              idlePolls: Int = 3) async throws -> ModelHarness {
+        let native = FakeNative(polls: []); native.completeDuringInitialize = false
+        native.serverModel = model
+        let scheduler = ManualScheduler(), deadline = ManualScheduler(), time = ManualTime()
+        let bridge = VNCBridge(config: config, operations: native.operations, schedule: scheduler.schedule,
+                               scheduleFrameDeadline: deadline.schedule, monotonicNanoseconds: time.now)
+        try await bridge.connect()
+        time.advance(100_000_000); scheduler.runNext() // the model answers the connect requests
+        try await bridge.waitForFramebuffer()
+        for _ in 0..<idlePolls { time.advance(100_000_000); scheduler.runNext() }
+        return ModelHarness(native: native, scheduler: scheduler, deadline: deadline, time: time, bridge: bridge)
+    }
+
+    /// Start one fresh capture and flush its admission and request.
+    private func startCapture(_ harness: ModelHarness) async
+        -> (Task<VNCBridge.FrameCapture, Error>, ManualScheduler.Job) {
+        let registered = expectation(description: "fresh deadline registered")
+        harness.deadline.onSchedule = { registered.fulfill() }
+        let waiting = Task { try await harness.bridge.captureFreshFramebuffer() }
+        await fulfillment(of: [registered], timeout: 3)
+        harness.deadline.onSchedule = nil
+        XCTAssertEqual(harness.bridge.framebufferWidth, 2) // flush the queued admission and send
+        return (waiting, harness.deadline.take())
+    }
+
+    /// Latest-wins: with the daemon's own polls suppressed during a capture,
+    /// its full request is the newest one the server holds, so the current
+    /// stream mode already receives fresh complete pixels.
+    func testLatestWinsPassesWithCurrentSuppression() async throws {
+        let harness = try await connectModel(.latestWins)
+        let idle = harness.native.wire
+        // LibVNC's re-arm plus four stream polls are outstanding while idle.
+        XCTAssertEqual(idle.outstanding, Array(repeating: true, count: 5))
+        XCTAssertEqual(idle.autoRearm, 1)
+        XCTAssertEqual(harness.bridge.framebufferDiagnostics.autoRearmObserved, 1)
+        let (waiting, originalDeadline) = await startCapture(harness)
+        XCTAssertEqual(harness.native.wire.outstanding.last, false)
+        XCTAssertEqual(harness.bridge.framebufferDiagnostics.unansweredFullRequests, 1)
+        let incrementalBefore = harness.native.observedIncrementalUpdates
+        harness.time.advance(10_000_000); harness.scheduler.runNext()
+        let frame = try await waiting.value
+        XCTAssertTrue(originalDeadline.work.isCancelled)
+        XCTAssertEqual(harness.native.observedIncrementalUpdates, incrementalBefore)
+        XCTAssertTrue(frame.withFramebuffer { buffer, width, height in
+            width == 2 && height == 2 && buffer.count == 16 && buffer.allSatisfy { $0 == 2 }
+        }) // the second server frame, not the cached first one
+        let diagnostics = harness.bridge.framebufferDiagnostics
+        XCTAssertEqual(diagnostics.unansweredFullRequests, 0)
+        XCTAssertEqual(diagnostics.autoRearmObserved, 2)
+        let wire = harness.native.wire
+        XCTAssertEqual(wire.full, 3) // connect, missing-pixel refresh, capture
+        XCTAssertEqual(wire.autoRearm, 2)
+        XCTAssertEqual(wire.suppressed, 0)
+        harness.bridge.disconnect(); XCTAssertEqual(harness.bridge.framebufferWidth, 0)
+        assertSingleClientAndBufferReleased(harness.native)
+    }
+
+    /// First-wins: LibVNC's own re-arm is outstanding before any capture,
+    /// so stream mode's full request is absorbed and the static server
+    /// stays silent. The failure is typed, never a cached mirror.
+    func testFirstWinsFailsStreamPassesOnDemand() async throws {
+        let harness = try await connectModel(.firstWins)
+        let (waiting, originalDeadline) = await startCapture(harness)
+        XCTAssertEqual(harness.native.wire.outstanding.first, true)
+        XCTAssertEqual(harness.native.wire.outstanding.last, false)
+        harness.time.advance(1_000_000_000); harness.scheduler.runNext()
+        XCTAssertFalse(originalDeadline.work.isCancelled)
+        harness.time.advance(4_000_000_000)
+        originalDeadline.queue.sync { originalDeadline.work.perform() }
+        do { _ = try await waiting.value; XCTFail("first-wins answered behind an outstanding incremental") }
+        catch VNCError.staleScreen(let reason, let data) {
+            XCTAssertEqual(reason, .serverSilent)
+            XCTAssertTrue(data.message.hasPrefix(VNCError.staleScreenDeadlineMessage))
+            XCTAssertEqual(data.diagnostics.unansweredFullRequests, 1)
+            XCTAssertEqual(data.diagnostics.autoRearmObserved, 1)
+        } catch { XCTFail("unexpected error: \(error)") }
+        XCTAssertEqual(harness.native.wire.frames, 1)
+        harness.bridge.disconnect(); XCTAssertEqual(harness.bridge.framebufferWidth, 0)
+        assertSingleClientAndBufferReleased(harness.native)
+    }
+
+    /// Observation writes requests only. Neither a successful capture, a
+    /// typed stale_screen failure nor LibVNC's re-arms write any input.
+    func testCapturePathEmitsZeroInput() async throws {
+        let harness = try await connectModel(.latestWins)
+        let (succeeding, _) = await startCapture(harness)
+        harness.time.advance(10_000_000); harness.scheduler.runNext()
+        _ = try await succeeding.value
+        harness.native.serverModel = .silent
+        let (failing, originalDeadline) = await startCapture(harness)
+        harness.time.advance(5_000_000_000); harness.scheduler.runNext()
+        originalDeadline.queue.sync { originalDeadline.work.perform() }
+        do { _ = try await failing.value; XCTFail("silent model produced a capture") }
+        catch VNCError.staleScreen(let reason, _) { XCTAssertEqual(reason, .serverSilent) }
+        catch { XCTFail("unexpected error: \(error)") }
+        XCTAssertEqual(harness.native.observedInputWrites, [])
+        XCTAssertGreaterThan(harness.native.wire.full, 0)
+        // The seam is live: one explicit pointer write is recorded.
+        try await harness.bridge.sendMouseEvent(x: 1, y: 1)
+        XCTAssertEqual(harness.native.observedInputWrites, ["pointer"])
+        harness.bridge.disconnect(); XCTAssertEqual(harness.bridge.framebufferWidth, 0)
+        assertSingleClientAndBufferReleased(harness.native)
     }
 
     func testWireKeysymMapsAppleCommandAndOptionOnly() {

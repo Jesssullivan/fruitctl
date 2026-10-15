@@ -572,6 +572,65 @@ final class NativeBehaviorTests: XCTestCase {
         XCTAssertThrowsError(try wrongScale.begin(binding: binding, sequence: 2))
     }
 
+    // MARK: - Typed stale_screen (TIN-5509)
+
+    func testStaleScreenTaxonomyEncoding() throws {
+        XCTAssertEqual(VNCStaleScreenReason.allCases.map(\.rawValue), [
+            "server_silent", "metadata_only", "incomplete_coverage", "allocation_changed",
+            "disconnected", "request_failed", "capture_busy", "cancelled",
+        ])
+        var diagnostics = VNCFramebufferDiagnostics()
+        diagnostics.unansweredFullRequests = 2
+        diagnostics.autoRearmObserved = 3
+        diagnostics.lastCallbackAgeMilliseconds = 7
+        let embedded = try XCTUnwrap(JSONSerialization.jsonObject(
+            with: Data(diagnostics.encoded.utf8)) as? [String: Any])
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .sortedKeys
+        for reason in VNCStaleScreenReason.allCases {
+            let message = "\(VNCError.staleScreenDeadlineMessage); diagnostics=\(diagnostics.encoded)"
+            XCTAssertTrue(message.hasPrefix("No fresh complete framebuffer update within 5 seconds"))
+            let error = VNCError.staleScreen(reason: reason,
+                                             data: VNCStaleScreenData(message: message, diagnostics: diagnostics))
+            XCTAssertEqual(error.localizedDescription, message)
+            let response = try XCTUnwrap(PCResponse.staleScreen(id: .number(7), error: error))
+            let json = try XCTUnwrap(JSONSerialization.jsonObject(with: encoder.encode(response)) as? [String: Any])
+            XCTAssertEqual(Set(json.keys), ["error", "id"])
+            XCTAssertEqual(json["id"] as? Int, 7)
+            let payload = try XCTUnwrap(json["error"] as? [String: Any])
+            XCTAssertEqual(payload["code"] as? Int, -32010)
+            XCTAssertEqual(payload["code"] as? Int, VNCError.staleScreenCode)
+            XCTAssertEqual(payload["message"] as? String, message)
+            let data = try XCTUnwrap(payload["data"] as? [String: Any])
+            XCTAssertEqual(Set(data.keys), ["reason", "diagnostics"])
+            XCTAssertEqual(data["reason"] as? String, reason.rawValue)
+            // Typed data and the compatible message carry identical snake_case keys.
+            let wire = try XCTUnwrap(data["diagnostics"] as? [String: Any])
+            XCTAssertEqual(Set(wire.keys), Set(embedded.keys))
+            XCTAssertEqual(wire["unanswered_full_requests"] as? Int, 2)
+            XCTAssertEqual(wire["auto_rearm_observed"] as? Int, 3)
+            XCTAssertEqual(wire["last_callback_age_milliseconds"] as? Int, 7)
+        }
+        // Disconnection and cancellation keep their Swift types inside the
+        // bridge and classify only at the wire boundary.
+        let snapshot = VNCFramebufferDiagnostics()
+        func classified(_ error: Error) -> VNCStaleScreenReason? {
+            guard let typed = VNCError.classifyStaleScreen(error, diagnostics: snapshot),
+                  case let .staleScreen(reason, _) = typed else { return nil }
+            return reason
+        }
+        XCTAssertEqual(classified(VNCError.notConnected), .disconnected)
+        XCTAssertEqual(classified(CancellationError()), .cancelled)
+        XCTAssertNil(classified(VNCError.sendFailed("No framebuffer")))
+        XCTAssertNil(PCResponse.staleScreen(id: .number(8), error: VNCError.sendFailed("No framebuffer")))
+        // Every other failure keeps the legacy -32000 shape without data.
+        let legacy = try XCTUnwrap(JSONSerialization.jsonObject(
+            with: encoder.encode(PCResponse.error(id: .number(9), message: "x"))) as? [String: Any])
+        let legacyError = try XCTUnwrap(legacy["error"] as? [String: Any])
+        XCTAssertEqual(Set(legacyError.keys), ["code", "message"])
+        XCTAssertEqual(legacyError["code"] as? Int, -32000)
+    }
+
     // MARK: - Apple modifier wire trace (TIN-5008)
 
     /// A real VNCBridge over an owned in-memory client: real LibVNCClient
