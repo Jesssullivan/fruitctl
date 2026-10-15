@@ -5,6 +5,7 @@ import path from 'node:path';
 import test from 'node:test';
 import { createNativeExecutor } from '../index.js';
 import { nativeCapabilities, isPreAdmissionRefusal, preAdmissionRefusal } from '../lib/mcp/capabilities.js';
+import { nativeFactory } from '../lib/broker/server.mjs';
 
 const source = `
 const fs = require('node:fs');
@@ -123,6 +124,51 @@ test('native request mode is an opt-in launch flag and the default argv is uncha
   assert.deepEqual(onDemand, defaults);
   await assert.rejects(createNativeExecutor({ requestMode: 'poll', env: { VNC_PASSWORD: 'never-consumed' },
     daemonPath: '/owned/never-spawned' }), /Invalid native request mode/);
+});
+
+test('broker profile vnc.requestMode reaches the daemon argv and invalid modes are refused', async (t) => {
+  const scratch = process.env.TMPDIR;
+  assert.ok(scratch && path.isAbsolute(scratch), 'owned TMPDIR is required');
+  const directory = fs.mkdtempSync(path.join(scratch, 'fruitctl-broker-native-'));
+  fs.chmodSync(directory, 0o700);
+  const daemonPath = path.join(directory, 'native.cjs');
+  const credentialFile = path.join(directory, 'credential');
+  fs.writeFileSync(daemonPath, `#!${process.execPath}\n${source}`, { mode: 0o700, flag: 'wx' });
+  fs.writeFileSync(credentialFile, 'owned-offline-fixture\n', { mode: 0o600, flag: 'wx' });
+  const previousMode = process.env.FRUITCTL_FIXTURE_MODE;
+  process.env.FRUITCTL_FIXTURE_MODE = 'argv';
+  t.after(() => {
+    if (previousMode === undefined) delete process.env.FRUITCTL_FIXTURE_MODE;
+    else process.env.FRUITCTL_FIXTURE_MODE = previousMode;
+    fs.unlinkSync(daemonPath);
+    fs.unlinkSync(credentialFile);
+    fs.rmdirSync(directory);
+  });
+  const argv = async (vnc) => {
+    const executor = await nativeFactory({ vnc: { host: '127.0.0.1', port: 5900, ...vnc }, credentialFile, daemonPath },
+      { deadline: performance.now() + 10000 });
+    try { return JSON.parse((await executor.execute([{ action: 'health' }]))[0].result.detail); }
+    finally { await executor.close(); }
+  };
+  const defaults = await argv({});
+  assert.equal(defaults.includes('--rfb-request-mode'), false);
+  assert.deepEqual(await argv({ requestMode: 'stream' }), defaults);
+  const onDemand = await argv({ requestMode: 'on-demand' });
+  const flag = onDemand.indexOf('--rfb-request-mode');
+  assert.ok(flag > 0);
+  assert.deepEqual(onDemand.splice(flag, 2), ['--rfb-request-mode', 'on-demand']);
+  assert.deepEqual(onDemand, defaults);
+  for (const requestMode of ['poll', 'ON-DEMAND', '', null, 1]) {
+    await assert.rejects(argv({ requestMode }), /Invalid VNC profile/);
+  }
+});
+
+test('daemon screen observations route through the classifying capture entry point', () => {
+  const handler = fs.readFileSync(new URL('../ClaudeKVM-Daemon/CommandHandler.swift', import.meta.url), 'utf8');
+  // captureFreshObservation types disconnection and cancellation as -32010
+  // stale_screen; the raw capture keeps Swift error types (VNCReconnectTests).
+  assert.match(handler, /capturedFrame = try await vnc\.captureFreshObservation\(\)/);
+  assert.doesNotMatch(handler, /captureFreshFramebuffer\(/);
 });
 
 test('native executor stops on the first error without sending the remainder', async (t) => {
