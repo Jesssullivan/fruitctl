@@ -815,6 +815,22 @@ final class VNCBridge: @unchecked Sendable {
         return fresh
     }
 
+    /// Apple's built-in Screen Sharing server reads X11 Super as Command and
+    /// is reported to read X11 Meta, not Alt, as Option (freedesktop
+    /// xkeyboard-config issue 127). TIN-5008: an Alt_L-based ["alt","cmd","n"]
+    /// behaved in Logic as Command-N. Named keys keep their portable meaning;
+    /// only the keysym written to that server changes.
+    static func wireKeysym(_ key: UInt32, appleServer: Bool) -> UInt32 {
+        guard appleServer else { return key }
+        switch key {
+        case 0xFFE7: return 0xFFEB // Meta_L -> Super_L (Command)
+        case 0xFFE8: return 0xFFEC // Meta_R -> Super_R (Command)
+        case 0xFFE9: return 0xFFE7 // Alt_L -> Meta_L (Option)
+        case 0xFFEA: return 0xFFE8 // Alt_R -> Meta_R (Option)
+        default: return key
+        }
+    }
+
     func frameUpdates() -> AsyncStream<Void> {
         AsyncStream { continuation in
             self.framebufferUpdateContinuation = continuation
@@ -910,15 +926,10 @@ final class VNCBridge: @unchecked Sendable {
             guard admitsInput(context, releaseOnly: releaseOnly), !releaseOnly || !down else {
                 throw VNCError.sendFailed("Observed display changed; take a new screenshot before input")
             }
-            // macOS Apple VNC expects Super_L/R for Command, not Meta_L/R.
-            var remappedKey = key
-            if isMacOS {
-                if key == 0xFFE7 { remappedKey = 0xFFEB }
-                if key == 0xFFE8 { remappedKey = 0xFFEC }
-            }
-            let rfbDown: rfbBool = down ? -1 : 0
+            // Apple's server: Super is Command and Meta is Option.
+            let wireKey = Self.wireKeysym(key, appleServer: isMacOS)
             if !releaseOnly { try inputPermit?.check(context: context) }
-            guard SendKeyEvent(client, remappedKey, rfbDown) != 0 else { throw VNCError.sendFailed("key event") }
+            guard operations.sendKey(client, wireKey, down) else { throw VNCError.sendFailed("key event") }
         }
     }
 
@@ -988,6 +999,12 @@ final class VNCBridge: @unchecked Sendable {
             let now = self.monotonicNanoseconds()
             if !self.framebufferHasUpdate {
                 self.requestMissingFramebufferPixels()
+            } else if self.freshFrameWaiter.withLock({ $0 })?.requestStarted == true {
+                // Keep the admitted non-incremental request the only one we
+                // add: a server that retains just its latest request must not
+                // see it superseded by our ~20/s incremental requests.
+                // Silence is not evidence that the remote display is unchanged.
+                // Wait for full received coverage or the original deadline.
             } else if now &- self.lastUpdateRequestNs > 50_000_000 {
                 self.frameDiagnostics.withLock { $0.snapshot.phase = .requestingIncrementalUpdate }
                 self.operations.incrementalUpdate(client)
