@@ -247,6 +247,7 @@ jobs:
           name: fruitctl-native-rfb-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             ${{ runner.temp }}/fruitctl-native-${{ github.run_id }}-${{ github.run_attempt }}/build-receipt.json
+            ${{ runner.temp }}/fruitctl-native-${{ github.run_id }}-${{ github.run_attempt }}/unstripped-unsigned/claude-kvm-daemon
             ${{ runner.temp }}/fruitctl-rfb-${{ github.run_id }}-${{ github.run_attempt }}/*.json
             ${{ runner.temp }}/fruitctl-rfb-${{ github.run_id }}-${{ github.run_attempt }}/*.png
           if-no-files-found: warn
