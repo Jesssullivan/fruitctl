@@ -17,6 +17,7 @@ operator
 @@fruitctl-status console 0@@
 
 @@fruitctl-probe screensharing_override@@
+read=ok
 		"com.apple.screensharing" => enabled
 
 @@fruitctl-status screensharing_override 0@@
@@ -29,16 +30,18 @@ operator
 @@fruitctl-status screensharing_service 0@@
 
 @@fruitctl-probe remote_management_marker@@
-enabled
+value=enabled
+
 @@fruitctl-status remote_management_marker 0@@
 
 @@fruitctl-probe remote_management_prefs@@
 
 @@fruitctl-status remote_management_prefs 0@@
 
-@@fruitctl-probe console_naprivs@@
+@@fruitctl-probe vnc_naprivs@@
+naprivs=unreadable
 
-@@fruitctl-status console_naprivs 0@@
+@@fruitctl-status vnc_naprivs 0@@
 
 @@fruitctl-probe ioreg_console@@
       "IOConsoleLocked" = No
@@ -60,42 +63,32 @@ Assertion status system-wide:
    SoftwareUpdateTask             0
    PreventSystemSleep             0
    ExternalMedia                  1
-   InternalPreventDisplaySleep    1
    PreventUserIdleSystemSleep     1
    NetworkClientActive            0
 Listed by owning process:
-   pid 66707(caffeinate): [0x00041ea60001a493] 00:00:38 PreventUserIdleSystemSleep named: "caffeinate command-line tool"  
+   pid 21424(caffeinate): [0x0004238d0001a6c9] 00:03:33 PreventUserIdleSystemSleep named: "caffeinate command-line tool"  
 	Details: caffeinate asserting for 300 secs
 	Localized=THE CAFFEINATE TOOL IS PREVENTING SLEEP.
-	Timeout will fire in 262 secs Action=TimeoutActionRelease
-   pid 178(bluetoothd): [0x00041ebf0001a495] 00:00:12 PreventUserIdleSystemSleep named: "com.apple.BTStack"  
-   pid 178(bluetoothd): [0x0000d23600099136] 00:44:04 UserIsActive named: "Bluetooth LE HID Activity"  
-   pid 126(powerd): [0x0000002600018001] 74:59:50 PreventUserIdleSystemSleep named: "Powerd - Prevent sleep while display is on"  
-   pid 126(powerd): [0x00000037000880e0] 74:59:33 ExternalMedia named: "com.apple.powermanagement.externalmediamounted"  
-   pid 126(powerd): [0x0000002600098002] 74:59:50 UserIsActive named: "com.apple.powerd.ws.initialize"  
-   pid 126(powerd): [0x00041e1400108595] 00:03:03 InternalPreventDisplaySleep named: "com.apple.powermanagement.delayDisplayOff"  
-	Timeout will fire in 116 secs Action=TimeoutActionTurnOff
-   pid 59307(caffeinate): [0x00041e000001a452] 00:03:23 PreventUserIdleSystemSleep named: "caffeinate command-line tool"  
+	Timeout will fire in 87 secs Action=TimeoutActionRelease
+   pid 178(bluetoothd): [0x000424600001a70d] 00:00:01 PreventUserIdleSystemSleep named: "com.apple.BTStack"  
+   pid 178(bluetoothd): [0x0000d23600099136] 01:07:54 UserIsActive named: "Bluetooth LE HID Activity"  
+   pid 83803(ExampleBrowser): [0x000420fe0001a53d] 00:14:27 NoIdleSleepAssertion named: "WebRTC has active PeerConnections"  
+   pid 20792(caffeinate): [0x000423730001a6ab] 00:03:58 PreventUserIdleSystemSleep named: "caffeinate command-line tool"  
 	Details: caffeinate asserting for 300 secs
 	Localized=THE CAFFEINATE TOOL IS PREVENTING SLEEP.
-	Timeout will fire in 97 secs Action=TimeoutActionRelease
-   pid 67948(caffeinate): [0x00041ec20001a496] 00:00:09 PreventUserIdleSystemSleep named: "caffeinate command-line tool"  
+	Timeout will fire in 61 secs Action=TimeoutActionRelease
+   pid 21707(caffeinate): [0x000423a00001a6cc] 00:03:13 PreventUserIdleSystemSleep named: "caffeinate command-line tool"  
 	Details: caffeinate asserting for 300 secs
 	Localized=THE CAFFEINATE TOOL IS PREVENTING SLEEP.
-	Timeout will fire in 291 secs Action=TimeoutActionRelease
-   pid 63004(caffeinate): [0x00041e520001a48c] 00:02:01 PreventUserIdleSystemSleep named: "caffeinate command-line tool"  
+	Timeout will fire in 107 secs Action=TimeoutActionRelease
+   pid 27799(caffeinate): [0x0004243a0001a6f4] 00:00:40 PreventUserIdleSystemSleep named: "caffeinate command-line tool"  
 	Details: caffeinate asserting for 300 secs
 	Localized=THE CAFFEINATE TOOL IS PREVENTING SLEEP.
-	Timeout will fire in 178 secs Action=TimeoutActionRelease
-   pid 197(coreaudiod): [0x00041a860001a185] 00:18:13 PreventUserIdleSystemSleep named: "com.apple.audio.example.context.preventuseridlesleep"  
-	Created for PID: 1001. 
-	Resources: audio-out exampleoutput 
-   pid 58126(caffeinate): [0x00041ded0001a44d] 00:03:42 PreventUserIdleSystemSleep named: "caffeinate command-line tool"  
-	Details: caffeinate asserting for 300 secs
-	Localized=THE CAFFEINATE TOOL IS PREVENTING SLEEP.
-	Timeout will fire in 78 secs Action=TimeoutActionRelease
-   pid 185(WindowServer): [0x0000002b00098072] 00:00:00 UserIsActive named: "com.apple.iohideventsystem.queue.tickle serviceID:0 service:AppleHIDKeyboardEventDriverV2 product:Apple Internal Keyboard eventType:3"  
-   pid 44620(ExampleBrowser): [0x00041b6b0001a3b9] 00:14:24 NoIdleSleepAssertion named: "Playing audio"  
+	Timeout will fire in 260 secs Action=TimeoutActionRelease
+   pid 126(powerd): [0x0000002600018001] 75:23:40 PreventUserIdleSystemSleep named: "Powerd - Prevent sleep while display is on"  
+   pid 126(powerd): [0x00000037000880e0] 75:23:23 ExternalMedia named: "com.apple.powermanagement.externalmediamounted"  
+   pid 126(powerd): [0x0000002600098002] 75:23:40 UserIsActive named: "com.apple.powerd.ws.initialize"  
+   pid 185(WindowServer): [0x0000002b00098072] 00:12:00 UserIsActive named: "com.apple.iohideventsystem.queue.tickle serviceID:0 service:AppleMultitouchDevice product:Apple Internal Keyboard / Trackpad eventType:11"  
 Kernel Assertions: 0x104=USB,MAGICWAKE
 
 @@fruitctl-status pmset_assertions 0@@
@@ -109,7 +102,7 @@ Currently in use:
  powernap             1
  networkoversleep     0
  disksleep            0
- sleep                1 (sleep prevented by caffeinate, bluetoothd, powerd, caffeinate, caffeinate, caffeinate, coreaudiod, caffeinate, ExampleBrowser)
+ sleep                0 (sleep prevented by caffeinate, bluetoothd, ExampleBrowser, caffeinate, caffeinate, caffeinate, powerd)
  hibernatemode        3
  ttyskeepawake        1
  displaysleep         0
@@ -126,11 +119,12 @@ online=Yes
 @@fruitctl-status displays 0@@
 
 @@fruitctl-probe host_app@@
+user|absent
+system|absent
 
 @@fruitctl-status host_app 0@@
 
 @@fruitctl-probe tcc@@
 system|readable
-user|readable
 
 @@fruitctl-status tcc 0@@
