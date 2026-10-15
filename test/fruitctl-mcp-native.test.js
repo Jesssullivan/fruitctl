@@ -56,6 +56,9 @@ async function main() {
     if(process.env.FRUITCTL_FIXTURE_MODE==='malformed') {
       emit({id:request.id,result:{detail:{secret:'never-log-malformed-fixture'}}}); continue;
     }
+    if(process.env.FRUITCTL_FIXTURE_MODE==='argv' && request.method==='health') {
+      emit({id:request.id,result:{detail:JSON.stringify(process.argv.slice(2))}}); continue;
+    }
     if(request.method==='wait') await new Promise(resolve=>setTimeout(resolve,25));
     if(request.method==='key_tap' && request.params.key==='bad') {
       emit({id:request.id,error:{code:-32000,message:'fixture key refused'}}); continue;
@@ -101,6 +104,25 @@ test('native executor preserves split Unicode and serializes an entire batch bef
   const other = executor.execute([{ action: 'health' }]);
   assert.equal((await batch)[0].result.detail, 'π 🍇');
   assert.deepEqual(JSON.parse((await other)[0].result.detail), ['wait', 'key_tap', 'health']);
+});
+
+test('native request mode is an opt-in launch flag and the default argv is unchanged', async (t) => {
+  const argv = async (options) => {
+    const { executor } = await fixture(t, 'argv', options);
+    const detail = JSON.parse((await executor.execute([{ action: 'health' }]))[0].result.detail);
+    await executor.close();
+    return detail;
+  };
+  const defaults = await argv({});
+  assert.equal(defaults.includes('--rfb-request-mode'), false);
+  assert.deepEqual(await argv({ requestMode: 'stream' }), defaults);
+  const onDemand = await argv({ requestMode: 'on-demand' });
+  const flag = onDemand.indexOf('--rfb-request-mode');
+  assert.ok(flag > 0);
+  assert.deepEqual(onDemand.splice(flag, 2), ['--rfb-request-mode', 'on-demand']);
+  assert.deepEqual(onDemand, defaults);
+  await assert.rejects(createNativeExecutor({ requestMode: 'poll', env: { VNC_PASSWORD: 'never-consumed' },
+    daemonPath: '/owned/never-spawned' }), /Invalid native request mode/);
 });
 
 test('native executor stops on the first error without sending the remainder', async (t) => {

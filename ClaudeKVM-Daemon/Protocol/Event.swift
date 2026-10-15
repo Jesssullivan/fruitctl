@@ -50,6 +50,8 @@ struct PCResponse: Encodable {
         var maximum_round_trip_ms: Int?
         var native_permit_remaining_ms: Int?
         var capabilities: [String]?
+        /// How an observation's pixels were obtained (screen observations only).
+        var provenance: VNCCaptureProvenance?
     }
 
     struct ErrorPayload: Encodable {
@@ -76,7 +78,8 @@ struct PCResponse: Encodable {
         timing: [String: Double]? = nil,
         elements: [TextElement]? = nil,
         frameContext: VNCInputContext? = nil,
-        capabilities: [String]? = nil
+        capabilities: [String]? = nil,
+        provenance: VNCCaptureProvenance? = nil
     ) -> PCResponse {
         PCResponse(
             result: ResultPayload(
@@ -85,7 +88,8 @@ struct PCResponse: Encodable {
                 timing: timing, elements: elements,
                 nativeWidth: frameContext?.width, nativeHeight: frameContext?.height,
                 connectionGeneration: frameContext?.connectionGeneration,
-                allocation: frameContext?.allocation, capabilities: capabilities
+                allocation: frameContext?.allocation, capabilities: capabilities,
+                provenance: provenance
             ),
             error: nil, id: id
         )

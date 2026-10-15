@@ -58,19 +58,24 @@ per request mode. The MCP run adds four more:
   capture, and refusal of subsequent input until a new complete observation.
   This synthetic silence is not qualification of macOS static-screen behavior
   or Apple's Option interpretation.
-- Native only, per `--request-modes` (default `stream`): four request-model
+- Native only, per `--request-modes` (`stream`, `on-demand` or both; default
+  `stream`): four request-model
   scenarios pin synthetic hypotheses for an idle Apple screen (TIN-5509). Each
   connection keeps its own outstanding requests; a static screen never
   answers an incremental request. `latest-wins` answers when the newest
   outstanding request is full; `first-wins` lets the oldest outstanding
   request absorb later ones; `session-start-only` answers only the first full
   request of a connection; `silent` answers nothing. `latest-wins` must return
-  three fresh captures. Every other model must return JSON-RPC `-32010` with
-  `data.reason` `server_silent` within the original five-second deadline and
-  no image. Each scenario runs the daemon with `--rfb-wire-ledger` and
-  requires the ledger's request counts to equal the requests the server
-  received, one shared ClientInit and no Key/Pointer/Cut message inside any
-  capture window. These models are not Apple's server.
+  three fresh captures, as must `first-wins` in `on-demand` mode; their
+  screenshot, `cursor_crop`, `diff_check`, `set_baseline` and
+  `detect_elements` results must each carry capture provenance. Every other
+  combination must return JSON-RPC `-32010` with `data.reason`
+  `server_silent` within the original five-second deadline and no image. Each
+  scenario runs the daemon with `--rfb-wire-ledger` and requires the ledger's
+  request counts to equal the requests the server received, one shared
+  ClientInit, no Key/Pointer/Cut message inside any capture window and, in
+  `on-demand` mode, zero incremental requests. These models are not Apple's
+  server.
 - Through MCP, invoke all four compatible tools. Verify a two-action queue and
   its coordinate effect, active ownership release through `task_complete`, and
   active ownership release through `task_failed` in a separate scenario. The

@@ -133,6 +133,28 @@ payloads. Bridge writes are exact. LibVNC's initial request and post-update
 re-arm are inferred; its SetPixelFormat, SetEncodings and resize requests are
 not listed, so a header-only packet capture remains the wire authority.
 
+`--rfb-request-mode on-demand` is opt-in; `stream` stays the default. After
+the connection initializes, the daemon clears LibVNC's FramebufferUpdateRequest
+bit in the client-to-server capability bitmap (`client2server[0] & 0x08`).
+While that bit is clear, LibVNC reports success without writing its own
+post-update re-arm or resize request (`rfbclient.c:1497`). The daemon opens
+the bit only around its own whole-screen request, for an observation or for
+missing pixels after a resize, and never writes an incremental request. A
+server SupportedMessages rectangle can rewrite the bitmap and leak one
+re-arm before any callback runs. The daemon counts that as
+`request_gate_leaks`, closes the bit again and marks the pending observation
+`ordered_after_prior_input: false`. A target profile selects the mode with
+`"vnc": { "requestMode": "on-demand" }`. Whether Apple's server needs this
+mode, or keeps an idle connection without an outstanding request responsive,
+remains unqualified until an attended probe records it.
+
+Each successful observation result carries `provenance`: `source`
+(`in_session`), `coverage` (`complete_received_after_request`),
+`request_mode`, the full and incremental `requests` written while it was
+pending, `prior_unanswered_requests`, `ordered_after_prior_input`,
+`elapsed_ms` and `elicited_input`, which is always `null` because no input is
+written to obtain an observation.
+
 On Apple's server the daemon writes Command as `Super_L`/`Super_R` and Option
 as `Meta_L`/`Meta_R`; the `cmd` and `alt`/`option` key names are unchanged.
 The Option mapping remains pending native and attended verification.

@@ -140,6 +140,13 @@ struct ClaudeKVMDaemon: AsyncParsableCommand {
               Descriptor 3 carries a bounded credential frame; stdin remains PC NDJSON.
               Plaintext password arguments and environment fallbacks are unsupported.
 
+            REQUEST MODES (--rfb-request-mode):
+              stream     Default. Incremental polls while idle; LibVNC re-arms an
+                         incremental request after every update.
+              on-demand  No incremental request is written. Each observation
+                         sends one whole-screen request; results carry
+                         provenance with the request counts.
+
             ERRORS:
               Screen observations that obtain no fresh complete frame return
               code -32010 with data.reason (server_silent, metadata_only,
@@ -197,6 +204,10 @@ struct ClaudeKVMDaemon: AsyncParsableCommand {
           help: "Write a header-only client-to-server RFB ledger to stderr (type, incremental flag, length, monotonic ms; never payloads).")
     var rfbWireLedger: Bool = false
 
+    @Option(name: .customLong("rfb-request-mode"),
+            help: "Framebuffer request mode: stream (default) or on-demand (no incremental requests; LibVNC's own requests are gated off).")
+    var rfbRequestMode: String = VNCRequestMode.stream.rawValue
+
     // MARK: - General
 
     @Flag(name: [.short, .long], help: "Enable verbose logging to stderr.")
@@ -216,6 +227,9 @@ struct ClaudeKVMDaemon: AsyncParsableCommand {
         }
         if let attempts = maxReconnectAttempts, !(0...100).contains(attempts) {
             throw ValidationError("--max-reconnect-attempts must be 0...100")
+        }
+        guard VNCRequestMode(rawValue: rfbRequestMode) != nil else {
+            throw ValidationError("--rfb-request-mode must be stream or on-demand")
         }
     }
 
@@ -242,6 +256,7 @@ struct ClaudeKVMDaemon: AsyncParsableCommand {
         if let max = maxReconnectAttempts { vncConfig.maxReconnectAttempts = max }
         if noReconnect { vncConfig.autoReconnect = false }
         vncConfig.wireLedger = rfbWireLedger
+        vncConfig.requestMode = VNCRequestMode(rawValue: rfbRequestMode) ?? .stream
 
         let vnc = VNCBridge(config: vncConfig)
         vnc.verbose = verbose

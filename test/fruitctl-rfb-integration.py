@@ -792,6 +792,26 @@ def wire_ledger(stderr):
     return entries
 
 
+OBSERVATION_METHODS = ("screenshot", "cursor_crop", "diff_check", "set_baseline", "detect_elements")
+
+
+def require_provenance(metadata, request_mode, method):
+    """Each fresh observation states how its pixels were obtained."""
+    provenance = metadata.get("provenance")
+    require(isinstance(provenance, dict), "%s omitted capture provenance" % method)
+    require(set(provenance) == {"source", "coverage", "request_mode", "requests", "prior_unanswered_requests",
+                                "ordered_after_prior_input", "elapsed_ms", "elicited_input"},
+            "%s provenance fields %r" % (method, sorted(provenance)))
+    require(provenance["source"] == "in_session" and provenance["coverage"] == "complete_received_after_request"
+            and provenance["request_mode"] == request_mode and provenance["elicited_input"] is None
+            and provenance["ordered_after_prior_input"] is True, "%s provenance %r" % (method, provenance))
+    requests = provenance["requests"]
+    require(isinstance(requests, dict) and requests.get("full", 0) >= 1, "%s provenance requests" % method)
+    if request_mode == "on-demand":
+        require(requests.get("incremental") == 0, "%s on-demand capture wrote incremental requests" % method)
+    return provenance
+
+
 def run_model_scenario(model, request_mode, args):
     """One synthetic Apple idle-screen hypothesis against one request mode."""
     name = model + "-" + request_mode
@@ -819,9 +839,11 @@ def run_model_scenario(model, request_mode, args):
             elapsed = time.monotonic() - start
             windows.append((start, time.monotonic()))
             if expect_fresh:
-                sequence, png, _ = inspect_capture(response, fixture, sequence)
+                sequence, png, metadata = inspect_capture(response, fixture, sequence)
+                provenance = require_provenance(metadata, request_mode, "screenshot")
                 report["captures"].append({"ordinal": ordinal + 1, "serverMarker": sequence,
                                            "pngSha256": hashlib.sha256(png).hexdigest(),
+                                           "provenance": provenance,
                                            "latencyMilliseconds": round(elapsed * 1000, 3)})
                 time.sleep(0.2)
                 continue
@@ -838,6 +860,16 @@ def run_model_scenario(model, request_mode, args):
                                      "unansweredFullRequests": data["diagnostics"].get("unanswered_full_requests"),
                                      "autoRearmObserved": data["diagnostics"].get("auto_rearm_observed"),
                                      "elapsedMilliseconds": round(elapsed * 1000, 3), "imageReturned": False}
+        if expect_fresh:
+            # Every observation method carries the same provenance contract.
+            report["observationProvenance"] = {}
+            for method in OBSERVATION_METHODS[1:]:
+                start = time.monotonic()
+                response = session.action(method)
+                windows.append((start, time.monotonic()))
+                require(not response["error"], "%s failed on a fresh-answering model" % method)
+                report["observationProvenance"][method] = require_provenance(
+                    response["metadata"], request_mode, method)
         report["status"] = "passed"
     except Exception as error:
         report["failure"] = type(error).__name__ + ": " + str(error)
@@ -900,8 +932,8 @@ def main():
                         help="comma-separated daemon request modes for the request-model scenarios")
     args = parser.parse_args()
     args.request_modes = [mode for mode in args.request_modes.split(",") if mode]
-    require(args.request_modes and all(mode in ("stream",) for mode in args.request_modes),
-            "the only request mode is stream")
+    require(args.request_modes and all(mode in ("stream", "on-demand") for mode in args.request_modes),
+            "request modes are stream and/or on-demand")
     require(1 <= args.captures <= 1000, "captures must be 1...1000")
     require(bool(args.node) == bool(args.source_dir), "--node and --source-dir are required together")
     args.daemon = args.daemon.resolve(strict=True)

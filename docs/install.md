@@ -417,6 +417,10 @@ Save this operator-owned JSON as
 }
 ```
 
+The optional `"requestMode": "on-demand"` inside `vnc` stops idle incremental
+framebuffer requests (see [architecture](architecture.md)). Omit it to keep
+the default `stream` mode; it is not yet qualified on Apple Screen Sharing.
+
 Run your own broker in a dedicated terminal and leave it running:
 
 ```sh

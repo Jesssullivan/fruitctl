@@ -90,6 +90,8 @@ private final class FakeNative {
     /// When set, every poll lets this server model answer outstanding
     /// requests with a complete frame (after beforePoll runs).
     var serverModel: FakeServerModel?
+    /// The next model answer also carries a SupportedMessages rectangle.
+    var reopenGateOnNextUpdate = false
     var allocateBeforeFailure = false
     // Existing lifecycle cases model a complete initial update during init.
     // First-frame cases turn this off and deliver the actual callback later.
@@ -129,7 +131,8 @@ private final class FakeNative {
             && client.pointee.requestedResize == 0
     }
 
-    private func writeRequest(_ client: VNCClientOperations.Client, incremental: Bool, autoRearm: Bool = false) {
+    /// Also models LibVNC's own resize request (rfbclient.c:2143, :2699).
+    func writeRequest(_ client: VNCClientOperations.Client, incremental: Bool, autoRearm: Bool = false) {
         let open = requestGateOpen(client)
         lock.lock(); defer { lock.unlock() }
         guard open else { suppressedRequests += 1; return }
@@ -175,8 +178,12 @@ private final class FakeNative {
         case .silent: answer = false
         }
         if answer { outstandingRequests.removeAll(); answeredFullRequests += 1 }
+        let reopen = answer && reopenGateOnNextUpdate
+        if reopen { reopenGateOnNextUpdate = false }
         lock.unlock()
-        if answer { deliverUpdate(client, rects: [(0, 0, client.pointee.width, client.pointee.height)]) }
+        if answer {
+            deliverUpdate(client, rects: [(0, 0, client.pointee.width, client.pointee.height)], reopenGate: reopen)
+        }
     }
     var bufferCounts: (allocated: Int, released: Int, live: Int, duplicate: Int) {
         lock.lock(); defer { lock.unlock() }
@@ -1158,7 +1165,7 @@ final class VNCReconnectTests: XCTestCase {
             "connection_generation", "allocations", "width", "height", "pixels_remaining",
             "rectangles", "copy_rectangles", "finished_updates", "rejected_rectangles",
             "skipped_copy_rectangles", "complete", "phase",
-            "unanswered_full_requests", "auto_rearm_observed"
+            "unanswered_full_requests", "auto_rearm_observed", "request_gate_leaks"
         ]
         let keys = Set(object.keys)
         XCTAssertTrue(required.isSubset(of: keys), file: file, line: line)
@@ -1383,6 +1390,12 @@ final class VNCReconnectTests: XCTestCase {
         XCTAssertTrue(frame.withFramebuffer { buffer, width, height in
             width == 2 && height == 2 && buffer.count == 16 && buffer.allSatisfy { $0 == 2 }
         }) // the second server frame, not the cached first one
+        // Stream mode: the answering update's own re-arm is on the wire too.
+        XCTAssertEqual(frame.provenance, VNCCaptureProvenance(
+            requestMode: .stream, requests: .init(full: 1, incremental: 1),
+            priorUnansweredRequests: 0, orderedAfterPriorInput: true,
+            elapsedMilliseconds: frame.provenance.elapsedMilliseconds))
+        XCTAssertEqual(frame.provenance.elapsedMilliseconds, 10)
         let diagnostics = harness.bridge.framebufferDiagnostics
         XCTAssertEqual(diagnostics.unansweredFullRequests, 0)
         XCTAssertEqual(diagnostics.autoRearmObserved, 2)
@@ -1416,6 +1429,137 @@ final class VNCReconnectTests: XCTestCase {
         XCTAssertEqual(harness.native.wire.frames, 1)
         harness.bridge.disconnect(); XCTAssertEqual(harness.bridge.framebufferWidth, 0)
         assertSingleClientAndBufferReleased(harness.native)
+
+        // On demand nothing is outstanding before the capture's own request.
+        let onDemand = try await connectModel(.firstWins, config: Self.onDemandConfiguration)
+        XCTAssertEqual(onDemand.native.wire.outstanding, [])
+        let (succeeding, onDemandDeadline) = await startCapture(onDemand)
+        XCTAssertEqual(onDemand.native.wire.outstanding, [false])
+        onDemand.time.advance(10_000_000); onDemand.scheduler.runNext()
+        let frame = try await succeeding.value
+        XCTAssertTrue(onDemandDeadline.work.isCancelled)
+        XCTAssertTrue(frame.withFramebuffer { buffer, _, _ in buffer.allSatisfy { $0 == 2 } })
+        XCTAssertEqual(frame.provenance.requestMode, .onDemand)
+        XCTAssertEqual(frame.provenance.requests, .init(full: 1, incremental: 0))
+        XCTAssertTrue(frame.provenance.orderedAfterPriorInput)
+        XCTAssertEqual(onDemand.native.observedIncrementalUpdates, 0)
+        XCTAssertEqual(onDemand.native.wire.incremental, 0)
+        onDemand.bridge.disconnect(); XCTAssertEqual(onDemand.bridge.framebufferWidth, 0)
+        assertSingleClientAndBufferReleased(onDemand.native)
+    }
+
+    private static var onDemandConfiguration: VNCConfiguration {
+        var configuration = VNCConfiguration()
+        configuration.requestMode = .onDemand
+        return configuration
+    }
+
+    /// On demand the bridge never polls, LibVNC's post-update re-arm and its
+    /// own resize request are both suppressed, and the bridge's missing-pixel
+    /// request takes over after a resize.
+    func testOnDemandSendsZeroIncrementalAndSuppressesAutoRearmAndResizeRequests() async throws {
+        let harness = try await connectModel(.latestWins, config: Self.onDemandConfiguration)
+        var wire = harness.native.wire
+        XCTAssertEqual(wire.full, 2) // rfbInitConnection's, then the missing-pixel request
+        XCTAssertEqual(wire.suppressed, 1) // the first update's re-arm
+        XCTAssertEqual(wire.outstanding, [])
+        let (waiting, _) = await startCapture(harness)
+        harness.time.advance(10_000_000); harness.scheduler.runNext()
+        let frame = try await waiting.value
+        XCTAssertEqual(frame.provenance.requests, .init(full: 1, incremental: 0))
+        XCTAssertEqual(frame.provenance.priorUnansweredRequests, 0)
+        // The server resizes; LibVNC's own full request finds the gate closed.
+        harness.native.beforePoll = { client in
+            client.pointee.width = 3; client.pointee.height = 3
+            XCTAssertNotEqual(vncMallocFrameBuffer(client), 0)
+            harness.native.writeRequest(client, incremental: false)
+        }
+        harness.time.advance(100_000_000); harness.scheduler.runNext()
+        harness.native.beforePoll = nil
+        wire = harness.native.wire
+        XCTAssertEqual(wire.suppressed, 3) // two re-arms and the resize request
+        XCTAssertEqual(wire.outstanding, [false]) // the bridge's own missing-pixel request
+        harness.time.advance(100_000_000); harness.scheduler.runNext()
+        try await harness.bridge.waitForFramebuffer()
+        XCTAssertEqual(harness.bridge.framebufferWidth, 3)
+        for _ in 0..<5 { harness.time.advance(100_000_000); harness.scheduler.runNext() }
+        wire = harness.native.wire
+        XCTAssertEqual(harness.native.observedIncrementalUpdates, 0)
+        XCTAssertEqual(wire.incremental, 0)
+        XCTAssertEqual(wire.autoRearm, 0)
+        XCTAssertEqual(wire.suppressed, 4)
+        XCTAssertEqual(wire.full, 4)
+        let diagnostics = harness.bridge.framebufferDiagnostics
+        XCTAssertEqual(diagnostics.autoRearmObserved, 0)
+        XCTAssertEqual(diagnostics.requestGateLeaks, 0)
+        harness.bridge.disconnect(); XCTAssertEqual(harness.bridge.framebufferWidth, 0)
+        let clients = harness.native.counts
+        XCTAssertEqual(clients.releases, 1); XCTAssertEqual(clients.live, 0)
+    }
+
+    /// A SupportedMessages rectangle reopens the gate inside the update that
+    /// answers a capture; LibVNC re-arms before any callback. The leak is
+    /// counted, the gate closed again, and that capture's ordering tainted.
+    func testGateLeakFromSupportedMessagesCountedReclosedTaintsOrdering() async throws {
+        let harness = try await connectModel(.latestWins, config: Self.onDemandConfiguration)
+        let (leaking, _) = await startCapture(harness)
+        harness.native.reopenGateOnNextUpdate = true
+        harness.time.advance(10_000_000); harness.scheduler.runNext()
+        let tainted = try await leaking.value
+        XCTAssertFalse(tainted.provenance.orderedAfterPriorInput)
+        XCTAssertEqual(tainted.provenance.requests, .init(full: 1, incremental: 1))
+        var diagnostics = harness.bridge.framebufferDiagnostics
+        XCTAssertEqual(diagnostics.requestGateLeaks, 1)
+        XCTAssertEqual(diagnostics.autoRearmObserved, 1)
+        XCTAssertEqual(harness.native.wire.autoRearm, 1)
+        XCTAssertEqual(harness.native.wire.outstanding, [true]) // the leaked re-arm
+        // Closed again: idle polls write nothing and are not counted twice.
+        for _ in 0..<3 { harness.time.advance(100_000_000); harness.scheduler.runNext() }
+        XCTAssertEqual(harness.bridge.framebufferDiagnostics.requestGateLeaks, 1)
+        let (next, _) = await startCapture(harness)
+        harness.time.advance(10_000_000); harness.scheduler.runNext()
+        let clean = try await next.value
+        XCTAssertTrue(clean.provenance.orderedAfterPriorInput)
+        XCTAssertEqual(clean.provenance.requests, .init(full: 1, incremental: 0))
+        diagnostics = harness.bridge.framebufferDiagnostics
+        XCTAssertEqual(diagnostics.requestGateLeaks, 1)
+        XCTAssertEqual(diagnostics.autoRearmObserved, 1)
+        XCTAssertEqual(harness.native.wire.autoRearm, 1)
+        XCTAssertEqual(harness.native.observedIncrementalUpdates, 0)
+        harness.bridge.disconnect(); XCTAssertEqual(harness.bridge.framebufferWidth, 0)
+        assertSingleClientAndBufferReleased(harness.native)
+    }
+
+    /// The gate is one bit in the vendored LibVNC 0.9.15 header. Pin the
+    /// version, the message number, the bitmap shape and the bit that the
+    /// library's own SupportsClient2Server reads, so a LibVNC bump fails here
+    /// before rfbclient.c:1497 and :2564 are reviewed again.
+    func testGateHeaderOffsetPinned() throws {
+        XCTAssertEqual(LIBVNCSERVER_VERSION, "0.9.15")
+        XCTAssertEqual(rfbFramebufferUpdateRequest, 3)
+        XCTAssertEqual(VNCBridge.framebufferUpdateRequestType, 3)
+        XCTAssertEqual(VNCBridge.requestGateMask, 0x08)
+        XCTAssertEqual(sz_rfbSupportedMessages, 64)
+        XCTAssertEqual(MemoryLayout<rfbSupportedMessages>.size, 64)
+        let offset = try XCTUnwrap(MemoryLayout<rfbClient>.offset(of: \rfbClient.supportedMessages))
+        let client = try XCTUnwrap(rfbGetClient(8, 3, 4))
+        defer { VNCClientOperations.release(client) }
+        // Write byte 0 through the raw header offset; the compiled library must
+        // read the same byte and bit.
+        let raw = UnsafeMutableRawPointer(client)
+        raw.storeBytes(of: UInt8(0xFF), toByteOffset: offset, as: UInt8.self)
+        XCTAssertNotEqual(SupportsClient2Server(client, 3), 0)
+        XCTAssertTrue(VNCBridge.requestGateOpen(client))
+        VNCBridge.setRequestGate(client, open: false)
+        XCTAssertEqual(raw.load(fromByteOffset: offset, as: UInt8.self), 0xF7)
+        XCTAssertEqual(SupportsClient2Server(client, 3), 0)
+        XCTAssertFalse(VNCBridge.requestGateOpen(client))
+        for others: Int32 in [0, 1, 2, 4, 5, 6, 7] {
+            XCTAssertNotEqual(SupportsClient2Server(client, others), 0, "message type \(others)")
+        }
+        VNCBridge.setRequestGate(client, open: true)
+        XCTAssertNotEqual(SupportsClient2Server(client, 3), 0)
+        XCTAssertEqual(raw.load(fromByteOffset: offset, as: UInt8.self), 0xFF)
     }
 
     /// Observation writes requests only. Neither a successful capture, a

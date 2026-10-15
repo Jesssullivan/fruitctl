@@ -145,7 +145,7 @@ jobs:
             --daemon "$FRUITCTL_NATIVE_CI_OUTPUT/unstripped-unsigned/claude-kvm-daemon" \
             --output-dir "$FRUITCTL_RFB_CI_OUTPUT" \
             --captures 100 \
-            --request-modes stream
+            --request-modes stream,on-demand
       - name: Report failed native command
         if: failure()
         env:

@@ -47,6 +47,9 @@ struct VNCFramebufferDiagnostics: Codable, Sendable {
     // request (rfbclient.c:2564), counted when its request gate was open.
     var unansweredFullRequests = 0
     var autoRearmObserved = 0
+    // On-demand mode: times the closed request gate was found reopened by a
+    // server SupportedMessages rectangle, then closed again.
+    var requestGateLeaks = 0
     var lastCallbackAgeMilliseconds: UInt64?
 
     // Explicit wire names keep `encoded` and typed error data identical.
@@ -62,6 +65,7 @@ struct VNCFramebufferDiagnostics: Codable, Sendable {
         case complete, phase
         case unansweredFullRequests = "unanswered_full_requests"
         case autoRearmObserved = "auto_rearm_observed"
+        case requestGateLeaks = "request_gate_leaks"
         case lastCallbackAgeMilliseconds = "last_callback_age_milliseconds"
     }
 
@@ -99,6 +103,59 @@ enum VNCConnectionState: Sendable, CustomStringConvertible {
 }
 
 // MARK: - Errors
+
+/// How the daemon asks the server for framebuffer updates.
+enum VNCRequestMode: String, CaseIterable, Codable, Sendable {
+    /// Default: incremental polls while idle and LibVNC's re-arm after every
+    /// update; the daemon's own polls pause while a capture is pending.
+    case stream
+    /// Opt-in: no incremental request is ever written. LibVNC's request gate
+    /// stays closed except around this daemon's own whole-screen requests.
+    case onDemand = "on-demand"
+}
+
+/// How one successful observation was obtained. Every field is control flow;
+/// none carries pixels, coordinates or server text.
+struct VNCCaptureProvenance: Encodable, Equatable, Sendable {
+    struct Requests: Encodable, Equatable, Sendable {
+        var full = 0
+        var incremental = 0
+    }
+    /// Pixels were received over this connection, not a side session.
+    var source = "in_session"
+    /// Every pixel arrived after this capture's own request, then FinishedUpdate.
+    var coverage = "complete_received_after_request"
+    var requestMode: VNCRequestMode
+    /// Requests written while this capture was pending, its own included.
+    var requests = Requests()
+    /// Inferred full requests still unanswered when this capture was admitted.
+    var priorUnansweredRequests = 0
+    /// False when a leaked LibVNC request may have reordered this capture.
+    var orderedAfterPriorInput = true
+    var elapsedMilliseconds: UInt64 = 0
+
+    enum CodingKeys: String, CodingKey {
+        case source, coverage, requests
+        case requestMode = "request_mode"
+        case priorUnansweredRequests = "prior_unanswered_requests"
+        case orderedAfterPriorInput = "ordered_after_prior_input"
+        case elapsedMilliseconds = "elapsed_ms"
+        case elicitedInput = "elicited_input"
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(source, forKey: .source)
+        try container.encode(coverage, forKey: .coverage)
+        try container.encode(requestMode, forKey: .requestMode)
+        try container.encode(requests, forKey: .requests)
+        try container.encode(priorUnansweredRequests, forKey: .priorUnansweredRequests)
+        try container.encode(orderedAfterPriorInput, forKey: .orderedAfterPriorInput)
+        try container.encode(elapsedMilliseconds, forKey: .elapsedMilliseconds)
+        // Observation never writes input to obtain pixels.
+        try container.encodeNil(forKey: .elicitedInput)
+    }
+}
 
 /// Stable reasons a screen observation produced no fresh complete frame.
 /// The raw values are the public JSON-RPC `data.reason` vocabulary.
@@ -186,4 +243,5 @@ struct VNCConfiguration {
     var messageLoopInterval: UInt32 = 500
     /// Write a header-only client-to-server ledger to stderr (no payloads).
     var wireLedger: Bool = false
+    var requestMode: VNCRequestMode = .stream
 }
