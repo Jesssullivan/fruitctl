@@ -1,0 +1,118 @@
+
+@@fruitctl-probe sw_vers@@
+ProductName:		macOS
+ProductVersion:		26.7.1
+BuildVersion:		25G313
+
+@@fruitctl-status sw_vers 0@@
+
+@@fruitctl-probe arch@@
+arm64
+
+@@fruitctl-status arch 0@@
+
+@@fruitctl-probe console@@
+operator
+
+@@fruitctl-status console 0@@
+
+@@fruitctl-probe screensharing_override@@
+read=ok
+		"com.apple.screensharing" => enabled
+
+@@fruitctl-status screensharing_override 0@@
+
+@@fruitctl-probe screensharing_service@@
+	state = not running
+	runs = 26
+	last exit code = 0
+
+@@fruitctl-status screensharing_service 0@@
+
+@@fruitctl-probe remote_management_marker@@
+value=enabled
+
+@@fruitctl-status remote_management_marker 0@@
+
+@@fruitctl-probe remote_management_prefs@@
+ARD_AllLocalUsers=1
+ARD_AllLocalUsersPrivs=1073742079
+VNCLegacyConnectionsEnabled=1
+ScreenSharingReqPermEnabled=1
+
+@@fruitctl-status remote_management_prefs 0@@
+
+@@fruitctl-probe vnc_naprivs@@
+naprivs=unreadable
+
+@@fruitctl-status vnc_naprivs 0@@
+
+@@fruitctl-probe ioreg_console@@
+      "IOConsoleLocked" = No
+      "IOConsoleUsers" = ({"kCGSSessionOnConsoleKey"=Yes,"kSCSecuritySessionID"=100002,"kCGSSessionSystemSafeBoot"=No,"kCGSessionLoginDoneKey"=Yes,"kCGSSessionIDKey"=257,"kCGSSessionUserNameKey"="operator","kCGSSessionGroupIDKey"=20,"CGSSessionUniqueSessionUUID"="00000000-0000-0000-0000-000000000000","kCGSSessionSecureInputPID"=912,"kCGSessionLongUserNameKey"="Operator","kCGSSessionAuditIDKey"=100002,"kCGSSessionLoginwindowSafeLogin"=No,"kCGSSessionUserIDKey"=501})
+
+@@fruitctl-status ioreg_console 0@@
+
+@@fruitctl-probe secure_input_process@@
+pid=912|/Applications/Example Secure App.app/Contents/MacOS/Example Secure App
+
+@@fruitctl-status secure_input_process 0@@
+
+@@fruitctl-probe pmset_assertions@@
+2026-10-15 00:00:00 +0000
+Assertion status system-wide:
+   BackgroundTask                 0
+   ApplePushServiceTask           0
+   UserIsActive                   1
+   PreventUserIdleDisplaySleep    1
+   SoftwareUpdateTask             0
+   PreventSystemSleep             0
+   ExternalMedia                  1
+   PreventUserIdleSystemSleep     1
+   NetworkClientActive            0
+Listed by owning process:
+   pid 371(powerd): [0x0000000b00018008] 01:16:37 PreventUserIdleSystemSleep named: "Powerd - Prevent sleep while display is on"  
+   pid 371(powerd): [0x0000000f00088083] 01:16:33 ExternalMedia named: "com.apple.powermanagement.externalmediamounted"  
+   pid 371(powerd): [0x0000000b00098009] 01:16:37 UserIsActive named: "com.apple.powerd.ws.initialize"  
+   pid 430(WindowServer): [0x0000001a0009815e] 00:12:14 UserIsActive named: "com.apple.iohideventsystem.queue.tickle.nxevent service:IOHIDSystem pid:1000 process:remoting_me2me_host"  
+   pid 1456(remoting_me2me_host): [0x00000e9f000584f9] 00:14:25 NoDisplaySleepAssertion named: "Remoting session is active"  
+Kernel Assertions: 0x124=USB,THNDR,MAGICWAKE
+
+@@fruitctl-status pmset_assertions 0@@
+
+@@fruitctl-probe pmset_settings@@
+System-wide power settings:
+Currently in use:
+ standby              0
+ Sleep On Power Button 1
+ autorestartatconnect 0
+ autorestart          1
+ SleepServices        0
+ powernap             0
+ networkoversleep     1
+ disksleep            0
+ sleep                0 (sleep prevented by powerd)
+ ttyskeepawake        1
+ displaysleep         0 (display sleep prevented by remoting_me2me_host)
+ tcpkeepalive         1
+ lowpowermode         0
+ womp                 1
+
+@@fruitctl-status pmset_settings 0@@
+
+@@fruitctl-probe displays@@
+display=External Display
+online=Yes
+
+@@fruitctl-status displays 0@@
+
+@@fruitctl-probe host_app@@
+user|absent
+system|absent
+
+@@fruitctl-status host_app 0@@
+
+@@fruitctl-probe tcc@@
+system|unreadable
+
+@@fruitctl-status tcc 0@@

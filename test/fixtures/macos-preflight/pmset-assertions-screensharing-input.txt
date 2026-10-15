@@ -1,0 +1,21 @@
+2026-10-15 00:00:00 +0000
+Assertion status system-wide:
+   BackgroundTask                 0
+   ApplePushServiceTask           0
+   UserIsActive                   1
+   PreventUserIdleDisplaySleep    0
+   SoftwareUpdateTask             0
+   PreventSystemSleep             0
+   ExternalMedia                  1
+   PreventUserIdleSystemSleep     1
+   NetworkClientActive            0
+Listed by owning process:
+   pid 371(powerd): [0x0000000b00018008] 00:52:47 PreventUserIdleSystemSleep named: "Powerd - Prevent sleep while display is on"  
+   pid 371(powerd): [0x0000000f00088083] 00:52:43 ExternalMedia named: "com.apple.powermanagement.externalmediamounted"  
+   pid 371(powerd): [0x0000000b00098009] 00:52:47 UserIsActive named: "com.apple.powerd.ws.initialize"  
+   pid 430(WindowServer): [0x0000001a0009815e] 00:02:13 UserIsActive named: "com.apple.iohideventsystem.queue.tickle.nxevent service:IOHIDSystem pid:1000 process:ScreensharingAgent"  
+   pid 442(coreaudiod): [0x00000c37000184cc] 00:00:52 PreventUserIdleSystemSleep named: "com.apple.audio.example.context.preventuseridlesleep"  
+	Created for PID: 1001. 
+	Resources: audio-out example 
+   pid 60512(ExampleAudio): [0x00000c35000184cb] 00:00:53 PreventUserIdleSystemSleep named: "Avoiding audio dropouts"  
+Kernel Assertions: 0x124=USB,THNDR,MAGICWAKE

@@ -13,6 +13,14 @@ unknown on an older backend; use its compatible existing actions without assumin
 new features. An empty list with `known: true` advertises no supported actions.
 An advertisement does not qualify permissions, capture or input mapping.
 
+Every result also carries `route` (`host` or `raw`) and `indicator`
+(`present`, `absent` or `unknown`):
+
+- The raw VNC route always reports `absent`.
+- `present` means the Host's own activity receipt confirmed the overlay. It is
+  not proof that the indicator is excluded from captures.
+- `unknown` makes no claim either way.
+
 ```json
 {"action":"screenshot"}
 ```

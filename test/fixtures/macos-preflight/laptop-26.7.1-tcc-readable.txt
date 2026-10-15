@@ -1,0 +1,130 @@
+
+@@fruitctl-probe sw_vers@@
+ProductName:		macOS
+ProductVersion:		26.7.1
+BuildVersion:		25G313
+
+@@fruitctl-status sw_vers 0@@
+
+@@fruitctl-probe arch@@
+arm64
+
+@@fruitctl-status arch 0@@
+
+@@fruitctl-probe console@@
+operator
+
+@@fruitctl-status console 0@@
+
+@@fruitctl-probe screensharing_override@@
+read=ok
+		"com.apple.screensharing" => enabled
+
+@@fruitctl-status screensharing_override 0@@
+
+@@fruitctl-probe screensharing_service@@
+	state = not running
+	runs = 0
+	last exit code = (never exited)
+
+@@fruitctl-status screensharing_service 0@@
+
+@@fruitctl-probe remote_management_marker@@
+value=enabled
+
+@@fruitctl-status remote_management_marker 0@@
+
+@@fruitctl-probe remote_management_prefs@@
+
+@@fruitctl-status remote_management_prefs 0@@
+
+@@fruitctl-probe vnc_naprivs@@
+naprivs=unreadable
+
+@@fruitctl-status vnc_naprivs 0@@
+
+@@fruitctl-probe ioreg_console@@
+      "IOConsoleLocked" = No
+      "IOConsoleUsers" = ({"kCGSSessionOnConsoleKey"=Yes,"kSCSecuritySessionID"=100002,"kCGSSessionSystemSafeBoot"=No,"kCGSessionLoginDoneKey"=Yes,"kCGSSessionIDKey"=257,"kCGSSessionUserNameKey"="operator","kCGSSessionGroupIDKey"=20,"CGSSessionUniqueSessionUUID"="00000000-0000-0000-0000-000000000000","kCGSessionLongUserNameKey"="Operator","kCGSSessionAuditIDKey"=100002,"kCGSSessionLoginwindowSafeLogin"=No,"kCGSSessionUserIDKey"=501})
+
+@@fruitctl-status ioreg_console 0@@
+
+@@fruitctl-probe secure_input_process@@
+
+@@fruitctl-status secure_input_process 0@@
+
+@@fruitctl-probe pmset_assertions@@
+2026-10-15 00:00:00 +0000
+Assertion status system-wide:
+   BackgroundTask                 0
+   ApplePushServiceTask           0
+   UserIsActive                   1
+   PreventUserIdleDisplaySleep    0
+   SoftwareUpdateTask             0
+   PreventSystemSleep             0
+   ExternalMedia                  1
+   PreventUserIdleSystemSleep     1
+   NetworkClientActive            0
+Listed by owning process:
+   pid 21424(caffeinate): [0x0004238d0001a6c9] 00:03:33 PreventUserIdleSystemSleep named: "caffeinate command-line tool"  
+	Details: caffeinate asserting for 300 secs
+	Localized=THE CAFFEINATE TOOL IS PREVENTING SLEEP.
+	Timeout will fire in 87 secs Action=TimeoutActionRelease
+   pid 178(bluetoothd): [0x000424600001a70d] 00:00:01 PreventUserIdleSystemSleep named: "com.apple.BTStack"  
+   pid 178(bluetoothd): [0x0000d23600099136] 01:07:54 UserIsActive named: "Bluetooth LE HID Activity"  
+   pid 83803(ExampleBrowser): [0x000420fe0001a53d] 00:14:27 NoIdleSleepAssertion named: "WebRTC has active PeerConnections"  
+   pid 20792(caffeinate): [0x000423730001a6ab] 00:03:58 PreventUserIdleSystemSleep named: "caffeinate command-line tool"  
+	Details: caffeinate asserting for 300 secs
+	Localized=THE CAFFEINATE TOOL IS PREVENTING SLEEP.
+	Timeout will fire in 61 secs Action=TimeoutActionRelease
+   pid 21707(caffeinate): [0x000423a00001a6cc] 00:03:13 PreventUserIdleSystemSleep named: "caffeinate command-line tool"  
+	Details: caffeinate asserting for 300 secs
+	Localized=THE CAFFEINATE TOOL IS PREVENTING SLEEP.
+	Timeout will fire in 107 secs Action=TimeoutActionRelease
+   pid 27799(caffeinate): [0x0004243a0001a6f4] 00:00:40 PreventUserIdleSystemSleep named: "caffeinate command-line tool"  
+	Details: caffeinate asserting for 300 secs
+	Localized=THE CAFFEINATE TOOL IS PREVENTING SLEEP.
+	Timeout will fire in 260 secs Action=TimeoutActionRelease
+   pid 126(powerd): [0x0000002600018001] 75:23:40 PreventUserIdleSystemSleep named: "Powerd - Prevent sleep while display is on"  
+   pid 126(powerd): [0x00000037000880e0] 75:23:23 ExternalMedia named: "com.apple.powermanagement.externalmediamounted"  
+   pid 126(powerd): [0x0000002600098002] 75:23:40 UserIsActive named: "com.apple.powerd.ws.initialize"  
+   pid 185(WindowServer): [0x0000002b00098072] 00:12:00 UserIsActive named: "com.apple.iohideventsystem.queue.tickle serviceID:0 service:AppleMultitouchDevice product:Apple Internal Keyboard / Trackpad eventType:11"  
+Kernel Assertions: 0x104=USB,MAGICWAKE
+
+@@fruitctl-status pmset_assertions 0@@
+
+@@fruitctl-probe pmset_settings@@
+System-wide power settings:
+Currently in use:
+ standby              1
+ Sleep On Power Button 1
+ hibernatefile        /var/vm/sleepimage
+ powernap             1
+ networkoversleep     0
+ disksleep            0
+ sleep                0 (sleep prevented by caffeinate, bluetoothd, ExampleBrowser, caffeinate, caffeinate, caffeinate, powerd)
+ hibernatemode        3
+ ttyskeepawake        1
+ displaysleep         0
+ tcpkeepalive         1
+ lowpowermode         0
+ womp                 1
+
+@@fruitctl-status pmset_settings 0@@
+
+@@fruitctl-probe displays@@
+display=Color LCD
+online=Yes
+
+@@fruitctl-status displays 0@@
+
+@@fruitctl-probe host_app@@
+user|absent
+system|absent
+
+@@fruitctl-status host_app 0@@
+
+@@fruitctl-probe tcc@@
+system|readable
+
+@@fruitctl-status tcc 0@@

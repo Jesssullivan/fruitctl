@@ -33,7 +33,7 @@ try {
   agent: { type: 'string' }, scope: { type: 'string' }, version: { type: 'string' },
   'dry-run': { type: 'boolean' }, 'project-dir': { type: 'string' }, 'install-root': { type: 'string' },
   mux: { type: 'boolean' }, stdio: { type: 'boolean' }, json: { type: 'boolean' },
-  timings: { type: 'boolean' },
+  timings: { type: 'boolean' }, macos: { type: 'boolean' }, 'target-ssh': { type: 'string' },
   help: { type: 'boolean' }, 'manifest-url': { type: 'string' },
 } }));
 command = positionals[0];
@@ -50,6 +50,8 @@ configPath = values.config || defaultConfigPath();
   if (values.timings && command && !['install', 'doctor', 'rollback', 'uninstall'].includes(command)) {
     throw new Error('--timings is supported only by install, doctor, rollback and uninstall');
   }
+  if (values.macos && command !== 'doctor') throw new Error('--macos is supported only by doctor');
+  if (values['target-ssh'] !== undefined && !values.macos) throw new Error('--target-ssh requires doctor --macos');
   if (values.help || !command) {
     process.stdout.write('Fruitctl\n\nCommands: mcp, broker, relay, attach, install, doctor, rollback, uninstall\n' +
       '  mcp --target PROFILE [--socket PATH]\n' +
@@ -57,10 +59,12 @@ configPath = values.config || defaultConfigPath();
       '  relay --bridge USER@HOST [--socket PATH] [--remote-socket PATH]\n' +
       '  install --agent AGENT --scope user|project --version TAG --target PROFILE [--project-dir PATH] [--install-root ABSOLUTE_DIRECTORY] [--dry-run]\n' +
       '  doctor [--agent AGENT] [--scope user|project] [--project-dir PATH] [--install-root ABSOLUTE_DIRECTORY] --json\n' +
+      '  doctor --macos [--target PROFILE] [--config PATH] [--target-ssh USER@HOST]\n' +
       '  rollback|uninstall --agent AGENT [--scope user|project] [--project-dir PATH] [--install-root ABSOLUTE_DIRECTORY]\n' +
       '\n--install-root selects Fruitctl runtime/state/launcher storage; registration still follows scope and project/user configuration.\n' +
       'Repeat the selected root for doctor, rollback and uninstall. Explicit-root installation requires explicit scope; omitted root preserves legacy paths.\n' +
       'Install requires explicit --version TAG. Doctor writes JSON: exit 1 for drift, 0 for configured or not-installed.\n' +
+      'Doctor --macos adds read-only target checks over SSH (macOS 26.6.1+ or 27, Screen Sharing mode, session, Host grants); a typed failure exits 1.\n' +
       'Add --timings to installer commands for bounded aggregate timings; default output is unchanged.\n');
   } else if (command === 'broker') {
     const { createBroker } = await import('../lib/broker/server.mjs');
@@ -98,6 +102,12 @@ configPath = values.config || defaultConfigPath();
     if (command === 'install' && !values.version) {
       throw new Error('Installation requires explicit --version TAG; use the exact published release tag');
     }
+    let macos;
+    if (values.macos) {
+      const { resolvePreflightTarget } = await import('../lib/install/macos-preflight.mjs');
+      macos = await resolvePreflightTarget({ targetSsh: values['target-ssh'], target: values.target,
+        configPath: values.config || process.env.FRUITCTL_CONFIG_PATH || defaultConfigPath() });
+    }
     const installer = await import('../lib/install/index.mjs');
     if (values.timings) installerTimingsForError = installer.timingsForError;
     const result = await installer[command]({ agent: values.agent, scope: values.scope,
@@ -106,9 +116,9 @@ configPath = values.config || defaultConfigPath();
       installRoot: values['install-root'],
       ...(values.timings === true ? { timings: true } : {}),
       configPath: values.config || process.env.FRUITCTL_CONFIG_PATH,
-      manifestUrl: values['manifest-url'] });
+      manifestUrl: values['manifest-url'], ...(macos ? { macos } : {}) });
     process.stdout.write(JSON.stringify(result, null, 2) + '\n');
-    if (command === 'doctor' && result.status === 'drift') process.exitCode = 1;
+    if (command === 'doctor' && (result.status === 'drift' || result.targetPreflight?.status === 'fail')) process.exitCode = 1;
   } else throw new Error('Unknown Fruitctl command; use --help');
 } catch (error) {
   process.stderr.write(`Fruitctl: ${error.message}\n`);

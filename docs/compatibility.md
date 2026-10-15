@@ -27,7 +27,7 @@ previews are published; fully qualified product releases remain zero.
 | Rocky Linux agent seat | Same SSH bridge | Historical alpha2 Linux x64 bootstrap passed on Rocky 10.2; SSH/desktop journey pending |
 | Native Linux VNC controller | No native binary promised | Outside initial release |
 | Intel macOS controller | No x86_64 artifact promised | Requires separate build and runtime qualification |
-| macOS target | Owner-configured Screen Sharing/VNC | Record target OS and capture/input results |
+| macOS target | macOS 26 (26.6.1 or later) and 27; owner-configured Screen Sharing or Remote Management | Enforced by `fruitctl doctor --macos`; record target OS and capture/input results |
 | Other VNC target | Protocol capability varies | No blanket target-OS claim |
 | Purple target indicator | Qualified filtered macOS capture only | Unqualified source prototype; no public Host binary or automatic setup |
 
@@ -96,6 +96,54 @@ qualified product release count remains zero.
 
 Alpha.9 includes the portable Host-installer payload and help. There is no
 public native Host bundle, automatic consent or qualified Host capture mode.
+
+## macOS target support
+
+Fruitctl supports macOS 26 and 27 targets only. `fruitctl doctor --macos`
+enforces this with read-only SSH probes of the target (see
+[macOS permissions](permissions.md#target-preflight)). Other versions fail with
+a typed result instead of being attempted.
+
+| Target | Minimum | Result below it |
+| --- | --- | --- |
+| macOS 26 Tahoe | 26.6.1 | `macos_below_patch_floor` |
+| macOS 27 | 27.0 | None: every 27 release includes the fix |
+| macOS 15 and earlier, or 28 and later | Unsupported | `macos_unsupported` |
+| Missing or malformed `sw_vers` | Unverifiable | `macos_version_unknown` |
+
+The floor exists because of CVE-2026-65400. That flaw in Screen Sharing's
+`screensharingd` lets a network attacker authenticate without valid
+credentials, whatever the authentication mode. CISA lists it as known
+exploited. Apple fixed it in
+[macOS Tahoe 26.6.1](https://support.apple.com/en-us/148170) and lists the same
+fix in [macOS 27](https://support.apple.com/en-us/149035) (both are Apple
+security notes). Fruitctl's loopback-plus-SSH posture keeps port 5900
+unreachable; it does not replace patching.
+
+The preflight also reports the Apple remote mode. Each of these fails with a
+typed code and is never attempted:
+
+- Screen Sharing off: `screen_sharing_disabled`.
+- Remote Management privileges limited to Observe: `observe_only`, or
+  `remote_control_not_permitted` when there is no control privilege at all.
+- An active High Performance session: `high_performance_session`. Fruitctl
+  does not support High Performance mode.
+- The console at the login window: `no_console_session`.
+- A locked screen: `screen_locked`.
+
+Remote Management and plain Screen Sharing are both accepted, and the result
+names which one is on. Some results stay `unknown` and are listed as such:
+
+- Curtain mode, which has no passive host-side signal.
+- Observe-only under plain Screen Sharing, which the viewer chooses.
+- Remote Management privileges that are not readable. Per-user privileges are
+  read for the profile's VNC account, which governs input, and are `unknown`
+  when that account is not known.
+- Whether Remote Management or plain Screen Sharing is on, when the Remote
+  Management activation marker is absent or unreadable. Readable privileges
+  are still checked in that case.
+
+Each run is a single sample of the target. It does not qualify capture or input.
 
 ## Agents
 
