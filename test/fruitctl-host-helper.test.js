@@ -1284,6 +1284,12 @@ test('ax_snapshot routes to the Host under the activity lease with pixel and dis
     assert.deepEqual(response.result.ax_snapshot.display, { width: 256, height: 128 });
     assert.equal(response.result.ax_snapshot.nodes[0].display_frame, undefined);
     assert.deepEqual(vnc.calls, []);
+    // A VNC display with another aspect still yields the Host screenshot's
+    // uniform scaling, never independent per-axis factors.
+    vnc.display = { width: 300, height: 100 };
+    const [wide] = await executor.execute([{ action: 'ax_snapshot' }]);
+    assert.deepEqual(wide.result.ax_snapshot.display, { width: 300, height: 150 });
+    assert.deepEqual(wide.result.ax_snapshot.nodes[1].display_frame, { x: 11, y: 23, width: 35, height: 47 });
   } finally { await executor.close(); }
 });
 
@@ -1296,6 +1302,8 @@ test('malformed AX snapshots fail closed', async t => {
     'redacted with value': axSnapshot({ nodes: [axSnapshot().nodes[0], { ...node, value_redacted: true, value: 'x' }] }),
     'count mismatch': axSnapshot({ node_count: 5 }),
     'unbounded label': axSnapshot({ nodes: [axSnapshot().nodes[0], { ...node, label: 'x'.repeat(257) }] }),
+    'unbounded application name': axSnapshot({ applications: [{ ...axSnapshot().applications[0], name: 'x'.repeat(257) }] }),
+    'non-string bundle id': axSnapshot({ applications: [{ ...axSnapshot().applications[0], bundle_id: 7 }] }),
   };
   for (const [name, snapshot] of Object.entries(cases)) {
     await t.test(name, async () => {

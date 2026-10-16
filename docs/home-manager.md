@@ -208,7 +208,10 @@ the Host with the same `--display-uuid` (`FruitctlHost --doctor` lists online
 UUIDs). A UUID-only profile learns the current ID from validated Host health, and
 every request carries the UUID for the Host to recheck. A qualified `mapping`
 repeats the same identity and may set `scale` (pixels per point, 1-8): a capture
-at another scale then refuses input even when its pixel sizes match. Unset
+at another scale then refuses input even when its pixel sizes match. On a HiDPI
+display the Host now captures the mode's pixel framebuffer, not its point size,
+so a mapping qualified against point-sized captures refuses input until it is
+requalified with the new `nativeWidth`/`nativeHeight`. Unset
 fields are omitted from the generated configuration, never written as null.
 
 The `native-controller` package extracts only the unchanged signed controller
