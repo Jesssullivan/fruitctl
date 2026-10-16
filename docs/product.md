@@ -43,8 +43,11 @@ engines in any one frontend.
 
 ## Compatibility and evidence
 
-The inherited native build targets **Apple Silicon and macOS 15 or newer**.
-That is a build configuration, not qualification of every macOS release.
+Fruitctl supports **macOS 26 (26.6.1 or later) and macOS 27** on Apple
+Silicon; `fruitctl doctor --macos` enforces that floor on targets and earlier
+releases are unsupported. See [macOS target support](compatibility.md#macos-target-support).
+The inherited native build still sets a macOS 15.0 deployment target. That is
+a build configuration, not a support claim or qualification of any release.
 Initial Linux support is the SSH controller bridge to a Darwin broker, including
 the intended Rocky Linux controller route. Native Linux execution, Intel
 Darwin binaries, and additional VNC servers require their own qualification.
@@ -83,8 +86,9 @@ Fleet host configuration and activation remain consumer responsibilities.
 
 ## Delivery milestones
 
-Dates are initial forecasts in **America/New_York**. Weekly implementation work
-uses the existing Tuesday-to-Tuesday delivery cadence. Research and
+Dates are forecasts in **America/New_York**. The original M1-M3 dates
+(October 12, 19 and 26) were reforecast on October 14 and October 16, 2026,
+when the installation-preview milestone was split into M2a and M2b. Research and
 specification precede implementation; release promotion requires evidence.
 Dates do not establish completed acceptance. Missing evidence keeps the
 affected combination experimental and requires a dated reforecast without
@@ -92,14 +96,15 @@ weakening the qualification criteria.
 
 | Milestone | Forecast | Acceptance |
 | --- | --- | --- |
-| Authority and specification | October 5, 2026, 23:59 | Public repo authority, source consolidation manifest, private prompt preservation, complete architecture/install/overlay specification, product tracking, and documentation route established. Existing signed releases and unqualified source are distinguished. |
-| Reproducible core | October 12, 2026, 17:00 | Dependency provenance, consolidated source, fresh-frame/geometry correctness, broker target boundaries, bounded calls and session/process lifetimes, reproducible candidate, and rollback established. |
-| Qualified installation preview | October 19, 2026, 17:00 | Independently verified pinned artifacts; generic Home Manager and direct installation receipts; clean install, upgrade, rollback, and uninstall; supported controller/target/mode matrix qualified. |
-| Agent adoption and dogfood | October 26, 2026, 17:00 | Frontend-specific install and end-to-end receipts, live docs, seven-day Lab measurements, explicit experimental combinations, and next-cycle disposition of remaining defects. |
+| M0: Authority and specification | October 5, 2026, 23:59 (met) | Public repo authority, source consolidation manifest, private prompt preservation, complete architecture/install/overlay specification, product tracking, and documentation route established. Existing signed releases and unqualified source are distinguished. |
+| M1′: Reliable core and indicator preview | October 21, 2026, 17:00 | Dependency provenance, consolidated source, fresh-frame/geometry correctness, broker target boundaries, bounded calls and session/process lifetimes, reproducible candidate, and rollback established; indicator preview. |
+| M2a: Host route, core parity, clipboard, relay | October 28, 2026, 17:00 | Host route as the standard installation, with display mapping and the exclusion gate; macOS VM qualification target; relay; core input parity with mouse holds scoped to one `action_queue`; UTF-8 clipboard; display-sleep handling. Carries the installation preview: independently verified pinned artifacts, generic Home Manager and direct installation receipts, clean install/upgrade/rollback/uninstall, adapters and doctor. |
+| M2b: Accessibility grounding, observation v2, keymaps | November 4, 2026, 17:00 | Host accessibility grounding under the same lease; observation v2 (zoom, diff regions and masks, stability waits, queue expectations); keymaps, input source and typing canary with per-target paste routing; computer-use tool alias layer. |
+| M3′: Adoption, dogfood, measured release acceptance | November 18, 2026, 17:00 | Exact release provenance, license and source; fresh approved installation; frontend-specific install and end-to-end receipts; supported image, input, release and reconnect journeys; hash-chained journal and latency telemetry; explicit experimental combinations; next-cycle disposition of remaining defects. Its seven-day baseline opens the 28-day [SLO](slo.md) window. |
 
 The purple human indicator is a parallel lane: capture-exclusion feasibility
-proof on **October 6**, preview on **October 12**, and supported-mode
-qualification on **October 19**. Its intended appearance is an edge-feathered
+proof on **October 6**, preview with M1′ on **October 21**, and supported-mode
+qualification with the M2a Host route exclusion gate on **October 28**. Its intended appearance is an edge-feathered
 deep-purple heartbeat pulse with centered text,
 “Machine under FuzzyBot spell, courtesy xoxd.ai)”. It indicates agent ownership
 of that target throughout the session, including pauses between commands.
