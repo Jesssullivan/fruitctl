@@ -66,6 +66,67 @@ the outcome and do not automatically replay a failed or timed-out sequence.
 Take a new screenshot after a batch. Do not construct a blind sequence through
 unobserved dialogs or permission prompts.
 
+## Computer-use alias
+
+The `computer` tool accepts the action shapes of the Anthropic `computer` tool
+and OpenAI `computer_call`, for agents trained on those shapes. It is not a
+separate input path. Each call is translated into the Fruitctl actions above
+and runs as one batch with `action_queue` semantics: the same 30-second
+deadline, target ownership and stop-on-first-error. Coordinates are in the
+same scaled image space. Every result carries `route` and `indicator`, plus
+`alias` (`shape`, `action`, and the Fruitctl `actions` it ran). The freshness
+rules do not change: a screenshot is a new capture or an error, and nothing
+answers from an earlier image.
+
+| Anthropic `action` | OpenAI `action.type` | Fruitctl action |
+| --- | --- | --- |
+| `screenshot` | `screenshot` | `screenshot` |
+| `left_click`, `right_click`, `middle_click` `{coordinate}` | `click {button, x, y}` (`left`, `right`, `wheel`) | `mouse_click` |
+| `double_click {coordinate}` | `double_click {x, y}` | `mouse_double_click` |
+| `mouse_move {coordinate}` | `move {x, y}` | `mouse_move` |
+| `left_click_drag {start_coordinate, coordinate}` | `drag {path}` with two points | `mouse_drag` |
+| `key {text}` | `keypress {keys}` | `key_tap` or `key_combo` |
+| `type {text}` | `type {text}` | `key_type` |
+| `scroll {coordinate, scroll_direction, scroll_amount}` | `scroll {x, y, scroll_x, scroll_y}` | `scroll` |
+| `wait {duration}` | `wait` | `wait` |
+
+Anthropic `key` text uses xdotool names: `ctrl+s`, `Return`, `super+space`,
+and space-separated sequences such as `ctrl+a BackSpace`. OpenAI `keypress`
+lists one chord, for example `["CTRL","A"]`. Modifiers keep their literal
+meaning: `ctrl` is Control. `super`, `meta`, `win` and `cmd` are Command, so
+a macOS save is `cmd+s`. Single letters are sent lowercase; use `type` for
+case-sensitive text. `type` always types and never pastes. OpenAI scroll
+deltas are pixels, sent as one wheel tick per 100 pixels (1 to 20 ticks).
+`wait` and `hold_key` durations are seconds, from 0.05 to 10.
+
+Some actions need a backend method that this build may not advertise:
+
+| Alias action | Needs |
+| --- | --- |
+| `triple_click` | `mouse_triple_click` |
+| `hold_key`, or a click or scroll with `text` modifiers | `key_down`, `key_up` |
+| `cursor_position` | `cursor_position` |
+| `zoom {region}` | `zoom` (a new capture of the region, never a crop of an older image) |
+| OpenAI `drag` with more than two points | `mouse_down`, `mouse_up` |
+
+Admission uses the backend's capability advertisement. If no advertisement has
+been seen on this session (for example through a broker), the first such call
+runs one `health` first to read it. An action whose methods are not
+advertised fails before any input with `code: "unsupported_action"` and names
+the action and the missing methods. These actions start working when a backend
+advertises the method, with no alias change. Unknown or missing metadata
+permits only the baseline actions in the first table.
+
+`left_mouse_down` and `left_mouse_up` are always refused with
+`unsupported_action`. A mouse hold lasts only within one batch and is released
+when the batch ends or aborts, so a press cannot wait for a later call. Use
+`left_click_drag` or a two-point `drag`. Malformed arguments fail with
+`invalid_arguments`, and key names with no mapping fail with
+`unsupported_key`. Backend failures keep their own code. As with
+`action_queue`, a failed batch reports `completed` and `failedIndex`.
+Earlier steps may already have run, so take a new screenshot rather than
+replaying the batch.
+
 The `shutdown` action is a native lifecycle operation. Use it only when the
 session/daemon is confirmed to belong to this task; a shared broker may have
 other clients. Do not send `shutdown` through a shared broker without an

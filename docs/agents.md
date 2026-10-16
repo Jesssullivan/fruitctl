@@ -13,6 +13,17 @@ image, bounded authorized input, verification and session release. The hosted
 reference describes the current workflow; use your installed release's skill
 and discovered tool schemas when their versions differ.
 
+Frontends whose models were trained on the Anthropic `computer` tool or OpenAI
+`computer_call` can use the `computer` MCP tool. It is included in source after
+alpha.9 and is not in alpha.9 or earlier releases. It translates those action
+shapes into ordinary Fruitctl batches with the same deadline, ownership and
+route labels. Actions the backend does not advertise are refused with
+`unsupported_action`; it never emulates them. The tool is reached through the
+frontend's MCP configuration under its prefixed name, for example
+`mcp__fruitctl__computer`. It does not replace or register as the frontend's
+built-in computer-use tool. See the
+[alias mapping](../skills/fruitctl/references/operation.md#computer-use-alias).
+
 All seven adapters currently have documented configuration formats and offline
 installer tests. Complete desktop qualification is pending for each frontend;
 the scoped Claude synthetic observations below do not complete it. A successful
