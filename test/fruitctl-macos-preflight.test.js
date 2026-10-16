@@ -335,6 +335,9 @@ test('D14: competing remote-input owners match exact names, never substrings or 
 });
 
 test('D14: the remote grep keeps only exact owner basenames and filters on the target', () => {
+  // Untruncated paths: without -ww, macOS ps over SSH cuts comm at 79 columns,
+  // before the basename of /Library/PrivilegedHelperTools/ChromeRemoteDesktopHost.app/.../remoting_me2me_host.
+  assert.match(PROBE_SCRIPT, /^if processes=\$\(ps -axww -o comm= 2>\/dev\/null\); then$/m);
   const line = PROBE_SCRIPT.split('\n').find(item => item.includes('"$processes" | grep -E'));
   for (const name of REMOTE_INPUT_OWNERS.flatMap(entry => entry.names)) assert.ok(line.includes(`|${name}|`) || line.includes(`(${name}|`) || line.includes(`|${name})`), name);
   const processes = ['/Applications/AnyDesk.app/Contents/MacOS/AnyDesk', '/Applications/AnyDeskUpdater.app/Contents/MacOS/AnyDeskUpdater',
