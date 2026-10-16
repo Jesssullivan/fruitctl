@@ -14,12 +14,14 @@ Arms (see test/fruitctl-freshness-probe.md):
   P1     on-demand mode; P0 plus captures after long idle gaps
   P-ctl  chosen mode; the operator changes the screen before each capture
   P-eq   chosen mode; static screen, last capture vs a brand-new connection
+         after it settles (optionally ignoring a status-menu band)
 """
 
 import argparse
 import base64
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import queue
@@ -30,6 +32,7 @@ import subprocess
 import sys
 import threading
 import time
+import zlib
 
 
 PROBES = ("P0", "P1", "P-ctl", "P-eq")
@@ -48,7 +51,13 @@ RECEIPT_NAME = "freshness-probe-receipt.json"
 # Design minimums from the TIN-5509 probe table. Shorter schedules still run
 # (offline tests use them) but the receipt marks them non-qualifying.
 DESIGN = {"gap_seconds": 10, "warm_captures": 10, "idle_seconds": 120, "idle_captures": 5,
-          "long_idle_seconds": 600, "long_idle_captures": 1, "ctl_captures": 3, "eq_captures": 2}
+          "long_idle_seconds": 600, "long_idle_captures": 1, "ctl_captures": 3, "eq_captures": 2,
+          "eq_settle_seconds": 4}
+# macOS fades its "Screen Sharing active" menu-bar indicator in about 1-2 s
+# after a viewer connects, so a new connection's first frame can catch it
+# mid-fade. P-eq compares only after this settle time (2026-10-16, PZM).
+EQ_SETTLE_SECONDS = 4
+MAX_PNG_PIXELS = 64 * 1024 * 1024
 WIRE_LINE = re.compile(r"^\[RFB-WIRE\] ms=(\d+) dir=c2s type=(\d+|input) incremental=([01-]) length=(\d+|-) "
                        r"origin=(bridge|libvnc-init|libvnc-rearm|suppressed)(?: kinds=([0-7](?:,[0-7])*))?$")
 DIAGNOSTIC_KEYS = ("unanswered_full_requests", "unanswered_incremental_requests", "auto_rearm_observed",
@@ -69,6 +78,133 @@ def sha256_file(path):
         for block in iter(lambda: stream.read(1024 * 1024), b""):
             digest.update(block)
     return digest.hexdigest()
+
+
+# ── PNG pixels (stdlib only: zlib + struct) ─────────────────────────────
+
+
+def decode_png(data):
+    """Decode an 8-bit, non-interlaced RGB or RGBA PNG to (width, height, channels, rows).
+
+    The standard library has no PNG decoder. This handles exactly what the
+    controller emits; any other format raises ValueError rather than guessing.
+    """
+    if not data.startswith(PNG_SIGNATURE):
+        raise ValueError("not a PNG")
+    position, header, idat = len(PNG_SIGNATURE), None, []
+    while True:
+        if position + 12 > len(data):
+            raise ValueError("truncated PNG chunk")
+        length, kind = struct.unpack(">I4s", data[position:position + 8])
+        body = data[position + 8:position + 8 + length]
+        crc = data[position + 8 + length:position + 12 + length]
+        if len(body) != length or len(crc) != 4:
+            raise ValueError("truncated PNG chunk")
+        if zlib.crc32(kind + body) & 0xFFFFFFFF != struct.unpack(">I", crc)[0]:
+            raise ValueError("PNG chunk CRC mismatch")
+        position += 12 + length
+        if kind == b"IHDR":
+            if length != 13:
+                raise ValueError("invalid IHDR")
+            header = struct.unpack(">IIBBBBB", body)
+        elif kind == b"IDAT":
+            idat.append(body)
+        elif kind == b"IEND":
+            break
+    if header is None:
+        raise ValueError("PNG has no IHDR")
+    width, height, depth, color, compression, filtering, interlace = header
+    if depth != 8 or color not in (2, 6) or compression or filtering or interlace:
+        raise ValueError("unsupported PNG: depth %d, color type %d, interlace %d" % (depth, color, interlace))
+    if not width or not height or width * height > MAX_PNG_PIXELS:
+        raise ValueError("unsupported PNG size %dx%d" % (width, height))
+    channels = 3 if color == 2 else 4
+    stride = width * channels
+    expected = height * (stride + 1)
+    inflater = zlib.decompressobj()
+    raw = inflater.decompress(b"".join(idat), expected + 1)
+    if len(raw) != expected:
+        raise ValueError("PNG image data has the wrong length")
+    rows, previous = [], bytearray(stride)
+    for y in range(height):
+        offset = y * (stride + 1)
+        kind = raw[offset]
+        line = bytearray(raw[offset + 1:offset + 1 + stride])
+        if kind == 1:  # Sub
+            for i in range(channels, stride):
+                line[i] = (line[i] + line[i - channels]) & 0xFF
+        elif kind == 2:  # Up
+            for i in range(stride):
+                line[i] = (line[i] + previous[i]) & 0xFF
+        elif kind == 3:  # Average
+            for i in range(stride):
+                left = line[i - channels] if i >= channels else 0
+                line[i] = (line[i] + ((left + previous[i]) >> 1)) & 0xFF
+        elif kind == 4:  # Paeth
+            for i in range(stride):
+                a = line[i - channels] if i >= channels else 0
+                b = previous[i]
+                c = previous[i - channels] if i >= channels else 0
+                p = a + b - c
+                pa, pb, pc = abs(p - a), abs(p - b), abs(p - c)
+                line[i] = (line[i] + (a if pa <= pb and pa <= pc else b if pb <= pc else c)) & 0xFF
+        elif kind != 0:
+            raise ValueError("invalid PNG filter type %d" % kind)
+        rows.append(bytes(line))
+        previous = line
+    return width, height, channels, rows
+
+
+def parse_rect(text):
+    """``x,y,w,h`` in scaled screenshot coordinates; w and h must be positive."""
+    parts = text.split(",")
+    if len(parts) != 4 or not all(part.strip().isdigit() for part in parts):
+        raise ValueError("expected x,y,w,h as non-negative integers")
+    x, y, w, h = (int(part) for part in parts)
+    if not w or not h:
+        raise ValueError("width and height must be positive")
+    return [x, y, w, h]
+
+
+def pixel_rect(rect, image_width, image_height, scaled_width=None, scaled_height=None):
+    """Map a scaled-coordinate rect onto image pixels, rounding outward and clamping."""
+    sx = image_width / scaled_width if scaled_width else 1.0
+    sy = image_height / scaled_height if scaled_height else 1.0
+    x, y, w, h = rect
+    x0, y0 = max(0, int(math.floor(x * sx))), max(0, int(math.floor(y * sy)))
+    x1, y1 = min(image_width, int(math.ceil((x + w) * sx))), min(image_height, int(math.ceil((y + h) * sy)))
+    return [x0, y0, max(x0, x1), max(y0, y1)]
+
+
+def compare_pixels(left, right, ignore=None):
+    """Compare two decoded PNGs pixel by pixel.
+
+    ``ignore`` is [x0, y0, x1, y1) in image pixels. Returns whether the images
+    match outside it (everywhere without one), plus the bounding box [x0, y0, x1, y1] of every differing
+    pixel (inside the band too), or None when nothing differs.
+    """
+    width, height, channels, rows = left
+    if (width, height, channels) != right[:3]:
+        return {"equal": False, "reason": "image size or format differs", "diffBox": None}
+    other = right[3]
+    box = None
+    outside = True
+    for y in range(height):
+        a, b = rows[y], other[y]
+        if a == b:
+            continue
+        first = next(i for i in range(len(a)) if a[i] != b[i]) // channels
+        last = next(i for i in range(len(a) - 1, -1, -1) if a[i] != b[i]) // channels
+        box = [first, y, last + 1, y + 1] if box is None else [
+            min(box[0], first), box[1], max(box[2], last + 1), y + 1]
+        if outside:
+            if ignore is None or not ignore[1] <= y < ignore[3]:
+                outside = False
+            else:
+                x0, x1 = ignore[0] * channels, ignore[2] * channels
+                if a[:x0] != b[:x0] or a[x1:] != b[x1:]:
+                    outside = False
+    return {"equal": outside, "diffBox": box}
 
 
 # ── Artifact ────────────────────────────────────────────────────────────
@@ -228,9 +364,12 @@ def build_schedule(probe, options):
         for _ in range(options["ctl_captures"]):
             add("ctl", 0, prompt=True)
     else:
+        # Each connection's first frame can catch the menu-bar indicator mid-fade,
+        # so the first in-session capture and the compared one wait the settle time.
         for index in range(options["eq_captures"]):
-            add("eq-static", 0 if index == 0 else options["eq_gap_seconds"])
+            add("eq-static", options["eq_settle_seconds"] if index == 0 else options["eq_gap_seconds"])
         add("eq-new-connection", 0, session=1)
+        add("eq-new-connection-settled", options["eq_settle_seconds"], session=1)
     return steps
 
 
@@ -238,7 +377,7 @@ def conforms_to_design(probe, options):
     keys = {"P0": ("gap_seconds", "warm_captures", "idle_seconds", "idle_captures"),
             "P1": ("gap_seconds", "warm_captures", "idle_seconds", "idle_captures",
                    "long_idle_seconds", "long_idle_captures"),
-            "P-ctl": ("ctl_captures",), "P-eq": ("eq_captures",)}[probe]
+            "P-ctl": ("ctl_captures",), "P-eq": ("eq_captures", "eq_settle_seconds")}[probe]
     return all(options[key] >= DESIGN[key] for key in keys)
 
 
@@ -458,8 +597,12 @@ class DaemonSession:
         return self.process.returncode
 
 
-def observe(session, step_index, step, start_clock, options, output_dir):
-    """One health read plus one screenshot. Never any input."""
+def observe(session, step_index, step, start_clock, options, output_dir, images=None):
+    """One health read plus one screenshot. Never any input.
+
+    ``images`` (step -> PNG bytes) keeps pixels in memory for the P-eq
+    comparison only; they reach disk only with ``--save-images``.
+    """
     record = {"step": step_index, "phase": step["phase"], "session": session.index,
               "waitBeforeSeconds": step["waitSeconds"], "t": None, "latency_ms": None, "sha256": None,
               "ok": False, "reason": None, "provenance": None, "healthBefore": None}
@@ -506,6 +649,8 @@ def observe(session, step_index, step, start_clock, options, output_dir):
     record.update(ok=True, sha256=sha256_bytes(png), imageBytes=len(png), provenance=result.get("provenance"),
                   connectionGeneration=result.get("connectionGeneration"), allocation=result.get("allocation"),
                   scaledWidth=result.get("scaledWidth"), scaledHeight=result.get("scaledHeight"))
+    if images is not None:
+        images[step_index] = png
     if options["save_images"]:
         path = output_dir / ("capture-s%d-%02d.png" % (session.index, step_index))
         descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
@@ -541,8 +686,75 @@ def attribute_ledger(captures, sessions):
 # ── Verdict ─────────────────────────────────────────────────────────────
 
 
-def evaluate(probe, mode, captures, sessions):
-    """Pure verdict. ``sessions``: [{index, ledger, gateLeaks, exitCode, failure, notifications}]."""
+def _pixel_check(reference, candidate, images, ignore_rect):
+    """Pixel comparison of two captures, or None when pixels are unavailable."""
+    if images is None or reference["step"] not in images or candidate["step"] not in images:
+        return None
+    try:
+        left, right = decode_png(images[reference["step"]]), decode_png(images[candidate["step"]])
+    except (ValueError, zlib.error) as error:
+        return {"equal": False, "reason": "png_decode:%s" % str(error)[:80], "diffBox": None}
+    ignore = None
+    if ignore_rect is not None:
+        ignore = pixel_rect(ignore_rect, left[0], left[1], reference.get("scaledWidth"), reference.get("scaledHeight"))
+    result = compare_pixels(left, right, ignore)
+    result["imageSize"] = [left[0], left[1]]
+    if ignore is not None:
+        result["ignoreBoxPixels"] = ignore
+    return result
+
+
+def eq_comparison(captures, images=None, ignore_rect=None):
+    """P-eq: the last static in-session capture against the new connection.
+
+    The settled new-connection capture decides. Byte-identical PNGs decide by
+    sha256. Otherwise, with ``ignore_rect`` and pixels in memory, pixel
+    equality outside the band decides. The immediate capture is recorded only.
+    """
+    static = [r for r in captures if r["session"] == 0 and r["phase"] == "eq-static"]
+    reference = static[-1] if static else None
+    result = {"ignoreRect": ignore_rect, "reference": None, "immediate": None, "settled": None,
+              "decidedBy": None, "equal": None, "static": None, "staticDecidedBy": None}
+    if reference is not None:
+        result["reference"] = {"step": reference["step"], "sha256": reference["sha256"]}
+    for phase, key in (("eq-new-connection", "immediate"), ("eq-new-connection-settled", "settled")):
+        record = next((r for r in captures if r["phase"] == phase), None)
+        if record is None:
+            continue
+        entry = {"step": record["step"], "sha256": record["sha256"], "ok": record["ok"],
+                 "sha256Equal": None, "pixels": None}
+        if reference is not None and reference["ok"] and record["ok"]:
+            entry["sha256Equal"] = reference["sha256"] == record["sha256"]
+            if not entry["sha256Equal"]:
+                entry["pixels"] = _pixel_check(reference, record, images, ignore_rect)
+        result[key] = entry
+    settled = result["settled"]
+    if settled is not None and settled["sha256Equal"] is not None:
+        if settled["sha256Equal"]:
+            result.update(decidedBy="settled-sha256", equal=True)
+        elif settled["pixels"] is not None and ignore_rect is not None:
+            result.update(decidedBy="settled-pixels-outside-ignore-rect", equal=settled["pixels"]["equal"])
+        else:
+            result.update(decidedBy="settled-sha256", equal=False)
+    good = [r for r in static if r["ok"]]
+    if len(good) > 1:
+        if len({r["sha256"] for r in good}) == 1:
+            result.update(static=True, staticDecidedBy="sha256")
+        elif ignore_rect is not None and images is not None:
+            checks = [_pixel_check(good[0], r, images, ignore_rect) for r in good[1:]
+                      if r["sha256"] != good[0]["sha256"]]
+            result.update(static=all(c is not None and c["equal"] for c in checks),
+                          staticDecidedBy="pixels-outside-ignore-rect")
+        else:
+            result.update(static=False, staticDecidedBy="sha256")
+    return result
+
+
+def evaluate(probe, mode, captures, sessions, eq=None):
+    """Pure verdict. ``sessions``: [{index, ledger, gateLeaks, exitCode, failure, notifications}].
+
+    ``eq`` is a precomputed ``eq_comparison``; without one, P-eq compares hashes only.
+    """
     reasons = []
     if not captures:
         reasons.append("no capture was recorded")
@@ -596,15 +808,17 @@ def evaluate(probe, mode, captures, sessions):
                 reasons.append("capture %d is byte-identical to capture %d after a manual change"
                                % (record["step"], previous["step"]))
     if probe == "P-eq":
-        first = [r for r in captures if r["session"] == 0]
-        fresh = [r for r in captures if r["session"] == 1]
-        if first and fresh and first[-1]["ok"] and fresh[0]["ok"]:
-            if first[-1]["sha256"] != fresh[0]["sha256"]:
-                reasons.append("last in-session capture differs from the first capture of a new connection")
-        elif not fresh:
+        eq = eq if eq is not None else eq_comparison(captures)
+        if eq["immediate"] is None:
             reasons.append("no capture from a new connection")
-        if len({r["sha256"] for r in first if r["ok"]}) > 1:
-            reasons.append("screen was not static across the in-session captures (inconclusive)")
+        elif eq["settled"] is None:
+            reasons.append("no settled capture from a new connection")
+        elif eq["equal"] is False:
+            reasons.append("last in-session capture differs from the settled capture of a new connection "
+                           "(decided by %s)" % eq["decidedBy"])
+        if eq["static"] is False:
+            reasons.append("screen was not static across the in-session captures (inconclusive; decided by %s)"
+                           % eq["staticDecidedBy"])
     return ("PASS" if not reasons else "FAIL"), reasons
 
 
@@ -614,8 +828,8 @@ def evaluate(probe, mode, captures, sessions):
 def options_from(args):
     return {key: getattr(args, key) for key in (
         "gap_seconds", "warm_captures", "idle_seconds", "idle_captures", "long_idle_seconds",
-        "long_idle_captures", "ctl_captures", "eq_captures", "eq_gap_seconds", "capture_timeout",
-        "ready_timeout", "save_images")}
+        "long_idle_captures", "ctl_captures", "eq_captures", "eq_gap_seconds", "eq_settle_seconds",
+        "eq_ignore_rect", "capture_timeout", "ready_timeout", "save_images")}
 
 
 def print_plan(probe, mode, steps, argv, target, artifact, options):
@@ -642,6 +856,11 @@ def print_plan(probe, mode, steps, argv, target, artifact, options):
             index, elapsed, step["session"], step["phase"],
             "operator changes the screen, then Enter" if step["prompt"] else
             ("wait %d s" % step["waitSeconds"] if step["waitSeconds"] else "")))
+    if probe == "P-eq":
+        print("P-eq compares the last in-session capture with the new connection's capture taken %s s after it "
+              "connects; %s" % (options["eq_settle_seconds"], "pixels inside the scaled band x,y,w,h=%s are ignored"
+                                % ",".join(str(v) for v in options["eq_ignore_rect"])
+                                if options["eq_ignore_rect"] else "no ignore band (sha256 equality only)"))
     print("methods sent: health, screenshot only (never click, type or key)")
     if not conforms_to_design(probe, options):
         print("warning: schedule is shorter than the TIN-5509 design; the receipt will be non-qualifying")
@@ -696,6 +915,7 @@ def run(args):
                           "profileRequestMode": target.get("profileRequestMode")},
                "argv": redacted_argv(argv), "schedule": {**{k: options[k] for k in DESIGN},
                                                          "eq_gap_seconds": options["eq_gap_seconds"],
+                                                         "eq_ignore_rect": options["eq_ignore_rect"],
                                                          "conformsToDesign": conforms_to_design(args.probe, options)},
                "methodsAllowed": sorted(ALLOWED_METHODS), "imagesSaved": options["save_images"],
                "claimedScope": "attended observation-only probe; hashes, timings and counters only",
@@ -704,6 +924,7 @@ def run(args):
     print("Attended setup: one console owner, no other viewers, menu-bar clock hidden, nothing animating.",
           flush=True)
     sessions, records, interrupted = [], [], None
+    images = {} if args.probe == "P-eq" else None  # In memory only, for the P-eq pixel comparison.
     session = None
     try:
         for index, step in enumerate(steps):
@@ -724,7 +945,7 @@ def run(args):
                       % (clock() - start_clock), flush=True)
                 if not sys.stdin.readline():
                     raise KeyboardInterrupt("operator prompt closed")
-            record = observe(session, index, step, start_clock, options, output_dir)
+            record = observe(session, index, step, start_clock, options, output_dir, images)
             records.append(record)
             print("[%7.1fs] %-18s %s  %8.1f ms  %s" % (
                 record["t"], step["phase"], "ok  " if record["ok"] else "FAIL", record["latency_ms"] or 0,
@@ -760,7 +981,10 @@ def run(args):
     elif not ran_to_end:
         session_reports.append({"index": -1, "failure": "schedule stopped after %d of %d captures"
                                 % (len(records), len(steps))})
-    verdict, reasons = evaluate(args.probe, mode, records, session_reports)
+    eq = eq_comparison(records, images, options["eq_ignore_rect"]) if args.probe == "P-eq" else None
+    verdict, reasons = evaluate(args.probe, mode, records, session_reports, eq)
+    if eq is not None:
+        receipt["eqComparison"] = eq
     receipt.update(captures=records, sessions=[s for s in session_reports if s["index"] >= 0],
                    finishedAtUnix=int(time.time()),
                    verdict={"result": verdict, "reasons": reasons,
@@ -771,6 +995,8 @@ def run(args):
         stream.write(json.dumps(receipt, indent=2, sort_keys=True) + "\n")
     print("%s %s (%s)%s" % (args.probe, verdict, mode,
                             "" if receipt["schedule"]["conformsToDesign"] else " NON-QUALIFYING SCHEDULE"))
+    if eq is not None and eq["decidedBy"]:
+        print("  P-eq decided by %s" % eq["decidedBy"])
     for reason in reasons:
         print("  - " + reason)
     print("receipt: %s" % path)
@@ -796,12 +1022,16 @@ def main(argv=None):
     parser.add_argument("--ctl-captures", type=int, default=5)
     parser.add_argument("--eq-captures", type=int, default=3)
     parser.add_argument("--eq-gap-seconds", type=float, default=2)
+    parser.add_argument("--eq-settle-seconds", type=float, default=EQ_SETTLE_SECONDS,
+                        help="P-eq: wait after each connection before its compared capture (menu-bar indicator fade)")
+    parser.add_argument("--eq-ignore-rect", metavar="X,Y,W,H",
+                        help="P-eq: compare pixels outside this band, in scaled screenshot coordinates")
     parser.add_argument("--capture-timeout", type=float, default=30, help="runner-side RPC timeout")
     parser.add_argument("--ready-timeout", type=float, default=60, help="wait for the daemon ready event")
     parser.add_argument("--save-images", action="store_true", help="also keep PNGs (receipts are SHA-only)")
     parser.add_argument("--dry-run", action="store_true", help="print the schedule and argv; connect nothing")
     args = parser.parse_args(argv)
-    for name in ("gap_seconds", "idle_seconds", "long_idle_seconds", "eq_gap_seconds"):
+    for name in ("gap_seconds", "idle_seconds", "long_idle_seconds", "eq_gap_seconds", "eq_settle_seconds"):
         if getattr(args, name) < 0:
             parser.error("--%s must be >= 0" % name.replace("_", "-"))
     for name in ("warm_captures", "idle_captures", "long_idle_captures", "ctl_captures", "eq_captures"):
@@ -809,6 +1039,11 @@ def main(argv=None):
             parser.error("--%s must be >= 1" % name.replace("_", "-"))
     if args.connect_timeout is not None and not 1 <= args.connect_timeout <= 120:
         parser.error("--connect-timeout must be 1-120")
+    if args.eq_ignore_rect is not None:
+        try:
+            args.eq_ignore_rect = parse_rect(args.eq_ignore_rect)
+        except ValueError as error:
+            parser.error("--eq-ignore-rect: %s" % error)
     try:
         return run(args)
     except ProbeRefusal as refusal:
