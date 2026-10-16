@@ -281,6 +281,21 @@ profile selects the mode with
 mode, or keeps an idle connection without an outstanding request responsive,
 remains unqualified until an attended probe records it.
 
+In the default `stream` mode the daemon also holds that bit clear from an
+observation's own whole-screen request until the observation resolves, then
+restores it and the stream resumes. Without the hold, LibVNC re-arms an
+incremental request after every update, including an update already in
+flight when the whole-screen request was written. Apple's server answers the
+newest request: while the screen animates (on PZM, after typing into the
+System Settings search field) that re-arm superseded the whole-screen request
+on about one capture in five, and only partial updates arrived until the
+capture failed as `stale_screen` `incomplete_coverage` (TIN-5509, 2026-10-16).
+The hold changes only what is written. A capture still succeeds only when
+rectangles received after its own request, then FinishedUpdate, cover the
+whole allocation; it reports `requests.incremental: 0` unless a server
+SupportedMessages rectangle leaks a re-arm, which is counted in
+`request_gate_leaks` as on demand.
+
 Each successful observation result carries `provenance`: `source`
 (`in_session`), `coverage` (`complete_received_after_request`),
 `request_mode`, the full and incremental `requests` written while it was

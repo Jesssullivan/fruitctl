@@ -120,3 +120,112 @@ test('fixture request models separate stream and on-demand outcomes for a LibVNC
     else assert.ok(outcome.incremental > 0, key);
   }
 });
+
+// The animating model (TIN-5509): with a LibVNC-shaped stream client that
+// re-arms after every update, including the update already in flight when
+// its full request is written, the full request is absorbed and only partial
+// updates arrive. Holding the re-arm until the full request is answered, as
+// stream mode now does, or never writing one (on demand), gets it answered.
+const animating = String.raw`
+import importlib.util, json, pathlib, select, socket, struct, sys, time
+spec = importlib.util.spec_from_file_location('owned_model_fixture', pathlib.Path(sys.argv[1]))
+fixture = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(fixture)
+W, H = fixture.WIDTH, fixture.HEIGHT
+
+class StreamClient:
+    def __init__(self, port, on_demand):
+        self.on_demand = on_demand
+        self.sock = socket.create_connection(('127.0.0.1', port), timeout=5)
+        assert self.read(12) == b'RFB 003.008\n'
+        self.sock.sendall(b'RFB 003.008\n')
+        assert 1 in self.read(self.read(1)[0])
+        self.sock.sendall(b'\x01')
+        assert struct.unpack('!I', self.read(4))[0] == 0
+        self.sock.sendall(b'\x01')
+        assert struct.unpack('!HH', self.read(4)) == (W, H)
+        self.read(16)
+        self.read(struct.unpack('!I', self.read(4))[0])
+        self.sock.sendall(b'\x00' + b'\x00' * 3 + fixture.PIXEL_FORMAT.pack(32, 24, 0, 1, 255, 255, 255, 16, 8, 0))
+        self.sock.sendall(b'\x02\x00' + struct.pack('!Hi', 1, 0))
+        self.request(False)
+        self.request(False)
+
+    def read(self, count):
+        return fixture.exact_read(self.sock, count)
+
+    def request(self, incremental):
+        self.sock.sendall(b'\x03' + struct.pack('!BHHHH', int(incremental), 0, 0, W, H))
+
+    def pump(self, seconds, rearm):
+        """Returns (partial, whole) update counts; re-arms like LibVNC unless held."""
+        partial = whole = 0
+        deadline = time.monotonic() + seconds
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return partial, whole
+            readable, _, _ = select.select([self.sock], [], [], remaining)
+            if not readable:
+                return partial, whole
+            kind, rects = struct.unpack('!BxH', self.read(4))
+            assert kind == 0 and rects == 1
+            x, y, width, height, encoding = struct.unpack('!HHHHi', self.read(12))
+            self.read(width * height * 4)
+            if (x, y, width, height) == (0, 0, W, H):
+                whole += 1
+            else:
+                partial += 1
+            if rearm and not self.on_demand:
+                self.request(True)
+            if whole and not rearm:
+                return partial, whole
+
+    def idle(self, seconds):
+        deadline = time.monotonic() + seconds
+        while time.monotonic() < deadline:
+            self.pump(0.05, rearm=True)
+            if not self.on_demand:
+                self.request(True)
+
+results = []
+for mode, hold in (('stream', False), ('stream', True), ('on-demand', True)):
+    server = fixture.RfbFixture(request_model='animating-latest-wins')
+    client = StreamClient(server.port, mode == 'on-demand')
+    assert client.pump(0.3, rearm=True)[1] == 1  # the connect-time frame
+    client.idle(0.3)
+    client.request(False)
+    partial, whole = client.pump(0.6, rearm=not hold)
+    client.sock.close()
+    server.finished.wait(3)
+    server.close()
+    snapshot = server.snapshot()
+    results.append({'mode': mode, 'hold': hold, 'fresh': whole > 0, 'partial': partial,
+                    'absorbed': snapshot['absorbedFullRequests'], 'animation': snapshot['animationFrames'],
+                    'errors': snapshot['errors']})
+print(json.dumps(results))
+`;
+
+test('animating fixture model absorbs a full request behind which a re-arm was written', () => {
+  const result = spawnSync('python3', ['-I', '-S', '-B', '-c', animating, fixture], {
+    encoding: 'utf8', timeout: 60000, maxBuffer: 65536,
+  });
+  assert.equal(result.error, undefined);
+  assert.equal(result.status, 0, result.stderr);
+  const [rearmed, held, onDemand] = JSON.parse(result.stdout);
+  for (const outcome of [rearmed, held, onDemand]) assert.deepEqual(outcome.errors, [], outcome.mode);
+  // Unheld: the in-flight update's re-arm lands behind the full request.
+  assert.equal(rearmed.fresh, false);
+  assert.ok(rearmed.absorbed >= 1);
+  assert.ok(rearmed.partial >= 2);
+  // Held: in-flight partials (at most one per request written before the
+  // capture's), then the whole-screen answer.
+  assert.equal(held.fresh, true);
+  assert.equal(held.absorbed, 0);
+  assert.ok(held.partial >= 1 && held.partial <= 2); // in-flight updates only
+  assert.ok(held.animation > 3);
+  // On demand nothing animates on the wire; the only request is answered.
+  assert.equal(onDemand.fresh, true);
+  assert.equal(onDemand.absorbed, 0);
+  assert.equal(onDemand.animation, 0);
+});

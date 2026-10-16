@@ -38,9 +38,18 @@ PIXEL_FORMAT = struct.Struct("!BBBBHHHBBB3x")
 MAX_LINE = 8 * 1024 * 1024
 # How a static screen answers FramebufferUpdateRequests (TIN-5509). Only
 # "immediate" is the historical fixture behavior; none qualifies Apple.
-REQUEST_MODELS = ("immediate", "latest-wins", "first-wins", "session-start-only", "silent")
+REQUEST_MODELS = ("immediate", "latest-wins", "first-wins", "session-start-only", "silent",
+                  "animating-latest-wins")
 # Synthetic hypotheses for Apple's idle-screen behavior, run per request mode.
 MODEL_SCENARIOS = ("latest-wins", "first-wins", "session-start-only", "silent")
+# Synthetic hypotheses for an animating Apple screen, run per request mode.
+STREAMING_SCENARIOS = ("animating-latest-wins",)
+# One animation frame of the animating model; far longer than a loopback
+# round trip, so a re-arm written behind a full request always arrives first.
+ANIMATION_TICK_SECONDS = 0.03
+ANIMATION_RECT = (0, 0, 8, 8)
+ANIMATION_COLOR = (17, 99, 211)
+STREAMING_CAPTURES = 6
 STALE_SCREEN_CODE = -32010
 INPUT_NOT_READY_CODE = -32013
 # Synthetic input settle for the fixture; Apple's default is 3000 ms.
@@ -113,6 +122,14 @@ class RfbFixture:
       full request behind an outstanding incremental waits forever.
     - ``session-start-only``: only the first full request on a connection.
     - ``silent``: nothing.
+    - ``animating-latest-wins``: the screen animates (TIN-5509, live on Apple
+      while the System Settings search field updates). Every animation tick
+      answers whatever is outstanding: an incremental request with a partial
+      update of ``ANIMATION_RECT``. A full request that arrives behind
+      outstanding incremental ones is first preceded by one update already
+      in flight for those. The newest request wins: an incremental request
+      that arrives behind a full one absorbs it, and the full request is
+      never answered (``absorbedFullRequests``).
 
     One answer satisfies every request it absorbed. These synthetic models
     pin predicted behaviors; none qualifies any real server.
@@ -138,6 +155,8 @@ class RfbFixture:
         # When ServerInit was sent on each connection (input settle origin).
         self.server_init_times = []
         self.requests = []
+        self.animation_frames = 0
+        self.absorbed_full_requests = 0
         self.errors = []
         self.connections = []
         self.pointer = None
@@ -157,6 +176,8 @@ class RfbFixture:
                     "eventTimes": list(self.event_times),
                     "serverInitTimes": list(self.server_init_times),
                     "requests": list(self.requests), "errors": list(self.errors),
+                    "animationFrames": self.animation_frames,
+                    "absorbedFullRequests": self.absorbed_full_requests,
                     "connections": [dict(record) for record in self.connections]}
 
     def _serve(self):
@@ -220,7 +241,16 @@ class RfbFixture:
             with self.lock:
                 self.server_init_times.append({"at": time.monotonic(), "connection": index})
             self.pixel_format = PIXEL_FORMAT.unpack(format_bytes)
+            animation = {"inFlight": False, "nextTick": time.monotonic() + ANIMATION_TICK_SECONDS}
             while not self.stopping:
+                if self.request_model == "animating-latest-wins":
+                    wait = max(0.0, animation["nextTick"] - time.monotonic())
+                    readable, _, _ = select.select([connection], [], [], wait)
+                    if not readable:
+                        animation["nextTick"] = time.monotonic() + ANIMATION_TICK_SECONDS
+                        if not self._animate(connection, outstanding, animation):
+                            return
+                        continue
                 kind = exact_read(connection, 1)[0]
                 if kind == 0:  # SetPixelFormat
                     payload = exact_read(connection, 19)
@@ -289,6 +319,32 @@ class RfbFixture:
             with self.lock:
                 record["closedAt"] = time.monotonic()
             self.finished.set()
+
+    def _animate(self, connection, outstanding, animation):
+        """One animation tick: answer whatever request is newest."""
+        if not outstanding:
+            return True
+        if outstanding[-1] == 0 and not animation["inFlight"] and 1 in outstanding:
+            # An update already in flight for the older incremental requests.
+            animation["inFlight"] = True
+            outstanding[:] = [request for request in outstanding if request == 0]
+            return self._animation_update(connection)
+        animation["inFlight"] = False
+        if outstanding[-1] == 0:
+            outstanding.clear()
+            return self._update(connection)
+        with self.lock:
+            self.absorbed_full_requests += outstanding.count(0)
+        outstanding.clear()  # Latest wins: an older full request is absorbed.
+        return self._animation_update(connection)
+
+    def _animation_update(self, connection):
+        x, y, width, height = ANIMATION_RECT
+        with self.lock:
+            self.animation_frames += 1
+        body = self._pixel(ANIMATION_COLOR) * (width * height)
+        connection.sendall(b"\x00\x00" + struct.pack("!H", 1) + struct.pack("!HHHHi", x, y, width, height, 0) + body)
+        return True
 
     def _pixel(self, color):
         _, _, big_endian, _, _, _, _, red_shift, green_shift, blue_shift = self.pixel_format
@@ -1145,6 +1201,100 @@ def run_model_scenario(model, request_mode, args):
     return report
 
 
+def run_streaming_scenario(model, request_mode, args):
+    """Captures while the screen animates and an incremental request is
+    always outstanding in stream mode (TIN-5509). The capture's full request
+    must stay the server's newest until it is answered: no request may be
+    written behind it, so none is absorbed, and every capture is fresh and
+    whole. The daemon's other input-free observation contracts still hold."""
+    name = model + "-" + request_mode
+    fixture = RfbFixture(request_model=model)
+    session = None
+    report = {"transport": "native", "scenario": name, "requestModel": model, "requestMode": request_mode,
+              "expectFresh": True, "loopbackPort": fixture.port, "status": "failed", "captures": [],
+              "claimedScope": "synthetic-loopback-RFB-only; not a model of any qualified server"}
+    windows = []
+    try:
+        flags = ["--rfb-wire-ledger"]
+        if request_mode != "stream":
+            flags += ["--rfb-request-mode", request_mode]
+        session = NativeSession(args.daemon, fixture.port, flags)
+        report["route"] = "native-PC"
+        time.sleep(0.3)  # connect-time exchange; in stream mode the animation is streaming
+        animating = fixture.snapshot()["animationFrames"]
+        if request_mode == "stream":
+            require(animating >= 3, "%s: the stream was not animating before the first capture (%d)"
+                    % (name, animating))
+        sequence = 0
+        for ordinal in range(STREAMING_CAPTURES):
+            start = time.monotonic()
+            response = session.action("screenshot")
+            elapsed = time.monotonic() - start
+            windows.append((start, time.monotonic()))
+            if response["error"]:
+                data = response["error"].get("data") or {}
+                raise AssertionError("%s capture %d failed: %s %s" % (name, ordinal + 1,
+                                     response["error"].get("code"), data.get("reason")))
+            sequence, png, metadata = inspect_capture(response, fixture, sequence)
+            provenance = require_provenance(metadata, request_mode, "screenshot")
+            require(provenance["requests"] == {"full": 1, "incremental": 0},
+                    "%s wrote a request behind its capture request: %r" % (name, provenance["requests"]))
+            require(elapsed < 2.0, "%s capture took %.3f s" % (name, elapsed))
+            report["captures"].append({"ordinal": ordinal + 1, "serverMarker": sequence,
+                                       "pngSha256": hashlib.sha256(png).hexdigest(), "provenance": provenance,
+                                       "latencyMilliseconds": round(elapsed * 1000, 3)})
+            # Long enough for the stream (and its in-flight updates) to resume.
+            time.sleep(0.15)
+        snapshot = fixture.snapshot()
+        report["animationFrames"] = snapshot["animationFrames"]
+        report["absorbedFullRequests"] = snapshot["absorbedFullRequests"]
+        require(snapshot["absorbedFullRequests"] == 0,
+                "%s: a full request was absorbed by a request written behind it" % name)
+        if request_mode == "stream":
+            require(snapshot["animationFrames"] > animating, "%s: the stream did not resume" % name)
+        report["status"] = "passed"
+    except Exception as error:
+        report["failure"] = type(error).__name__ + ": " + str(error)
+    finally:
+        if session:
+            report["processExitCode"] = session.close()
+            (args.output_dir / ("native-" + name + ".stderr.txt")).write_bytes(session.stderr)
+        fixture.finished.wait(3)
+        fixture.close()
+        snapshot = fixture.snapshot()
+        report["fixtureErrors"] = snapshot["errors"]
+        report["connections"] = snapshot["connections"]
+        report["animationFrames"] = snapshot["animationFrames"]
+        report["absorbedFullRequests"] = snapshot["absorbedFullRequests"]
+        requests = snapshot["requests"]
+        report["requests"] = {"full": sum(1 for r in requests if not r["incremental"]),
+                              "incremental": sum(1 for r in requests if r["incremental"])}
+        try:
+            require(report["status"] == "passed", report.get("failure", "scenario failed"))
+            require(not snapshot["errors"], "fixture protocol errors: %r" % snapshot["errors"])
+            require(report.get("processExitCode") == 0, "owned native process did not exit with zero")
+            require([record["shared"] for record in snapshot["connections"]] == [1],
+                    "expected one shared ClientInit connection")
+            require(not snapshot["events"], "input reached the server during an observation-only scenario")
+            # One full request per capture. Whether anything was written
+            # behind it before its answer is absorbedFullRequests, checked
+            # above: the stream may resume once the capture has its pixels,
+            # while the PNG is still being encoded.
+            for start, end in windows:
+                fulls = [r for r in requests if start <= r["at"] <= end and not r["incremental"]]
+                require(len(fulls) == 1, "%s: expected one full request per capture window" % name)
+            if request_mode == "on-demand":
+                require(report["requests"]["incremental"] == 0, "on-demand mode wrote incremental requests")
+            else:
+                require(report["requests"]["incremental"] > 0, "stream mode wrote no incremental request")
+        except Exception as error:
+            report["status"] = "failed"
+            report["failure"] = report.get("failure") or (type(error).__name__ + ": " + str(error))
+        (args.output_dir / ("native-" + name + ".json")).write_text(json.dumps(report, indent=2) + "\n")
+    require(report["status"] == "passed", report.get("failure", "fixture failed"))
+    return report
+
+
 def run_input_settle_scenario(args):
     """--input-settle-ms holds the first input until the settle time after
     ServerInit; observation is not delayed and a short deadline is typed."""
@@ -1278,6 +1428,9 @@ def main():
             for model in MODEL_SCENARIOS:
                 print("Running native %s request model in %s mode" % (model, request_mode), flush=True)
                 receipt["scenarios"].append(run_model_scenario(model, request_mode, args))
+            for model in STREAMING_SCENARIOS:
+                print("Running native %s streaming model in %s mode" % (model, request_mode), flush=True)
+                receipt["scenarios"].append(run_streaming_scenario(model, request_mode, args))
         receipt["status"] = "passed"
     except Exception as error:
         receipt["failure"] = type(error).__name__ + ": " + str(error)

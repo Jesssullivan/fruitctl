@@ -98,6 +98,18 @@ per request mode. The MCP run adds four more:
   ClientInit, no Key/Pointer/Cut message inside any capture window and, in
   `on-demand` mode, zero incremental requests. These models are not Apple's
   server.
+- Native only, per `--request-modes`: the `animating-latest-wins` streaming
+  scenario models an animating screen with an incremental request always
+  outstanding in stream mode (TIN-5509). Every 30 ms tick answers the newest
+  outstanding request; an incremental one gets a partial 8x8 update. A full
+  request behind outstanding incremental ones is preceded by one update
+  already in flight for them, and an incremental request that arrives behind
+  a full one absorbs it. Six screenshots must each be fresh and whole, with
+  `requests: {"full": 1, "incremental": 0}` provenance and no absorbed full
+  request; in stream mode the animation must stream before the first capture
+  and resume after the captures. The published alpha.10 controller fails this
+  scenario in stream mode with `stale_screen` `incomplete_coverage`, as on
+  PZM, and passes it on demand.
 - Through MCP, invoke all four compatible tools. Verify a two-action queue and
   its coordinate effect, active ownership release through `task_complete`, and
   active ownership release through `task_failed` in a separate scenario. The
@@ -110,7 +122,10 @@ hash records the supplied archive; extraction integrity remains the caller's
 responsibility. Latencies describe this small loopback fixture only.
 
 `test/fruitctl-rfb-request-models.test.js` drives the same request models
-offline with a LibVNC-shaped loopback client, without a native daemon.
+offline with a LibVNC-shaped loopback client, without a native daemon. For
+the animating model it shows that a client re-arming after the in-flight
+update has its full request absorbed, while one that holds the re-arm, or
+writes none, gets the whole screen.
 
 On 2026-10-06, seven scenarios passed with 100 native and 100 shared-broker MCP
 captures using Node `v24.21.0`, compiled daemon SHA-256
