@@ -210,8 +210,15 @@ enum VNCError: LocalizedError {
     /// JSON-RPC error code for input_not_ready (`data.reason`, `data.remaining_ms`).
     static let inputNotReadyCode = -32013
     static let inputNotReadyReason = "input_not_ready"
-    /// Deadline failures keep this compatible message prefix.
-    static let staleScreenDeadlineMessage = "No fresh complete framebuffer update within 5 seconds"
+    /// Deadline failures keep this compatible message prefix. The rest names
+    /// the capture's own deadline, so a 5000 ms deadline still reads
+    /// "No fresh complete framebuffer update within 5 seconds".
+    static let staleScreenDeadlinePrefix = "No fresh complete framebuffer update within"
+    static func staleScreenDeadlineMessage(milliseconds: Int) -> String {
+        let span = milliseconds > 0 && milliseconds % 1_000 == 0
+            ? "\(milliseconds / 1_000) seconds" : "\(milliseconds) ms"
+        return "\(staleScreenDeadlinePrefix) \(span)"
+    }
 
     var errorDescription: String? {
         switch self {
@@ -267,4 +274,33 @@ struct VNCConfiguration {
     var requestMode: VNCRequestMode = .stream
     /// `--input-settle-ms`: nil selects 3000 ms for an Apple server, else 0.
     var inputSettleMilliseconds: Int?
+    /// `--capture-timeout-ms`: nil selects 10000 ms for an Apple server, else 5000.
+    var captureTimeoutMilliseconds: Int?
+}
+
+/// The fresh full-capture deadline.
+///
+/// Apple Screen Sharing (screensharingd, measured on macOS 26.7.1) can pause
+/// for up to about 4.7 s in the middle of its answer to a full framebuffer
+/// request right after UI-heavy input, while the target redraws. With a fixed
+/// 5 s deadline about one in three post-input screenshots failed as
+/// stale_screen although the server was still sending. The longer Apple
+/// default waits for those same fresh pixels; it never returns a cached frame,
+/// and a capture that misses it still fails closed.
+enum VNCCaptureDeadline {
+    /// Default for any server not detected as Apple.
+    static let defaultMilliseconds = 5_000
+    /// Default for a server detected as Apple (ARD credential request).
+    static let appleDefaultMilliseconds = 10_000
+    /// Bounds for `--capture-timeout-ms`. The upper bound stays well inside
+    /// the 30 s tool deadline that the MCP executor enforces.
+    static let minimumMilliseconds = 1_000
+    static let maximumMilliseconds = 20_000
+
+    /// An explicit value wins (clamped); otherwise Apple's server gets the
+    /// measured default and every other server the original 5 s.
+    static func effectiveMilliseconds(configured: Int?, appleServer: Bool) -> Int {
+        if let configured { return min(max(configured, minimumMilliseconds), maximumMilliseconds) }
+        return appleServer ? appleDefaultMilliseconds : defaultMilliseconds
+    }
 }

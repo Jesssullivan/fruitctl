@@ -185,14 +185,19 @@ FramebufferUpdate it processes (`rfbclient.c:2564`), before the completion
 callback. Any update that arrives during a pending capture therefore leaves
 an incremental request outstanding at the server. Every screen observation
 still requires new full pixel coverage and a completed update on the same
-allocation within the original five-second deadline. A complete cached mirror,
+allocation within that capture's original deadline: 10000 ms on a server
+detected as Apple, 5000 ms otherwise, or `--capture-timeout-ms` (1000 to
+20000; profile `vnc.captureTimeoutMs`). The request's `deadline_ms` budget,
+stamped by the Node executor, caps it, so the capture fails typed before the
+30 s tool deadline. A complete cached mirror,
 server silence, partial pixels or a metadata-only update cannot establish
 current pixels or authorize further input. Static-screen behavior on macOS
 Screen Sharing still requires native and attended qualification.
 
 A failed observation returns JSON-RPC code `-32010` (`stale_screen`). Its
-message keeps the prefix `No fresh complete framebuffer update within 5
-seconds` for deadline failures, and `data.reason` is one of `server_silent`,
+message keeps the prefix `No fresh complete framebuffer update within` for
+deadline failures, followed by that capture's deadline (`5 seconds` by default
+on servers other than Apple, `10 seconds` on Apple), and `data.reason` is one of `server_silent`,
 `metadata_only`, `incomplete_coverage`, `late_complete` (every pixel arrived,
 but only at or after the deadline), `allocation_changed`, `disconnected`,
 `request_failed`, `capture_busy` or `cancelled`. `data.diagnostics` carries

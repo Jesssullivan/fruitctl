@@ -421,6 +421,12 @@ The optional `"requestMode": "on-demand"` inside `vnc` stops idle incremental
 framebuffer requests (see [architecture](architecture.md)). Omit it to keep
 the default `stream` mode; it is not yet qualified on Apple Screen Sharing.
 
+The optional `"captureTimeoutMs"` inside `vnc` (an integer from 1000 to 20000)
+sets how long each screenshot waits for fresh pixels. Omit it to keep the
+default: 10000 on Apple Screen Sharing and 5000 otherwise (see
+[compatibility](compatibility.md#apple-screen-sharing-quirks-observed-2026-10-16)).
+In Home Manager the option is `programs.fruitctl.targets.<name>.vnc.captureTimeoutMs`.
+
 Run your own broker in a dedicated terminal and leave it running:
 
 ```sh

@@ -39,7 +39,9 @@ Observe with `vnc_command` action `health`, then `screenshot`. Every result's
 `route` and `indicator` say which route answered. The raw route always reports
 `indicator: absent`. A failed result adds an `error` object with `message` and,
 for typed failures, `code` and `data`; code `-32010` (`stale_screen`) means no
-fresh pixels were captured, so take a new screenshot before any input. On Apple
+fresh pixels were captured. Take one more screenshot before acting; Apple Screen
+Sharing can pause for several seconds right after UI-heavy input, and the retry
+usually succeeds. Input stays refused until a screenshot succeeds. On Apple
 Screen Sharing input is held for about 3 s after each connect, because the
 server ignores earlier input; the controller waits for you, and `health`
 reports `input_ready` and `input_settle_remaining_ms`. Code `-32013`

@@ -134,6 +134,26 @@ test('native request mode is an opt-in launch flag and the default argv is uncha
     daemonPath: '/owned/never-spawned' }), /Invalid native request mode/);
 });
 
+test('native capture timeout is an opt-in launch flag and out-of-range values are refused', async (t) => {
+  const argv = async (options) => {
+    const { executor } = await fixture(t, 'argv', options);
+    const detail = JSON.parse((await executor.execute([{ action: 'health' }]))[0].result.detail);
+    await executor.close();
+    return detail;
+  };
+  const defaults = await argv({});
+  assert.equal(defaults.includes('--capture-timeout-ms'), false);
+  const configured = await argv({ captureTimeoutMs: 10000 });
+  const flag = configured.indexOf('--capture-timeout-ms');
+  assert.ok(flag > 0);
+  assert.deepEqual(configured.splice(flag, 2), ['--capture-timeout-ms', '10000']);
+  assert.deepEqual(configured, defaults);
+  for (const captureTimeoutMs of [999, 20001, 1500.5, '10000', null, 0, -1]) {
+    await assert.rejects(createNativeExecutor({ captureTimeoutMs, env: { VNC_PASSWORD: 'never-consumed' },
+      daemonPath: '/owned/never-spawned' }), /Invalid native capture timeout/);
+  }
+});
+
 test('broker profile vnc.requestMode reaches the daemon argv and invalid modes are refused', async (t) => {
   const scratch = process.env.TMPDIR;
   assert.ok(scratch && path.isAbsolute(scratch), 'owned TMPDIR is required');
@@ -169,13 +189,24 @@ test('broker profile vnc.requestMode reaches the daemon argv and invalid modes a
   for (const requestMode of ['poll', 'ON-DEMAND', '', null, 1]) {
     await assert.rejects(argv({ requestMode }), /Invalid VNC profile/);
   }
+  // A per-target capture deadline reaches the daemon; out-of-range values are refused.
+  const apple = await argv({ captureTimeoutMs: 12000 });
+  const capture = apple.indexOf('--capture-timeout-ms');
+  assert.ok(capture > 0);
+  assert.deepEqual(apple.splice(capture, 2), ['--capture-timeout-ms', '12000']);
+  assert.deepEqual(apple, defaults);
+  for (const captureTimeoutMs of [500, 30000, 9999.9, '10000', null]) {
+    await assert.rejects(argv({ captureTimeoutMs }), /Invalid VNC profile/);
+  }
 });
 
 test('daemon screen observations route through the classifying capture entry point', () => {
   const handler = fs.readFileSync(new URL('../ClaudeKVM-Daemon/CommandHandler.swift', import.meta.url), 'utf8');
   // captureFreshObservation types disconnection and cancellation as -32010
   // stale_screen; the raw capture keeps Swift error types (VNCReconnectTests).
-  assert.match(handler, /capturedFrame = try await vnc\.captureFreshObservation\(\)/);
+  // Every capture is capped by the request's own deadline_ms budget.
+  assert.match(handler, /capturedFrame = try await vnc\.captureFreshObservation\(deadlineNs: input\.requestDeadlineNs\)/);
+  assert.doesNotMatch(handler, /captureFreshObservation\(\)/);
   assert.doesNotMatch(handler, /captureFreshFramebuffer\(/);
 });
 

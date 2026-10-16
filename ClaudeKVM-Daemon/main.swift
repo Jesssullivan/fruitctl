@@ -167,6 +167,14 @@ struct ClaudeKVMDaemon: AsyncParsableCommand {
               a reconnect restarts it. Observation is never delayed. health
               reports input_ready and input_settle_remaining_ms.
 
+            CAPTURE DEADLINE (--capture-timeout-ms):
+              Each screen observation must receive complete fresh pixels
+              within N ms of its own full request (1000...20000; default
+              10000 on Apple, 5000 otherwise). Apple Screen Sharing can pause
+              for several seconds mid-update right after UI-heavy input. A
+              miss still fails as stale_screen; no cached frame is returned.
+              A request's deadline_ms budget caps the wait.
+
             ERRORS:
               Screen observations that obtain no fresh complete frame return
               code -32010 with data.reason (server_silent, metadata_only,
@@ -247,6 +255,10 @@ struct ClaudeKVMDaemon: AsyncParsableCommand {
             help: "Hold input until N ms after ServerInit on each connection (0...10000). Default: 3000 for Apple Screen Sharing (ARD), else 0.")
     var inputSettleMs: Int?
 
+    @Option(name: .customLong("capture-timeout-ms"),
+            help: "Fresh full-capture deadline in ms (1000...20000). Default: 10000 for Apple Screen Sharing (ARD), else 5000.")
+    var captureTimeoutMs: Int?
+
     @Option(name: .customLong("rfb-request-mode"),
             help: "Framebuffer request mode: stream (default) or on-demand (no incremental requests; LibVNC's own requests are gated off).")
     var rfbRequestMode: String = VNCRequestMode.stream.rawValue
@@ -273,6 +285,10 @@ struct ClaudeKVMDaemon: AsyncParsableCommand {
         }
         if let settle = inputSettleMs, !(0...VNCInputSettle.maximumMilliseconds).contains(settle) {
             throw ValidationError("--input-settle-ms must be 0...10000")
+        }
+        if let capture = captureTimeoutMs,
+           !(VNCCaptureDeadline.minimumMilliseconds...VNCCaptureDeadline.maximumMilliseconds).contains(capture) {
+            throw ValidationError("--capture-timeout-ms must be 1000...20000")
         }
         guard VNCRequestMode(rawValue: rfbRequestMode) != nil else {
             throw ValidationError("--rfb-request-mode must be stream or on-demand")
@@ -304,6 +320,7 @@ struct ClaudeKVMDaemon: AsyncParsableCommand {
         vncConfig.wireLedger = rfbWireLedger
         vncConfig.requestMode = VNCRequestMode(rawValue: rfbRequestMode) ?? .stream
         vncConfig.inputSettleMilliseconds = inputSettleMs
+        vncConfig.captureTimeoutMilliseconds = captureTimeoutMs
 
         let vnc = VNCBridge(config: vncConfig)
         vnc.verbose = verbose
@@ -319,7 +336,7 @@ struct ClaudeKVMDaemon: AsyncParsableCommand {
             throw ExitCode.failure
         }
 
-        log("macOS mode: \(vnc.isMacOS); input settle: \(vnc.inputSettle.status().settleMilliseconds) ms")
+        log("macOS mode: \(vnc.isMacOS); input settle: \(vnc.inputSettle.status().settleMilliseconds) ms; capture deadline: \(vnc.captureDeadlineMilliseconds) ms")
 
         let scaling = DisplayScaling(
             nativeWidth: vnc.framebufferWidth,
