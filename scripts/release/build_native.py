@@ -100,6 +100,26 @@ def verify_reusable_dependency_configuration(receipt, manifest):
             raise ValueError("reused native dependencies lack the exact public dependency build configuration")
 
 
+def verify_reusable_source_lock(receipt, manifest):
+    # A restored cache is only as current as the lock it was built from;
+    # verify-native-input.py rechecks the manifest before and after linking.
+    expected = digest(LOCK)
+    if receipt.get("sourceLockSha256") != expected or manifest.get("sourceLockSha256") != expected:
+        raise ValueError("reused native dependencies were built from a different source lock")
+
+
+def job_count(value):
+    """Accept 1..max(2, logical CPUs); 2 stays valid for existing callers on small hosts."""
+    try:
+        jobs = int(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError("jobs must be an integer") from None
+    limit = max(2, os.cpu_count() or 1)
+    if not 1 <= jobs <= limit:
+        raise argparse.ArgumentTypeError("jobs must be between 1 and " + str(limit) + " on this host")
+    return jobs
+
+
 def c_path_maps(output):
     return [option + "=" + str(path) + "=" + replacement
             for option in ("-ffile-prefix-map", "-fdebug-prefix-map")
@@ -191,13 +211,18 @@ def verify_public_native_binary(path):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output-dir", required=True)
-    parser.add_argument("--jobs", type=int, default=2, choices=(1, 2))
-    parser.add_argument("--reuse-inputs", help="Reuse a verified task-owned dependency build; never rebuild its libraries")
+    parser.add_argument("--jobs", type=job_count, default=2, help="Parallel jobs, 1 up to this host's logical CPU count")
+    inputs = parser.add_mutually_exclusive_group()
+    inputs.add_argument("--reuse-inputs", help="Reuse a verified task-owned dependency build; never rebuild its libraries")
+    inputs.add_argument("--dependencies-only", action="store_true",
+                        help="Build and verify only the locked OpenSSL/LibVNC inputs for a later --reuse-inputs")
     parser.add_argument("--build-scheme", action="append", default=[])
     parser.add_argument("--test-scheme", action="append", default=[])
     parser.add_argument("--source-revision", help="Git revision of the reviewed source snapshot when .git is not transferred")
     parser.add_argument("--build-ready-file", help="Wait for this task-owned marker after dependencies, before freezing source and compiling")
     args = parser.parse_args()
+    if args.dependencies_only and (args.build_scheme or args.test_scheme or args.build_ready_file):
+        parser.error("--dependencies-only builds no schemes and takes no source-ready marker")
     if platform.system() != "Darwin" or platform.machine() != "arm64":
         raise ValueError("native builds require a Darwin arm64 build host; Linux uses the SSH bridge")
     output = Path(args.output_dir)
@@ -210,7 +235,10 @@ def main():
     sdk = subprocess.check_output(["xcrun", "--sdk", "macosx", "--show-sdk-path"], text=True).strip()
     env = os.environ.copy()
     env.update(SDKROOT=sdk, MACOSX_DEPLOYMENT_TARGET="15.0", ZERO_AR_DATE="1")
-    receipt = {"schemaVersion": 1, "kind": "fruitctl-native-build", "status": "running",
+    # A dependency-only receipt has its own kind so release tooling never
+    # mistakes it for a tested native build.
+    kind = "fruitctl-native-dependency-build" if args.dependencies_only else "fruitctl-native-build"
+    receipt = {"schemaVersion": 1, "kind": kind, "status": "running",
                "architecture": "arm64", "minimumMacOS": "15.0", "nativeLicense": "GPL-3.0-or-later",
                "componentLicenses": {"claude-kvm-daemon": "GPL-3.0-or-later", "FruitctlHost.app": "MIT"},
                "sourceLockSha256": digest(LOCK), "commands": [], "startedAtUnix": int(time.time()),
@@ -230,11 +258,17 @@ def main():
     def run(command, cwd=ROOT, label=None):
         label = label or "step-" + str(len(receipt["commands"]) + 1)
         portable = [str(argument).replace(str(output), "${BUILD_ROOT}").replace(str(ROOT), "${SOURCE_ROOT}") for argument in command]
-        receipt["commands"].append({"label": label, "argv": portable})
+        entry = {"label": label, "argv": portable}
+        receipt["commands"].append(entry)
         write_json(output / "build-receipt.json", receipt)
-        with (output / "logs" / (label + ".log")).open("w") as log:
-            subprocess.run([str(argument) for argument in command], cwd=cwd, env=env,
-                           stdout=log, stderr=subprocess.STDOUT, check=True)
+        started = time.monotonic()
+        try:
+            with (output / "logs" / (label + ".log")).open("w") as log:
+                subprocess.run([str(argument) for argument in command], cwd=cwd, env=env,
+                               stdout=log, stderr=subprocess.STDOUT, check=True)
+        finally:
+            # Diagnostic timing only; the final receipt write records it.
+            entry["wallSeconds"] = round(time.monotonic() - started, 3)
 
     try:
         if args.reuse_inputs:
@@ -246,7 +280,9 @@ def main():
             receipt["dependencyBuildDir"] = str(dependency)
             receipt["dependencyBuildReceiptSha256"] = digest(dependency / "build-receipt.json")
             receipt["dependencyBuildReceipt"] = json.loads((dependency / "build-receipt.json").read_text())
-            verify_reusable_dependency_configuration(receipt["dependencyBuildReceipt"], json.loads(manifest.read_text()))
+            reused_manifest = json.loads(manifest.read_text())
+            verify_reusable_dependency_configuration(receipt["dependencyBuildReceipt"], reused_manifest)
+            verify_reusable_source_lock(receipt["dependencyBuildReceipt"], reused_manifest)
             reviewed = json.loads(LOCK.read_text())
             for name, entry in (("openssl.tar.gz", reviewed["openssl"]), ("libvnc.tar.gz", reviewed["libvncclient"])):
                 if digest(dependency / "downloads" / name) != entry["sha256"]:
@@ -262,6 +298,13 @@ def main():
             receipt["dependencySourceFiles"][folder] = {path.relative_to(dependency / folder).as_posix(): digest(path)
                 for path in sorted((dependency / folder).rglob("*")) if path.is_file() and not path.is_symlink()}
         run([sys.executable, "-I", ROOT / "scripts/verify-native-input.py", manifest, native, "before-link"], label="input-before-link")
+        if args.dependencies_only:
+            receipt["nativeInputDir"] = str(native)
+            receipt["nativeInputManifest"] = str(manifest)
+            receipt["inputManifestSha256"] = digest(manifest)
+            receipt["status"] = "passed"
+            print(json.dumps({"status": "passed", "kind": kind, "receipt": str(output / "build-receipt.json")}))
+            return
         if args.build_ready_file:
             marker = Path(args.build_ready_file)
             deadline = time.monotonic() + 1800

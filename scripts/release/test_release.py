@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Exercise actual archive validation against safe and malicious release structures."""
+import argparse
 import hashlib
 import copy
 import json
@@ -325,6 +326,23 @@ class NativeBuildPrivacyTests(unittest.TestCase):
     def test_matching_public_cache_ignores_executable_strip_policy(self):
         built = self.configured(); built["nativeArtifactPolicy"] = {"stripDebugArguments": ["-S", "-x"]}
         source.builder.verify_reusable_dependency_configuration(built, self.configured())
+
+    def test_reused_inputs_from_another_source_lock_are_rejected(self):
+        current = {"sourceLockSha256": source.builder.digest(source.builder.LOCK)}
+        source.builder.verify_reusable_source_lock(current, dict(current))
+        for receipt, manifest in ((current, {"sourceLockSha256": "a" * 64}), ({"sourceLockSha256": "a" * 64}, current), ({}, current)):
+            with self.subTest(receipt=receipt, manifest=manifest):
+                with self.assertRaisesRegex(ValueError, "different source lock"):
+                    source.builder.verify_reusable_source_lock(receipt, manifest)
+
+    def test_jobs_scale_to_host_cores_but_stay_bounded(self):
+        limit = max(2, os.cpu_count() or 1)
+        for value in ("1", "2", str(limit)):
+            self.assertEqual(source.builder.job_count(value), int(value))
+        for value in ("0", "-1", str(limit + 1), "two"):
+            with self.subTest(value=value):
+                with self.assertRaises(argparse.ArgumentTypeError):
+                    source.builder.job_count(value)
 
     def test_generated_and_historical_native_manifest_use_actual_json_schema(self):
         schema = json.loads((ROOT / "release/native-input-manifest.schema.json").read_text())

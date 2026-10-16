@@ -8,8 +8,39 @@ permissions:
   contents: read
 concurrency:
   group: fruitctl-core-${{ github.ref }}
-  cancel-in-progress: false
+  # A newer push to the same PR supersedes its run; main pushes always finish.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
+  changes:
+    name: Detect native-affecting changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      native: ${{ steps.detect.outputs.native }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+      - name: Classify changed paths
+        id: detect
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Fail closed: only a pull request whose every changed path is
+          # documentation skips the macOS lane. Pushes to main always run it.
+          native=true
+          if test "$EVENT_NAME" = pull_request && git rev-parse --verify --quiet HEAD^2 >/dev/null; then
+            # The checked-out PR merge commit's first parent is the base.
+            changed="$(git diff --name-only HEAD^1 HEAD)"
+            if test -n "$changed" && ! grep -Ev '^(docs/|skills/|[^/]+\.md$|\.github/workflows/docs\.yml$)' <<<"$changed" >/dev/null; then
+              native=false
+            fi
+            printf '%s\n' "$changed"
+          fi
+          echo "native=$native" | tee -a "$GITHUB_OUTPUT"
   offline:
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -49,17 +80,26 @@ jobs:
           rm -rf -- "$TMPDIR"
   native-pure:
     name: Native XCTest and loopback RFB (validation only)
-    runs-on: macos-26
+    needs: changes
+    # This check name always reports. A docs-only PR gets a no-op Linux job;
+    # any other result, including a failed detector, runs the macOS lane.
+    if: ${{ !cancelled() }}
+    runs-on: ${{ needs.changes.outputs.native == 'false' && 'ubuntu-latest' || 'macos-26' }}
     timeout-minutes: 45
     permissions:
       contents: read
     env:
       DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
     steps:
+      - name: Skip native lane for documentation-only change
+        if: needs.changes.outputs.native == 'false'
+        run: echo "Documentation-only pull request; native build and RFB fixture not required." | tee -a "$GITHUB_STEP_SUMMARY"
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        if: needs.changes.outputs.native != 'false'
         with:
           persist-credentials: false
       - name: Check hosted ARM64 toolchain
+        if: needs.changes.outputs.native != 'false'
         shell: bash
         run: |
           set -euo pipefail
@@ -80,38 +120,132 @@ jobs:
           xcodebuild -version
           cmake --version
           printf 'Hosted image: %s %s\n' "${ImageOS:-unknown}" "${ImageVersion:-unknown}"
+      - name: Restore pinned XcodeGen archive
+        if: needs.changes.outputs.native != 'false'
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ${{ runner.temp }}/fruitctl-xcodegen-cache
+          key: fruitctl-xcodegen-2.46.0-4d9e34b62172d645eed6457cac13fc222569974098ef4ee9c3368bedf0196806
       - name: Prepare pinned XcodeGen
+        if: needs.changes.outputs.native != 'false'
         shell: bash
         run: |
           set -euo pipefail
           umask 077
+          cache="$RUNNER_TEMP/fruitctl-xcodegen-cache"
           tools="$RUNNER_TEMP/fruitctl-xcodegen-2.46.0"
+          mkdir -p "$cache"
           mkdir -m 700 "$tools"
-          curl --fail --show-error --silent --location --connect-timeout 15 --max-time 90 \
-            --output "$tools/xcodegen.zip" \
-            https://github.com/yonaskolb/XcodeGen/releases/download/2.46.0/xcodegen.zip
+          if ! test -f "$cache/xcodegen.zip"; then
+            curl --fail --show-error --silent --location --connect-timeout 15 --max-time 90 \
+              --output "$cache/xcodegen.zip" \
+              https://github.com/yonaskolb/XcodeGen/releases/download/2.46.0/xcodegen.zip
+          fi
+          # A cached archive is checked exactly like a fresh download.
           printf '%s  %s\n' \
             4d9e34b62172d645eed6457cac13fc222569974098ef4ee9c3368bedf0196806 \
-            "$tools/xcodegen.zip" | shasum --algorithm 256 --check --status
-          /usr/bin/ditto -x -k "$tools/xcodegen.zip" "$tools"
+            "$cache/xcodegen.zip" | shasum --algorithm 256 --check --status
+          /usr/bin/ditto -x -k "$cache/xcodegen.zip" "$tools"
           test "$("$tools/xcodegen/bin/xcodegen" --version)" = 'Version: 2.46.0'
           printf '%s\n' "$tools/xcodegen/bin" >> "$GITHUB_PATH"
+      - name: Resolve native dependency cache identity
+        id: deps-key
+        if: needs.changes.outputs.native != 'false'
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Library construction (configuration + builder), reviewed sources
+          # (lock) and toolchain (image, Xcode, SDK, cmake). Reuse is verified
+          # again by build_native.py --reuse-inputs on every run.
+          python3 -I - "$PWD" <<'PY' >> "$GITHUB_OUTPUT"
+          import hashlib
+          import importlib.util
+          import os
+          from pathlib import Path
+          import subprocess
+          import sys
+          root = Path(sys.argv[1])
+          spec = importlib.util.spec_from_file_location("native_builder", root / "scripts/release/build_native.py")
+          builder = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(builder)
+          toolchain = "\n".join([os.environ.get("ImageOS", "unknown"), os.environ.get("ImageVersion", "unknown"),
+                                 subprocess.check_output(["xcodebuild", "-version"], text=True),
+                                 subprocess.check_output(["xcrun", "--sdk", "macosx", "--show-sdk-build-version"], text=True),
+                                 subprocess.check_output(["cmake", "--version"], text=True)])
+          parts = ["fruitctl-native-deps-v1-macos-arm64",
+                   hashlib.sha256(toolchain.encode()).hexdigest()[:16],
+                   builder.dependency_configuration_sha256(),
+                   builder.digest(builder.LOCK),
+                   builder.digest(root / "scripts/release/build_native.py")[:16]]
+          print("key=" + "-".join(parts))
+          PY
+          cat "$GITHUB_OUTPUT"
+      - name: Restore verified native dependency build
+        id: deps-cache
+        if: needs.changes.outputs.native != 'false'
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          key: ${{ steps.deps-key.outputs.key }}
+          path: |
+            ${{ runner.temp }}/fruitctl-native-deps/build-receipt.json
+            ${{ runner.temp }}/fruitctl-native-deps/native-input-manifest.json
+            ${{ runner.temp }}/fruitctl-native-deps/native-inputs
+            ${{ runner.temp }}/fruitctl-native-deps/downloads
+            ${{ runner.temp }}/fruitctl-native-deps/openssl-source
+            ${{ runner.temp }}/fruitctl-native-deps/libvnc-source
+      - name: Build locked OpenSSL and LibVNC inputs
+        id: deps-build
+        if: needs.changes.outputs.native != 'false' && steps.deps-cache.outputs.cache-hit != 'true'
+        env:
+          FRUITCTL_NATIVE_DEPS: ${{ runner.temp }}/fruitctl-native-deps
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./scripts/build-native.sh \
+            --output-dir "$FRUITCTL_NATIVE_DEPS" \
+            --jobs "$(sysctl -n hw.ncpu)" \
+            --dependencies-only \
+            --source-revision "$GITHUB_SHA"
+          python3 -I - "$FRUITCTL_NATIVE_DEPS/build-receipt.json" <<'PY'
+          import json
+          from pathlib import Path
+          import sys
+          value = json.loads(Path(sys.argv[1]).read_text())
+          print(json.dumps({"kind": value["kind"], "status": value["status"],
+                            "commandWallSeconds": {c["label"]: c.get("wallSeconds") for c in value["commands"]}}, sort_keys=True))
+          PY
+      - name: Save verified native dependency build
+        if: needs.changes.outputs.native != 'false' && steps.deps-build.outcome == 'success'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          key: ${{ steps.deps-key.outputs.key }}
+          path: |
+            ${{ runner.temp }}/fruitctl-native-deps/build-receipt.json
+            ${{ runner.temp }}/fruitctl-native-deps/native-input-manifest.json
+            ${{ runner.temp }}/fruitctl-native-deps/native-inputs
+            ${{ runner.temp }}/fruitctl-native-deps/downloads
+            ${{ runner.temp }}/fruitctl-native-deps/openssl-source
+            ${{ runner.temp }}/fruitctl-native-deps/libvnc-source
       - name: Build unsigned controller and run two pure suites
         id: native-build
+        if: needs.changes.outputs.native != 'false'
         env:
           FRUITCTL_NATIVE_CI_OUTPUT: ${{ runner.temp }}/fruitctl-native-${{ github.run_id }}-${{ github.run_attempt }}
+          FRUITCTL_NATIVE_DEPS: ${{ runner.temp }}/fruitctl-native-deps
         shell: bash
         run: |
           set -euo pipefail
           ./scripts/build-native.sh \
             --output-dir "$FRUITCTL_NATIVE_CI_OUTPUT" \
-            --jobs 1 \
+            --jobs "$(sysctl -n hw.ncpu)" \
+            --reuse-inputs "$FRUITCTL_NATIVE_DEPS" \
             --build-scheme claude-kvm-daemon \
             --test-scheme VNCReconnectTests \
             --test-scheme NativeBehaviorTests \
             --source-revision "$GITHUB_SHA"
       - name: Exercise native synthetic loopback RFB
         id: native-rfb
+        if: needs.changes.outputs.native != 'false'
         timeout-minutes: 5
         env:
           FRUITCTL_NATIVE_CI_OUTPUT: ${{ runner.temp }}/fruitctl-native-${{ github.run_id }}-${{ github.run_attempt }}
@@ -147,7 +281,7 @@ jobs:
             --captures 100 \
             --request-modes stream,on-demand
       - name: Report failed native command
-        if: failure()
+        if: failure() && needs.changes.outputs.native != 'false'
         env:
           FRUITCTL_NATIVE_CI_OUTPUT: ${{ runner.temp }}/fruitctl-native-${{ github.run_id }}-${{ github.run_attempt }}
         shell: bash
@@ -172,7 +306,7 @@ jobs:
                           print("\n".join(stream.read(16384).decode("utf-8", errors="replace").splitlines()[-60:]))
           PY
       - name: Report build receipt and XCTest summaries
-        if: always()
+        if: always() && needs.changes.outputs.native != 'false'
         env:
           FRUITCTL_NATIVE_CI_OUTPUT: ${{ runner.temp }}/fruitctl-native-${{ github.run_id }}-${{ github.run_attempt }}
           NATIVE_BUILD_OUTCOME: ${{ steps.native-build.outcome }}
@@ -187,6 +321,8 @@ jobs:
           value = json.loads(Path(sys.argv[1]).read_text())
           report = {key: value[key] for key in ("status", "sourceRevision", "sourceTreeSha256", "inputManifestSha256")}
           report["sourceFileCount"] = len(value["sourceFiles"])
+          report["reusedDependencyKind"] = value.get("dependencyBuildReceipt", {}).get("kind")
+          report["commandWallSeconds"] = {command["label"]: command.get("wallSeconds") for command in value["commands"]}
           report["tests"] = [{key: test[key] for key in ("scheme", "status")} for test in value["tests"]]
           print(json.dumps(report, sort_keys=True))
           PY
@@ -201,7 +337,7 @@ jobs:
             fi
           done
       - name: Report synthetic RFB receipts and bounded failure diagnostics
-        if: always()
+        if: always() && needs.changes.outputs.native != 'false'
         env:
           FRUITCTL_RFB_CI_OUTPUT: ${{ runner.temp }}/fruitctl-rfb-${{ github.run_id }}-${{ github.run_attempt }}
           NATIVE_RFB_OUTCOME: ${{ steps.native-rfb.outcome }}
@@ -242,7 +378,7 @@ jobs:
                           print("\n".join(stream.read(16384).decode("utf-8", errors="replace").splitlines()[-40:]))
           PY
       - name: Preserve public synthetic JSON and PNG evidence
-        if: always()
+        if: always() && needs.changes.outputs.native != 'false'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: fruitctl-native-rfb-${{ github.run_id }}-${{ github.run_attempt }}
