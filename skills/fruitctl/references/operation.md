@@ -72,7 +72,8 @@ The `computer` tool accepts the action shapes of the Anthropic `computer` tool
 and OpenAI `computer_call`, for agents trained on those shapes. It is not a
 separate input path. Each call is translated into the Fruitctl actions above
 and runs as one batch with `action_queue` semantics: the same 30-second
-deadline, target ownership and stop-on-first-error. Coordinates are in the
+deadline (which also covers any capability probe below), target ownership and
+stop-on-first-error. Coordinates are in the
 same scaled image space. Every result carries `route` and `indicator`, plus
 `alias` (`shape`, `action`, and the Fruitctl `actions` it ran). The freshness
 rules do not change: a screenshot is a new capture or an error, and nothing
@@ -122,10 +123,11 @@ permits only the baseline actions in the first table.
 when the batch ends or aborts, so a press cannot wait for a later call. Use
 `left_click_drag` or a two-point `drag`. Malformed arguments fail with
 `invalid_arguments`, and key names with no mapping fail with
-`unsupported_key`. Backend failures keep their own code. As with
-`action_queue`, a failed batch reports `completed` and `failedIndex`.
-Earlier steps may already have run, so take a new screenshot rather than
-replaying the batch.
+`unsupported_key`. Backend failures keep their own code. A call that
+translates to one Fruitctl action fails like `vnc_command`, with `error`. A
+longer translation fails like `action_queue`, with `completed` and
+`failedIndex`; earlier steps may already have run, so take a new screenshot
+rather than replaying the batch.
 
 The `shutdown` action is a native lifecycle operation. Use it only when the
 session/daemon is confirmed to belong to this task; a shared broker may have

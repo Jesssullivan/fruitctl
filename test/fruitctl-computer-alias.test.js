@@ -394,3 +394,37 @@ test('through an older broker, unknown metadata keeps extended actions refused',
   }
   assert.deepEqual(executed, [['health']]);
 });
+
+test('a capability probe and its batch share one tool deadline', async () => {
+  const budgets = [];
+  const executor = {
+    presentation: RAW_PRESENTATION,
+    async execute(actions, { timeoutMs }) {
+      budgets.push(timeoutMs);
+      if (actions[0].action !== 'health') return actions.map(() => ({ result: { detail: 'OK' } }));
+      await new Promise(resolve => setTimeout(resolve, 80));
+      return [{ result: { detail: 'OK', capabilities: { known: true, actions: [...BASELINE_ACTIONS, 'zoom'] } } }];
+    },
+  };
+  const session = new McpSession(executor, { timeoutMs: 1000 });
+  const zoomed = await session.computer({ action: 'zoom', region: [0, 0, 8, 8] });
+  assert.notEqual(zoomed.isError, true);
+  assert.equal(budgets.length, 2);
+  // The batch gets what the probe left, not a fresh 1000ms deadline.
+  // (Each budget already has replyBudget's return margin removed.)
+  assert.ok(budgets[1] < budgets[0] - 40, `batch budget ${budgets[1]} must exclude the probe`);
+
+  // A probe that exhausts the deadline leaves nothing for input.
+  const slow = { ...executor, async execute(actions, { signal }) {
+    budgets.push(actions[0].action);
+    if (actions[0].action !== 'health') return actions.map(() => ({ result: { detail: 'OK' } }));
+    await new Promise(resolve => setTimeout(resolve, 60));
+    return [{ result: { detail: 'OK' } }];
+  } };
+  budgets.length = 0;
+  const late = new McpSession(slow, { timeoutMs: 50 });
+  const refused = await late.computer({ action: 'zoom', region: [0, 0, 8, 8] });
+  assert.equal(refused.isError, true);
+  assert.match(refused.content[0].text, /timed out after 50ms/);
+  assert.deepEqual(budgets, ['health']);
+});
