@@ -11,9 +11,10 @@ diagnosis, or removal. Read [operation](references/operation.md) when controllin
 the desktop. [contract.toon](references/contract.toon) is the compact shared
 contract; it describes the workflow, not a replacement MCP wire protocol.
 
-The real MCP tools are `vnc_command`, `action_queue`, `task_complete`, and
-`task_failed`. Use their discovered schemas. Frontends may prefix these names;
-do not invent computer-use tools or infer capabilities from another agent.
+The real MCP tools are `vnc_command`, `action_queue`, `task_complete`,
+`task_failed`, and, from builds that include it, `computer`. Use their
+discovered schemas. Frontends may prefix these names. Do not invent other
+computer-use tools or infer capabilities from another agent.
 
 ## Doctor
 
@@ -43,6 +44,19 @@ image and its scaled coordinates, perform authorized bounded input, and obtain
 a new screenshot to verify the result. OCR, a process health response, or an
 input acknowledgement alone does not prove that the requested desktop change
 occurred.
+
+## Computer-use alias
+
+`computer` accepts the Anthropic `computer` tool and OpenAI `computer_call`
+action shapes. It translates each call into the actions above and runs it as
+one bounded batch. Results carry the same `route`/`indicator` labels and an
+`alias` record of the Fruitctl actions that ran. An action the backend does
+not advertise fails before input with `code: "unsupported_action"`. Examples
+are `triple_click`, `hold_key`, modifier clicks, `cursor_position`, `zoom` and
+multi-point drags. Report the refusal; do not emulate the action.
+`left_mouse_down`/`left_mouse_up` are always refused because a hold cannot span
+calls. Key text uses xdotool names, and `ctrl` means Control, not Command. See
+[operation](references/operation.md#computer-use-alias) for the mapping.
 
 If target identity, pixels, geometry, or an input outcome is uncertain, pause
 input and report what remains unverified. Never replay uncertain input

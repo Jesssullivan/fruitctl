@@ -98,7 +98,7 @@ test('request framing limits paste payloads by UTF-8 bytes before executor input
     params: { text: '🍇'.repeat(MAX_REQUEST_FRAME_BYTES / 4) } }), /request exceeds byte limit/);
 });
 
-test('real MCP publishes four descriptions and keeps coordinate schemas stable across configure/reset', async (t) => {
+test('real MCP publishes five descriptions and keeps coordinate schemas stable across configure/reset', async (t) => {
   const calls = [];
   let max = 1280;
   const executor = {
@@ -118,7 +118,7 @@ test('real MCP publishes four descriptions and keeps coordinate schemas stable a
   await server.connect(serverTransport);
   await client.connect(clientTransport);
   const before = await client.listTools();
-  assert.deepEqual(before.tools.map((tool) => tool.name), ['vnc_command', 'action_queue', 'task_complete', 'task_failed']);
+  assert.deepEqual(before.tools.map((tool) => tool.name), ['vnc_command', 'action_queue', 'task_complete', 'task_failed', 'computer']);
   assert.ok(before.tools.every((tool) => typeof tool.description === 'string' && tool.description.length > 20));
   assert.match(before.tools[0].description, /current scaled display/);
   assert.match(before.tools[1].description, /30-second/);

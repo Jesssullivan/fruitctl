@@ -122,7 +122,7 @@ test('CLI MCP initialization reports the package version and preserves real tool
   await client.connect(transport);
   assert.deepEqual(client.getServerVersion(), { name: 'fruitctl', version: metadata.version });
   assert.deepEqual((await client.listTools()).tools.map(tool => tool.name),
-    ['vnc_command', 'action_queue', 'task_complete', 'task_failed']);
+    ['vnc_command', 'action_queue', 'task_complete', 'task_failed', 'computer']);
   assert.equal(nativeStarts, 0);
   assert.equal(stderr, '');
 });

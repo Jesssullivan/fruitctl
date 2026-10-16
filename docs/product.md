@@ -38,8 +38,10 @@ required.
 
 Existing MCP names `vnc_command`, `action_queue`, `task_complete`, and
 `task_failed`, native application identity, and compatible executable aliases
-remain stable. Fruitctl's workflow does not depend on proprietary computer-use
-engines in any one frontend.
+remain stable. The additional `computer` tool only accepts Anthropic and OpenAI
+computer-use action shapes and translates them to these Fruitctl actions.
+Fruitctl's workflow does not depend on proprietary computer-use engines in any
+one frontend.
 
 ## Compatibility and evidence
 
