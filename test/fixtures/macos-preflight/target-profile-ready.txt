@@ -1,0 +1,57 @@
+Synthetic probe sections for a Fruitctl-ready target (D12): every profile key
+at its ready value, U.S. layout selected, no other remote-input owner running.
+
+@@fruitctl-probe remote_input_processes@@
+read=ok
+
+@@fruitctl-status remote_input_processes 0@@
+
+@@fruitctl-probe target_profile@@
+scope=console_user
+user|com.apple.WindowManager|GloballyEnabled|value|0
+user|com.apple.WindowManager|EnableStandardClickToShowDesktop|value|0
+user|com.apple.dock|mru-spaces|value|0
+user|com.apple.dock|wvous-tl-corner|absent
+user|com.apple.dock|wvous-tr-corner|value|1
+user|com.apple.dock|wvous-bl-corner|value|0
+user|com.apple.dock|wvous-br-corner|value|1
+user|NSGlobalDomain|_HIHideMenuBar|value|0
+user|NSGlobalDomain|AppleMenuBarVisibleInFullscreen|value|1
+user|NSGlobalDomain|AppleInterfaceStyle|absent
+user|NSGlobalDomain|AppleInterfaceStyleSwitchesAutomatically|absent
+user|NSGlobalDomain|ApplePressAndHoldEnabled|value|0
+user|NSGlobalDomain|NSAutomaticQuoteSubstitutionEnabled|value|0
+user|NSGlobalDomain|NSAutomaticDashSubstitutionEnabled|value|0
+user|NSGlobalDomain|NSAutomaticSpellingCorrectionEnabled|value|0
+user|NSGlobalDomain|NSAutomaticCapitalizationEnabled|value|0
+user|NSGlobalDomain|NSAutomaticPeriodSubstitutionEnabled|value|0
+user|NSGlobalDomain|CGDisableCursorLocationMagnification|value|1
+user|com.apple.universalaccess|reduceTransparency|value|1
+byhost|com.apple.coreservices.useractivityd|ActivityAdvertisingAllowed|value|0
+byhost|com.apple.coreservices.useractivityd|ActivityReceivingAllowed|value|0
+
+@@fruitctl-status target_profile 0@@
+
+@@fruitctl-probe input_sources@@
+scope=console_user
+current|com.apple.keylayout.US
+AppleSelectedInputSources|read
+AppleSelectedInputSources|(
+AppleSelectedInputSources|{
+AppleSelectedInputSources|InputSourceKind = "Keyboard Layout";
+AppleSelectedInputSources|"KeyboardLayout Name" = "U.S.";
+AppleSelectedInputSources|},
+AppleSelectedInputSources|{
+AppleSelectedInputSources|"Bundle ID" = "com.apple.CharacterPaletteIM";
+AppleSelectedInputSources|InputSourceKind = "Non Keyboard Input Method";
+AppleSelectedInputSources|}
+AppleSelectedInputSources|)
+AppleEnabledInputSources|read
+AppleEnabledInputSources|(
+AppleEnabledInputSources|{
+AppleEnabledInputSources|InputSourceKind = "Keyboard Layout";
+AppleEnabledInputSources|"KeyboardLayout Name" = "U.S.";
+AppleEnabledInputSources|}
+AppleEnabledInputSources|)
+
+@@fruitctl-status input_sources 0@@

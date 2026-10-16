@@ -64,7 +64,7 @@ configPath = values.config || defaultConfigPath();
       '\n--install-root selects Fruitctl runtime/state/launcher storage; registration still follows scope and project/user configuration.\n' +
       'Repeat the selected root for doctor, rollback and uninstall. Explicit-root installation requires explicit scope; omitted root preserves legacy paths.\n' +
       'Install requires explicit --version TAG. Doctor writes JSON: exit 1 for drift, 0 for configured or not-installed.\n' +
-      'Doctor --macos adds read-only target checks over SSH (macOS 26.6.1+ or 27, Screen Sharing mode, session, Host grants); a typed failure exits 1.\n' +
+      'Doctor --macos adds read-only target checks over SSH (macOS 26.6.1+ or 27, Screen Sharing mode, session, Host grants, other input owners, target profile); a typed failure exits 1.\n' +
       'Add --timings to installer commands for bounded aggregate timings; default output is unchanged.\n');
   } else if (command === 'broker') {
     const { createBroker } = await import('../lib/broker/server.mjs');

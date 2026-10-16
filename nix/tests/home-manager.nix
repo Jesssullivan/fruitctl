@@ -31,6 +31,7 @@ let
     enable = true;
     targets.desktop = {
       targetId = "fixture-desktop";
+      inputSource = "com.apple.keylayout.US";
       credentialFile = "/Users/fruitctl-test/.config/private/desktop-password";
       daemonPath = "/Users/fruitctl-test/Applications/qualified-native/claude-kvm-daemon";
       vnc.username = "fixture-user";
@@ -153,6 +154,14 @@ let
   noProfilesRejected = !(builtins.tryEval (evaluate "aarch64-darwin" {
     enable = true;
   }).programs.fruitctl.mcpServers).success;
+  invalidInputSourceRejected = !(builtins.tryEval (evaluate "aarch64-darwin" {
+    enable = true;
+    targets.desktop = {
+      credentialFile = "/Users/fruitctl-test/private/password";
+      daemonPath = "/Users/fruitctl-test/Applications/qualified-native/claude-kvm-daemon";
+      inputSource = "-com.apple.keylayout.US\"";
+    };
+  }).home.file."Library/Application Support/fruitctl/config.json".text).success;
   missingDarwinCredentialRejected = rejected "aarch64-darwin" {
     enable = true;
     targets.desktop.daemonPath = "/Users/fruitctl-test/Applications/qualified-native/claude-kvm-daemon";
@@ -202,6 +211,9 @@ assert builtins.attrNames (desktopFragment.mcpServers // secondFragment.mcpServe
 assert pkgs.lib.hasInfix ''[mcp_servers."fruitctl-second.desktop"]'' linuxFiles."fruitctl/agents/codex/second.desktop.toml".text;
 assert darwinDocument.schema == "fruitctl.config.v1";
 assert darwinDocument.targets.desktop.targetId == "fixture-desktop";
+assert darwinDocument.targets.desktop.inputSource == "com.apple.keylayout.US";
+assert !(nativeDocument.targets.desktop ? inputSource);
+assert invalidInputSourceRejected;
 assert darwinDocument.targets.desktop.credentialFile == "/Users/fruitctl-test/.config/private/desktop-password";
 assert helperDocument.targets.desktop.hostHelper.mapping.displayBounds.x == -1920;
 assert helperDocument.targets.desktop.hostHelper.mapping.nativeWidth == 3840;

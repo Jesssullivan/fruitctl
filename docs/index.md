@@ -9,7 +9,9 @@ Check [compatibility](compatibility.md) before selecting a controller or adapter
 The [agent adapter guide](agents.md) lists configuration paths and the separate
 IntelliJ/Junie installation surfaces.
 The [architecture](architecture.md) describes ownership, credential custody,
-session control, and the separate target indicator.
+session control, and the separate target indicator. The
+[Fruitctl-ready target profile](target-profile.md) lists the macOS settings
+that `fruitctl doctor --macos` checks on a target.
 
 Declarative consumers use the [Home Manager module](home-manager.md). Review
 [licensing and dependency notices](licensing.md) before distributing native
