@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 import { parseArgs } from 'node:util';
 import { readFile } from 'node:fs/promises';
-import { defaultConfigPath, defaultSocketPath, loadConfig } from '../lib/broker/paths.mjs';
+import { defaultConfigPath, defaultSocketPath, defaultStateDir, loadConfig } from '../lib/broker/paths.mjs';
 
 let values, positionals, command, socketPath, configPath, installerTimingsForError;
 
@@ -40,7 +40,7 @@ command = positionals[0];
 socketPath = values.socket || defaultSocketPath();
 configPath = values.config || defaultConfigPath();
 
-  if (positionals.length > 1) throw new Error('Unexpected positional arguments; use --help');
+  if (positionals.length > 1 && command !== 'journal') throw new Error('Unexpected positional arguments; use --help');
   if (values['install-root'] !== undefined && !['install', 'doctor', 'rollback', 'uninstall'].includes(command)) {
     throw new Error('--install-root is supported only by install, doctor, rollback and uninstall');
   }
@@ -53,7 +53,7 @@ configPath = values.config || defaultConfigPath();
   if (values.macos && command !== 'doctor') throw new Error('--macos is supported only by doctor');
   if (values['target-ssh'] !== undefined && !values.macos) throw new Error('--target-ssh requires doctor --macos');
   if (values.help || !command) {
-    process.stdout.write('Fruitctl\n\nCommands: mcp, broker, relay, attach, install, doctor, rollback, uninstall\n' +
+    process.stdout.write('Fruitctl\n\nCommands: mcp, broker, relay, attach, install, doctor, rollback, uninstall, journal\n' +
       '  mcp --target PROFILE [--socket PATH]\n' +
       '  broker [--config PATH] [--socket PATH]\n' +
       '  relay --bridge USER@HOST [--socket PATH] [--remote-socket PATH]\n' +
@@ -61,6 +61,7 @@ configPath = values.config || defaultConfigPath();
       '  doctor [--agent AGENT] [--scope user|project] [--project-dir PATH] [--install-root ABSOLUTE_DIRECTORY] --json\n' +
       '  doctor --macos [--target PROFILE] [--config PATH] [--target-ssh USER@HOST]\n' +
       '  rollback|uninstall --agent AGENT [--scope user|project] [--project-dir PATH] [--install-root ABSOLUTE_DIRECTORY]\n' +
+      '  journal verify FILE\n' +
       '\n--install-root selects Fruitctl runtime/state/launcher storage; registration still follows scope and project/user configuration.\n' +
       'Repeat the selected root for doctor, rollback and uninstall. Explicit-root installation requires explicit scope; omitted root preserves legacy paths.\n' +
       'Install requires explicit --version TAG. Doctor writes JSON: exit 1 for drift, 0 for configured or not-installed.\n' +
@@ -68,9 +69,18 @@ configPath = values.config || defaultConfigPath();
       'Add --timings to installer commands for bounded aggregate timings; default output is unchanged.\n');
   } else if (command === 'broker') {
     const { createBroker } = await import('../lib/broker/server.mjs');
+    const { brokerObservability } = await import('../lib/broker/observe.mjs');
     const config = await loadConfig(configPath);
-    lifecycle(await createBroker({ socketPath, config }));
+    const log = message => process.stderr.write(`${message}\n`);
+    const { journal, telemetry } = brokerObservability(config, { stateDir: defaultStateDir(), log });
+    lifecycle(await createBroker({ socketPath, config, journal, telemetry, log }));
     process.stderr.write('Fruitctl broker ready\n');
+  } else if (command === 'journal') {
+    if (positionals[1] !== 'verify' || positionals.length !== 3) throw new Error('Usage: fruitctl journal verify FILE');
+    const { verifyJournal } = await import('../lib/broker/journal.mjs');
+    const result = await verifyJournal(positionals[2]);
+    process.stdout.write(JSON.stringify(result, null, 2) + '\n');
+    if (!result.ok) process.exitCode = 1;
   } else if (command === 'relay') {
     const { createRelay } = await import('../lib/broker/relay.mjs');
     const service = await createRelay({ socketPath, bridge: values.bridge,

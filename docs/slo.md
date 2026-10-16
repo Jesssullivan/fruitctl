@@ -66,6 +66,36 @@ For the human indicator, **zero indicator pixels in qualified harness images**
 is required. Rejecting an unprovable frame preserves correctness but consumes
 the capture reliability budget.
 
+## Latency telemetry
+
+The broker can record per-action latency for these measurements. It is off
+until the broker config names a directory:
+
+```json
+"telemetry": { "dir": "/absolute/path", "maxBytes": 8388608, "keep": 5 }
+```
+
+`latency.jsonl` in that directory is the source of truth. Each executed action
+appends one `fruitctl.latency.v1` line with `ts`, `session`, `target`, `method`,
+`route`, `outcome` and `latency_ms`. The first action of a batch adds
+`queue_ms`, the queue wait and executor startup before it. An action's latency
+runs from the previous action's completion, or from admission for the first. An
+executor that reports no per-action progress has its time shared evenly and
+marked `estimated: true`. A batch that never reached the executor (`refused` or
+`not_admitted`) counts once under its first method, timed from the request.
+When an append would pass `maxBytes` (default 8 MiB, minimum 4096), the file
+rotates to `latency.jsonl.1` … `latency.jsonl.<keep>` (default 5) and the
+oldest is removed.
+
+`fruitctl.prom` is a Prometheus textfile-collector summary of the same samples
+since the broker started: `fruitctl_actions_total` and the
+`fruitctl_action_latency_seconds` histogram (buckets 5 ms to 30 s), labelled
+by `target`, `method`, `route` and `outcome`. Action names outside
+`[a-z][a-z0-9_]*` are labelled `other`. Each rewrite goes to a temporary file
+and is renamed into place, so a scrape never reads a partial file. Telemetry
+write failures are logged and counted; they never fail an action. The summary
+resets with the broker, so compute objectives from the JSONL.
+
 ## Qualification and evidence
 
 Run at least **100 changing-marker captures per supported

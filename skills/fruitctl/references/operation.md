@@ -84,6 +84,12 @@ If the human uses Stop, readiness is revoked and input must remain stopped;
 only the human can allow activity again. Never reacquire or reconnect to bypass
 that decision.
 
+A `display_asleep` error means the target display is asleep, so no current
+pixels exist. Stop input and report it; do not wake the target with input to
+work around it. A `health` result's optional `wake` field reports the broker's
+configured display wake hold; a `failed` state is diagnostic, not permission
+to continue without a fresh screenshot.
+
 Describe what was observed, what was changed, and what remains uncertain.
 Never claim input delivery, lease ownership, cancellation, indicator visibility,
 or capture exclusion solely because a tool returned an acknowledgement.
