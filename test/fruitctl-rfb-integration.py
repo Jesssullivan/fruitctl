@@ -308,7 +308,12 @@ class RfbFixture:
                     if not self._update(connection):
                         return
         except (EOFError, OSError) as error:
-            if not self.stopping and not isinstance(error, EOFError):
+            # The animating model writes on its own ticks, so a client that
+            # disconnects with animation bytes unread resets the connection.
+            # That is its normal end, like EOF for the request-driven models.
+            peer_reset = (self.request_model == "animating-latest-wins"
+                          and isinstance(error, (ConnectionResetError, BrokenPipeError)))
+            if not self.stopping and not isinstance(error, EOFError) and not peer_reset:
                 with self.lock:
                     self.errors.append(type(error).__name__ + ": " + str(error))
         except Exception as error:
