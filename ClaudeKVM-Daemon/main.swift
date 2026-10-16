@@ -41,14 +41,20 @@ struct ClaudeKVMDaemon: AsyncParsableCommand {
                 mouse_move     {x, y}                   Teleport cursor
                 hover          {x, y}                   Move + settle wait
                 nudge          {dx, dy}                 Relative cursor move
-                mouse_click    {x, y, button?}          Click (left|right|middle)
+                mouse_click    {x, y, button?, modifiers?} Click (left|right|middle), modifiers held around it
                 mouse_double_click {x, y}               Double click
-                mouse_drag     {x, y, toX, toY}         Drag with interpolated path
+                triple_click   {x, y}                   Triple click
+                mouse_drag     {x, y, toX, toY, button?} Drag with interpolated path
                 scroll         {x, y, direction, amount?} Scroll (up|down|left|right)
+                cursor_position                         fruitctl-tracked position (not the server cursor)
+                mouse_down     {x, y, button?, hold_scope} Press and hold within one batch scope
+                mouse_up       {x?, y?, button?, hold_scope} Release a held button
+                release_holds  {hold_scope}             Batch end: release any live hold
 
               Keyboard:
                 key_tap        {key}                    Single key press-release
                 key_combo      {key} or {keys:[...]}    Modifier combo (e.g. "cmd+c")
+                hold_key       {key, duration_ms}       Hold one key, then release in the same call
                 key_type       {text}                   Type text character by character
                 paste          {text}                   Paste via clipboard + combo
 
@@ -166,6 +172,16 @@ struct ClaudeKVMDaemon: AsyncParsableCommand {
               Input that cannot wait out the settle time within its deadline
               returns code -32013, data.reason input_not_ready and
               data.remaining_ms; no event is written.
+              Input refusals return code -32011 with data.reason
+              (hold_outside_batch, button_already_held, button_not_held)
+              before any event of the refused request.
+
+            INPUT HOLDS:
+              mouse_down/mouse_up require the hold_scope an executor assigns
+              to one action_queue batch. A request without that scope first
+              force-releases the hold; release_holds ends it at batch end.
+              Before the first input of each connection, every modifier gets
+              one release-only key-up.
 
             OUTPUT:
               stdout  PC responses and notifications (NDJSON).

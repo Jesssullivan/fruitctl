@@ -703,7 +703,9 @@ final class NativeBehaviorTests: XCTestCase {
             let keys = ["alt", "cmd", "n"].compactMap(namedKeyToKeysym)
             XCTAssertEqual(keys.count, 3)
             try await input.keyCombo(keys)
-            XCTAssertEqual(trace.values, combo + combo)
+            // The connection's first input follows the release-only modifier sync.
+            let sync = VNCBridge.modifierKeysyms.map { "up 0x" + String($0, radix: 16, uppercase: true) }
+            XCTAssertEqual(trace.values, sync + combo + combo)
             XCTAssertTrue(input.heldKeys.isEmpty)
             // A configured settle applies to every modifier step.
             input.timing.comboModUs = 50_000
@@ -930,7 +932,10 @@ final class NativeBehaviorTests: XCTestCase {
         clock.advance(3_000_000_000)
         try await bridge.sendKeyEvent(key: 0x61, down: true, context: context)
         try await bridge.sendKeyEvent(key: 0x61, down: false, context: context, releaseOnly: true)
-        XCTAssertEqual(trace.values, ["down 0x61", "up 0x61"])
+        // The first settled input also writes the modifier release sync (TIN-6597).
+        let firstInput = VNCBridge.modifierKeysyms.map { "up 0x" + String($0, radix: 16, uppercase: true) }
+            + ["down 0x61", "up 0x61"]
+        XCTAssertEqual(trace.values, firstInput)
 
         bridge.disconnect()
         XCTAssertEqual(bridge.framebufferWidth, 0)
@@ -941,7 +946,188 @@ final class NativeBehaviorTests: XCTestCase {
         XCTAssertGreaterThan(reconnected.connectionGeneration, context.connectionGeneration)
         XCTAssertEqual(bridge.inputSettle.status().remainingMilliseconds, 3_000)
         await refused { try await bridge.sendKeyEvent(key: 0x62, down: true, context: reconnected) }
-        XCTAssertEqual(trace.values, ["down 0x61", "up 0x61"])
+        XCTAssertEqual(trace.values, firstInput)
         bridge.disconnect()
+    }
+
+    // MARK: - Native input parity (TIN-6597)
+
+    /// Pointer, key and pause trace through fake senders; no bridge connection.
+    private func tracedInput(_ trace: WireTrace, failKey: UInt32? = nil,
+                             sleeper: ((UInt32) async throws -> Void)? = nil) -> InputController {
+        let pauses: (UInt32) async throws -> Void = sleeper ?? { duration in trace.append("pause \(duration)") }
+        return InputController(vnc: VNCBridge(config: .init()), pointerSender: { x, y, mask, _, release in
+            trace.append("pointer \(x),\(y) mask=\(mask)" + (release ? " release" : ""))
+        }, keySender: { key, down, _, release in
+            trace.append((down ? "down 0x" : "up 0x") + String(key, radix: 16, uppercase: true)
+                         + (release ? " release" : ""))
+            if down, key == failKey { throw VNCError.sendFailed("synthetic uncertain key") }
+        }, sleeper: pauses)
+    }
+
+    func testModifierKeysymsAreOneSetAcrossInputAndBridge() {
+        XCTAssertEqual(KeySym.modifiers, VNCBridge.modifierKeysyms)
+        XCTAssertEqual(Set(KeySym.modifiers).count, KeySym.modifiers.count)
+        for name in ["shift", "rshift", "ctrl", "control", "rctrl", "alt", "option", "opt", "ralt",
+                     "cmd", "command", "meta", "super", "rcmd"] {
+            XCTAssertNotNil(modifierNameToKeysym(name), name)
+        }
+        for name in ["a", "tab", "capslock", "f1", "space"] { XCTAssertNil(modifierNameToKeysym(name), name) }
+    }
+
+    func testTripleClickWritesThreeLeftClicksSeparatedByTheDoubleClickGap() async throws {
+        let trace = WireTrace()
+        let input = tracedInput(trace)
+        try await input.mouseTripleClick(x: 4, y: 5)
+        let click = ["pointer 4,5 mask=1", "pause 50000", "pointer 4,5 mask=0"]
+        XCTAssertEqual(trace.values, click + ["pause 50000"] + click + ["pause 50000"] + click)
+        XCTAssertFalse(input.heldButtons)
+        XCTAssertEqual(input.cursorPosition.x, 4)
+        XCTAssertEqual(input.cursorPosition.y, 5)
+    }
+
+    func testModifierClickPressesAroundTheClickAndReleasesInReverse() async throws {
+        let trace = WireTrace()
+        let input = tracedInput(trace)
+        try await input.mouseClick(x: 7, y: 8, button: .right, modifiers: [KeySym.shiftLeft, KeySym.metaLeft])
+        XCTAssertEqual(trace.values, ["down 0xFFE1", "pause 10000", "down 0xFFE7", "pause 10000",
+            "pointer 7,8 mask=4", "pause 50000", "pointer 7,8 mask=0",
+            "pause 10000", "up 0xFFE7", "pause 10000", "up 0xFFE1"])
+        XCTAssertTrue(input.heldKeys.isEmpty)
+        XCTAssertFalse(input.heldButtons)
+        // Without modifiers the click keeps its historical wire trace.
+        let plain = WireTrace()
+        try await tracedInput(plain).mouseClick(x: 1, y: 1)
+        XCTAssertEqual(plain.values, ["pointer 1,1 mask=1", "pause 50000", "pointer 1,1 mask=0"])
+    }
+
+    func testModifierClickFailureReleasesHeldModifiersWithoutReplayingTheClick() async {
+        let trace = WireTrace()
+        let input = tracedInput(trace, failKey: KeySym.metaLeft)
+        do {
+            try await input.mouseClick(x: 2, y: 3, modifiers: [KeySym.shiftLeft, KeySym.metaLeft])
+            XCTFail("uncertain modifier write returned success")
+        } catch {}
+        XCTAssertEqual(trace.values, ["down 0xFFE1", "pause 10000", "down 0xFFE7",
+                                      "up 0xFFE7 release", "up 0xFFE1 release"])
+        XCTAssertTrue(input.heldKeys.isEmpty)
+    }
+
+    func testRightAndMiddleDragsHoldTheirOwnButtonForTheWholePath() async throws {
+        for button in [MouseButton.right, .middle] {
+            let trace = WireTrace()
+            let input = tracedInput(trace)
+            input.timing.dragMinSteps = 2
+            try await input.mouseDrag(fromX: 0, fromY: 0, toX: 10, toY: 0, button: button)
+            let pointers = trace.values.filter { $0.hasPrefix("pointer") }
+            XCTAssertEqual(pointers.first, "pointer 0,0 mask=0")
+            XCTAssertEqual(pointers.last, "pointer 10,0 mask=0")
+            let pressed = pointers.dropFirst().dropLast()
+            XCTAssertFalse(pressed.isEmpty)
+            XCTAssertTrue(pressed.allSatisfy { $0.hasSuffix("mask=\(button.rawValue)") }, "\(pressed)")
+            XCTAssertFalse(input.heldButtons)
+        }
+    }
+
+    func testHoldKeyKeepsTheKeyDownForItsDurationThenReleases() async throws {
+        let trace = WireTrace()
+        try await tracedInput(trace).holdKey(KeySym.shiftLeft, durationUs: 750_000)
+        XCTAssertEqual(trace.values, ["down 0xFFE1", "pause 750000", "up 0xFFE1"])
+    }
+
+    func testHoldKeyCancellationReleasesWithinTheSameCall() async {
+        let trace = WireTrace()
+        let input = tracedInput(trace, sleeper: { _ in throw CancellationError() })
+        do { try await input.holdKey(0x61, durationUs: 2_000_000); XCTFail("cancelled hold succeeded") }
+        catch is CancellationError {} catch { XCTFail("unexpected error: \(error)") }
+        XCTAssertEqual(trace.values, ["down 0x61", "up 0x61 release"])
+        XCTAssertTrue(input.heldKeys.isEmpty)
+    }
+
+    /// D27: a batch-scoped hold keeps its button pressed across moves (a
+    /// drag), ends at mouse_up, and otherwise is force-released release-only.
+    func testBatchScopedHoldDragsUntilUpAndForceReleaseEndsIt() async throws {
+        let trace = WireTrace()
+        let input = tracedInput(trace)
+        try await input.mouseDown(x: 2, y: 3, button: .left, scope: "batch-a")
+        XCTAssertEqual(input.holdScope, "batch-a")
+        XCTAssertTrue(input.heldButtons)
+        try await input.mouseMove(x: 9, y: 9)
+        try await input.mouseUp(x: nil, y: nil, button: .left)
+        XCTAssertNil(input.holdScope)
+        XCTAssertFalse(input.heldButtons)
+        XCTAssertEqual(trace.values, ["pointer 2,3 mask=1", "pointer 9,9 mask=1", "pointer 9,9 mask=0"])
+        // Two buttons may be held together; releasing one keeps the other.
+        try await input.mouseDown(x: 1, y: 1, button: .left, scope: "batch-b")
+        try await input.mouseDown(x: 1, y: 1, button: .right, scope: "batch-b")
+        try await input.mouseUp(x: 4, y: 4, button: .left)
+        XCTAssertEqual(input.holdScope, "batch-b")
+        XCTAssertTrue(input.heldButtons)
+        // Batch end or abort: one release-only pointer write clears the hold.
+        let released = await input.releaseHeldInput()
+        XCTAssertTrue(released)
+        XCTAssertNil(input.holdScope)
+        XCTAssertEqual(input.holdMask, 0)
+        XCTAssertFalse(input.heldButtons)
+        XCTAssertEqual(Array(trace.values.suffix(4)), ["pointer 1,1 mask=1", "pointer 1,1 mask=5",
+                                                       "pointer 4,4 mask=4", "pointer 4,4 mask=0 release"])
+    }
+
+    func testHoldRefusalsAreTypedAndWriteNothing() async throws {
+        let trace = WireTrace()
+        let input = tracedInput(trace)
+        do { try await input.mouseUp(x: nil, y: nil, button: .left); XCTFail("unheld release accepted") }
+        catch NativeInputRefusal.buttonNotHeld {} catch { XCTFail("unexpected error: \(error)") }
+        try await input.mouseDown(x: 1, y: 1, button: .left, scope: "batch")
+        do { try await input.mouseDown(x: 1, y: 1, button: .left, scope: "batch"); XCTFail("double press accepted") }
+        catch NativeInputRefusal.buttonAlreadyHeld {} catch { XCTFail("unexpected error: \(error)") }
+        XCTAssertEqual(trace.values, ["pointer 1,1 mask=1"])
+        let encoded = try JSONEncoder().encode(XCTUnwrap(PCResponse.inputRefusal(id: .number(3),
+            error: NativeInputRefusal.holdOutsideBatch)))
+        let payload = try XCTUnwrap((JSONSerialization.jsonObject(with: encoded) as? [String: Any])?["error"] as? [String: Any])
+        XCTAssertEqual(payload["code"] as? Int, -32011)
+        XCTAssertEqual((payload["data"] as? [String: Any])?["reason"] as? String, "hold_outside_batch")
+        XCTAssertNil(PCResponse.inputRefusal(id: .number(4), error: VNCError.sendFailed("other")))
+        _ = await input.releaseHeldInput()
+    }
+
+    func testNativeValidationOfParityMethods() throws {
+        let scaling = DisplayScaling(nativeWidth: 1920, nativeHeight: 1080)
+        func refusal(_ method: String, _ params: String) -> NativeInputRefusal? {
+            do { try request(method, params).validate(scaling: scaling); return nil }
+            catch let refused as NativeInputRefusal { return refused }
+            catch { return nil }
+        }
+        // mouse_down/mouse_up without the executor's batch scope are typed refusals.
+        XCTAssertEqual(refusal("mouse_down", "{\"x\":1,\"y\":1}"), .holdOutsideBatch)
+        XCTAssertEqual(refusal("mouse_up", "{}"), .holdOutsideBatch)
+        XCTAssertNoThrow(try request("mouse_down", "{\"x\":1,\"y\":1,\"button\":\"right\",\"hold_scope\":\"b-1\"}").validate(scaling: scaling))
+        XCTAssertNoThrow(try request("mouse_up", "{\"hold_scope\":\"b-1\"}").validate(scaling: scaling))
+        XCTAssertNoThrow(try request("mouse_up", "{\"x\":2,\"y\":2,\"hold_scope\":\"b-1\"}").validate(scaling: scaling))
+        for (method, params) in [("mouse_up", "{\"x\":2,\"hold_scope\":\"b-1\"}"),
+                                 ("mouse_down", "{\"hold_scope\":\"b-1\"}"),
+                                 ("mouse_down", "{\"x\":1,\"y\":1,\"hold_scope\":\"bad scope\"}"),
+                                 ("release_holds", "{}"),
+                                 ("triple_click", "{\"x\":1}"),
+                                 ("mouse_drag", "{\"x\":1,\"y\":1,\"toX\":2,\"toY\":2,\"button\":\"back\"}"),
+                                 ("mouse_click", "{\"x\":1,\"y\":1,\"modifiers\":[\"a\"]}"),
+                                 ("mouse_click", "{\"x\":1,\"y\":1,\"modifiers\":[\"cmd\",\"command\"]}"),
+                                 ("mouse_double_click", "{\"x\":1,\"y\":1,\"modifiers\":[\"cmd\"]}"),
+                                 ("hold_key", "{\"key\":\"a\"}"),
+                                 ("hold_key", "{\"key\":\"a\",\"duration_ms\":0}"),
+                                 ("hold_key", "{\"key\":\"a\",\"duration_ms\":10001}"),
+                                 ("hold_key", "{\"key\":\"nope\",\"duration_ms\":10}")] {
+            XCTAssertThrowsError(try request(method, params).validate(scaling: scaling), "\(method) \(params)")
+        }
+        XCTAssertNoThrow(try request("triple_click", "{\"x\":1279,\"y\":719}").validate(scaling: scaling))
+        XCTAssertNoThrow(try request("mouse_click", "{\"x\":1,\"y\":1,\"modifiers\":[\"shift\",\"cmd\"]}").validate(scaling: scaling))
+        XCTAssertNoThrow(try request("hold_key", "{\"key\":\"shift\",\"duration_ms\":10000}").validate(scaling: scaling))
+        XCTAssertNoThrow(try request("release_holds", "{\"hold_scope\":\"b-1\"}").validate(scaling: scaling))
+        XCTAssertNoThrow(try request("cursor_position").validate(scaling: scaling))
+        for method in ["triple_click", "cursor_position", "hold_key", "mouse_down", "mouse_up", "release_holds"] {
+            XCTAssertTrue(PCRequest.supportedMethods.contains(method), method)
+        }
+        XCTAssertFalse(PCRequest.inputMethods.contains("cursor_position"))
+        XCTAssertFalse(PCRequest.inputMethods.contains("release_holds"))
     }
 }

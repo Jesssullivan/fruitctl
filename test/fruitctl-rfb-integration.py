@@ -45,6 +45,10 @@ STALE_SCREEN_CODE = -32010
 INPUT_NOT_READY_CODE = -32013
 # Synthetic input settle for the fixture; Apple's default is 3000 ms.
 FIXTURE_INPUT_SETTLE_MS = 800
+INPUT_REFUSED_CODE = -32011
+# Release-only key-up per modifier before a connection's first input (TIN-6597).
+MODIFIER_KEYSYMS = (0xFFE1, 0xFFE2, 0xFFE3, 0xFFE4, 0xFFE9, 0xFFEA, 0xFFE7, 0xFFE8, 0xFFEB, 0xFFEC)
+MODIFIER_SYNC = [{"kind": "key", "down": 0, "key": key} for key in MODIFIER_KEYSYMS]
 
 
 def require(condition, message):
@@ -626,6 +630,64 @@ def inspect_capture(response, fixture, previous_sequence=0, expected_pointer=Non
     return sequence, png, metadata
 
 
+def exercise_native_input_parity(session, fixture, sequence):
+    """TIN-6597 wire checks on the native PC route; returns the new marker.
+
+    triple_click, a modifier click, a right-button drag, hold_key and
+    cursor_position, then D27 holds: refused without a batch scope, held
+    across a move, force-released by a request from outside the batch, and
+    released by release_holds. hold_scope is the executor's private field.
+    """
+    def pointer(mask, x, y):
+        return {"kind": "pointer", "mask": mask, "x": x, "y": y}
+
+    def key(down, keysym):
+        return {"kind": "key", "down": down, "key": keysym}
+
+    def ok(action, **params):
+        response = session.action(action, **params)
+        require(not response["error"], "%s failed: %r" % (action, response["error"]))
+        return response
+
+    start = len(fixture.snapshot()["events"])
+    ok("triple_click", x=5, y=6)
+    ok("mouse_click", x=7, y=8, modifiers=["shift", "cmd"])
+    ok("mouse_drag", x=1, y=1, toX=20, toY=10, button="right")
+    ok("hold_key", key="a", duration_ms=150)
+    position = ok("cursor_position")["metadata"]
+    require((position.get("x"), position.get("y")) == (20, 10), "cursor_position is not the tracked position")
+    refused = session.action("mouse_down", x=3, y=3)
+    require(isinstance(refused["error"], dict) and refused["error"].get("code") == INPUT_REFUSED_CODE
+            and (refused["error"].get("data") or {}).get("reason") == "hold_outside_batch",
+            "unscoped mouse_down was not a typed refusal: %r" % refused["error"])
+    ok("mouse_down", x=2, y=3, hold_scope="fixture-batch-1")
+    ok("mouse_move", x=9, y=9, hold_scope="fixture-batch-1")
+    ok("mouse_up", hold_scope="fixture-batch-1")
+    ok("mouse_down", x=4, y=4, button="middle", hold_scope="fixture-batch-2")
+    ok("wait", ms=50)  # outside batch 2: its hold is force-released first
+    ok("mouse_down", x=5, y=5, hold_scope="fixture-batch-3")
+    released = ok("release_holds", hold_scope="fixture-batch-3")["metadata"]
+    require(released.get("detail") == "released", "release_holds did not report a released hold")
+    # A later complete frame orders the server's processing of every event above.
+    sequence, _, _ = inspect_capture(session.action("screenshot"), fixture, sequence, (5, 5))
+    snapshot = fixture.snapshot()
+    events, times = snapshot["events"][start:], snapshot["eventTimes"][start:]
+    click = [pointer(1, 5, 6), pointer(0, 5, 6)]
+    require(events[:6] == click * 3, "triple_click wire mismatch: %r" % events[:6])
+    require(events[6:12] == [key(1, 0xFFE1), key(1, 0xFFE7), pointer(1, 7, 8), pointer(0, 7, 8),
+                             key(0, 0xFFE7), key(0, 0xFFE1)], "modifier click wire mismatch: %r" % events[6:12])
+    drag = events[12:26]
+    require(drag[0] == pointer(0, 1, 1) and drag[1] == pointer(4, 1, 1) and drag[-2:] == [pointer(4, 20, 10),
+            pointer(0, 20, 10)] and all(event["kind"] == "pointer" and event["mask"] == 4 for event in drag[1:-1]),
+            "right drag wire mismatch: %r" % drag)
+    require(events[26:28] == [key(1, ord("a")), key(0, ord("a"))], "hold_key wire mismatch: %r" % events[26:28])
+    require(times[27]["at"] - times[26]["at"] >= 0.12, "hold_key released before its duration")
+    require(events[28:] == [pointer(1, 2, 3), pointer(1, 9, 9), pointer(0, 9, 9),
+                            pointer(2, 4, 4), pointer(0, 4, 4), pointer(1, 5, 5), pointer(0, 5, 5)],
+            "batch-scoped hold wire mismatch: %r" % events[28:])
+    return sequence
+
+
 def run_scenario(kind, mode, count, args):
     fixture = RfbFixture()
     session = None
@@ -671,15 +733,21 @@ def run_scenario(kind, mode, count, args):
             require(any(event["mask"] == 1 and (event["x"], event["y"]) == (WIDTH - 1, HEIGHT - 1)
                         for event in pointer_events), "button press was not transmitted")
             require(pointer_events[-1]["mask"] == 0, "button was not released")
+            require(events[:len(MODIFIER_SYNC)] == MODIFIER_SYNC,
+                    "first input was not preceded by the release-only modifier sync")
             key_events = [event for event in events if event["kind"] == "key"]
-            require(key_events == [{"kind": "key", "down": 1, "key": ord("a")},
-                                   {"kind": "key", "down": 0, "key": ord("a")}], "key press/release roundtrip mismatch")
+            require(key_events == MODIFIER_SYNC + [{"kind": "key", "down": 1, "key": ord("a")},
+                                                   {"kind": "key", "down": 0, "key": ord("a")}],
+                    "key press/release roundtrip mismatch")
             report["fixtureCaptureLatencyMilliseconds"] = {
                 "p50": round(statistics.median(latencies), 3),
                 "p95": round(sorted(latencies)[max(0, (95 * len(latencies) + 99) // 100 - 1)], 3),
                 "max": round(max(latencies), 3), "scope": "loopback fixture; not a live product SLO"}
             report["coordinateRoundtrips"] = count
             report["buttonAndKeyReleaseRoundtrip"] = "passed"
+            if kind == "native":
+                sequence = exercise_native_input_parity(session, fixture, sequence)
+                report["nativeInputParity"] = "passed"
             if kind == "mcp":
                 queue_point = (11, 13)
                 queued = session.call_tool("action_queue", {"actions": [{"action": "mouse_move",
@@ -712,7 +780,9 @@ def run_scenario(kind, mode, count, args):
                           if event["kind"] == "key"]
             # This fixture is not Apple's server, so names keep portable keysyms:
             # Option (Alt_L) first down and last up, Command (Meta_L) inside it.
-            require(key_events == [(1, 0xFFE9), (1, 0xFFE7), (1, 0x6E), (0, 0x6E), (0, 0xFFE7), (0, 0xFFE9)],
+            # The connection's release-only modifier sync precedes the combo.
+            require(key_events == [(0, key) for key in MODIFIER_KEYSYMS] +
+                    [(1, 0xFFE9), (1, 0xFFE7), (1, 0x6E), (0, 0x6E), (0, 0xFFE7), (0, 0xFFE9)],
                     "alt+cmd+n wire order/keysyms mismatch: %r" % key_events)
             fixture.set_mode("silent")
             start = time.monotonic()

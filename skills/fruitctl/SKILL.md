@@ -44,7 +44,10 @@ Screen Sharing input is held for about 3 s after each connect, because the
 server ignores earlier input; the controller waits for you, and `health`
 reports `input_ready` and `input_settle_remaining_ms`. Code `-32013`
 (`input_not_ready`) means the request's deadline was shorter than
-`data.remaining_ms`. No input was sent, so retry once that time has passed. Inspect the current
+`data.remaining_ms`. No input was sent, so retry once that time has passed. Code
+`-32011` is a typed input refusal written before any event, for example
+`mouse_down` outside one `action_queue` batch; see
+[operation](references/operation.md) for the input actions. Inspect the current
 image and its scaled coordinates, perform authorized bounded input, and obtain
 a new screenshot to verify the result. OCR, a process health response, or an
 input acknowledgement alone does not prove that the requested desktop change

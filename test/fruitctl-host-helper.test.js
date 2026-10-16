@@ -49,7 +49,7 @@ const configuration = () => ({ sshHost: 'configured-target',
 function native({ health = {}, run, releaseError, releaseRun, adopt, capabilities } = {}) {
   return {
     capabilities: nativeCapabilities(capabilities),
-    display: { width: 256, height: 128 }, calls: [], closes: [], releases: [], permitControls: [],
+    display: { width: 256, height: 128 }, calls: [], scopes: [], closes: [], releases: [], permitControls: [],
     async inputPermitControl(method, params) {
       this.permitControls.push({ method, params });
       const { lease_remaining_ms, ...binding } = params;
@@ -59,6 +59,7 @@ function native({ health = {}, run, releaseError, releaseRun, adopt, capabilitie
     },
     async execute(actions, options = {}) {
       this.calls.push(...actions);
+      this.scopes.push(...actions.map(() => options.holdScope));
       if (actions[0].action === 'health') return [{ id: 'native-health', result: {
         nativeWidth: 512, nativeHeight: 256, scaledWidth: 256, scaledHeight: 128,
         connectionGeneration: 3, allocation: 9, ...health } }];
@@ -476,6 +477,50 @@ test('a settle time beyond the operation deadline fails as typed input_not_ready
   });
   assert.deepEqual(vnc.calls.map(action => action.action), ['health']);
   assert.deepEqual(vnc.permitControls, []);
+});
+
+test('a mouse hold batch carries one native scope through every call and ends with release_holds', async () => {
+  const { executor, vnc } = await fixture({ config: { ...configuration(), mapping } });
+  try {
+    const actions = [{ action: 'mouse_down', x: 2, y: 3, button: 'right' }, { action: 'mouse_move', x: 9, y: 9 },
+      { action: 'wait', ms: 50 }, { action: 'mouse_up', button: 'right' }];
+    const responses = await executor.execute(actions);
+    assert.equal(responses.length, 4);
+    const verbs = vnc.calls.map(action => action.action);
+    assert.deepEqual(verbs.filter(verb => !['health', 'adopt_observation'].includes(verb)),
+      ['mouse_down', 'mouse_move', 'wait', 'mouse_up', 'release_holds']);
+    assert.equal(verbs.at(-1), 'release_holds');
+    const [scope] = vnc.scopes;
+    assert.match(scope, /^[0-9a-f-]{36}$/);
+    // Re-verification (health, adopt_observation) inside the batch keeps the hold.
+    assert.ok(vnc.scopes.every(value => value === scope));
+    vnc.calls.length = 0; vnc.scopes.length = 0;
+    await executor.execute([{ action: 'mouse_click', x: 1, y: 1, modifiers: ['shift'] }, { action: 'cursor_position' }]);
+    assert.ok(vnc.scopes.every(value => value === undefined));
+    assert.equal(vnc.calls.some(action => action.action === 'release_holds'), false);
+    assert.deepEqual(vnc.calls.at(-1), { action: 'cursor_position' });
+  } finally { await executor.close(); }
+});
+
+test('cursor_position and new input actions require the qualified mapping; holds require native release_holds', async () => {
+  const unmapped = await fixture();
+  try {
+    for (const action of ['cursor_position', 'triple_click', 'hold_key', 'mouse_down']) {
+      await assert.rejects(unmapped.executor.execute([{ action, x: 1, y: 1, key: 'a', duration_ms: 10 }]),
+        /input mapping is not qualified/);
+    }
+    assert.deepEqual(unmapped.vnc.calls, []);
+    assert.equal(unmapped.executor.capabilities.actions.includes('cursor_position'), false);
+  } finally { await unmapped.executor.close(); }
+  const legacy = await fixture({ config: { ...configuration(), mapping }, nativeOptions: {
+    capabilities: ['health', 'wait', 'adopt_observation', 'begin_input_permit', 'grant_input_permit',
+      'mouse_down', 'mouse_up', 'cursor_position'] } });
+  try {
+    assert.equal(legacy.executor.capabilities.actions.includes('cursor_position'), true);
+    const refused = await legacy.executor.execute([{ action: 'mouse_down', x: 1, y: 1 }]).catch(error => error);
+    assert.equal(isPreAdmissionRefusal(refused), true);
+    assert.deepEqual(legacy.vnc.calls, []);
+  } finally { await legacy.executor.close(); }
 });
 
 test('VNC/native geometry mismatch prevents input even with a configured receipt', async () => {

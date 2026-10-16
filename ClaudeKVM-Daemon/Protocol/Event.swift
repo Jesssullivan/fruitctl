@@ -65,18 +65,26 @@ struct PCResponse: Encodable {
         var data: ErrorData?
     }
 
-    /// Typed `error.data`: stale_screen (-32010) or input_not_ready (-32013).
+    /// Typed `error.data`: stale_screen (-32010), an input refusal (-32011)
+    /// or input_not_ready (-32013).
     enum ErrorData: Encodable {
         case staleScreen(StaleScreenData)
+        case inputRefusal(InputRefusalData)
         case inputNotReady(InputNotReadyData)
 
         func encode(to encoder: Encoder) throws {
             var container = encoder.singleValueContainer()
             switch self {
             case .staleScreen(let data): try container.encode(data)
+            case .inputRefusal(let data): try container.encode(data)
             case .inputNotReady(let data): try container.encode(data)
             }
         }
+    }
+
+    /// `error.data` for code -32011: a stable reason only.
+    struct InputRefusalData: Encodable {
+        var reason: String
     }
 
     /// `error.data` for code -32013: the stable reason and the settle time
@@ -149,6 +157,14 @@ struct PCResponse: Encodable {
         result.input_settle_remaining_ms = status.remainingMilliseconds
         result.input_settle_ms = status.settleMilliseconds
         return PCResponse(result: result, error: error, id: id)
+    }
+
+    /// The typed input refusal, or nil for any other error.
+    static func inputRefusal(id: PCId?, error: Error) -> PCResponse? {
+        guard let refusal = error as? NativeInputRefusal else { return nil }
+        return PCResponse(result: nil, error: ErrorPayload(
+            code: NativeInputRefusal.code, message: refusal.localizedDescription,
+            data: .inputRefusal(InputRefusalData(reason: refusal.rawValue))), id: id)
     }
 
     static func inputPermit(id: PCId?, receipt: NativeInputPermit.Receipt) -> PCResponse {

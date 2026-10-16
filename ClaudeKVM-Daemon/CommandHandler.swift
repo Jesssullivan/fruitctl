@@ -125,11 +125,19 @@ extension ClaudeKVMDaemon {
 
         do {
             try Task.checkCancellation()
+            // D27: a mouse hold lives only inside the action_queue batch that
+            // opened it. Any request from outside that batch force-releases it.
+            if let scope = input.holdScope, p?.holdScope != scope {
+                guard await input.releaseHeldInput() else {
+                    throw VNCError.sendFailed("Batch-scoped mouse hold release could not be confirmed")
+                }
+            }
             if req.method == "adopt_observation" { input.context = nil }
             try req.validate(scaling: scaling)
             if PCRequest.inputMethods.contains(req.method) {
                 try input.checkInputAdmission()
-                guard input.heldKeys.isEmpty, !input.heldButtons else {
+                // Only this batch's own live hold may remain pressed here.
+                guard input.heldKeys.isEmpty, !input.heldButtons || input.holdScope != nil else {
                     throw VNCError.sendFailed("Previous input release is unconfirmed; reconcile the target before continuing")
                 }
                 guard let context = input.context,
@@ -227,7 +235,28 @@ extension ClaudeKVMDaemon {
             case "mouse_click":
                 let native = nativeXY(p, scaling: scaling)
                 let btn = parseButton(p?.button)
-                try await input.mouseClick(x: native.x, y: native.y, button: btn)
+                let modifiers = (p?.modifiers ?? []).compactMap(modifierNameToKeysym)
+                try await input.mouseClick(x: native.x, y: native.y, button: btn, modifiers: modifiers)
+                try input.checkInputAdmission()
+                respond(.success(id: id, detail: "OK"))
+
+            case "triple_click":
+                let native = nativeXY(p, scaling: scaling)
+                try await input.mouseTripleClick(x: native.x, y: native.y)
+                try input.checkInputAdmission()
+                respond(.success(id: id, detail: "OK"))
+
+            case "mouse_down":
+                guard let scope = p?.holdScope else { throw NativeInputRefusal.holdOutsideBatch }
+                let native = nativeXY(p, scaling: scaling)
+                try await input.mouseDown(x: native.x, y: native.y, button: parseButton(p?.button), scope: scope)
+                try input.checkInputAdmission()
+                respond(.success(id: id, detail: "OK"))
+
+            case "mouse_up":
+                guard p?.holdScope != nil else { throw NativeInputRefusal.holdOutsideBatch }
+                let point = p?.x.map { _ in nativeXY(p, scaling: scaling) }
+                try await input.mouseUp(x: point?.x, y: point?.y, button: parseButton(p?.button))
                 try input.checkInputAdmission()
                 respond(.success(id: id, detail: "OK"))
 
@@ -243,7 +272,8 @@ extension ClaudeKVMDaemon {
                 }
                 let from = nativeXY(p, scaling: scaling)
                 let to = scaling.toNative(x: toX, y: toY)
-                try await input.mouseDrag(fromX: from.x, fromY: from.y, toX: to.x, toY: to.y)
+                try await input.mouseDrag(fromX: from.x, fromY: from.y, toX: to.x, toY: to.y,
+                                          button: parseButton(p?.button))
                 try input.checkInputAdmission()
                 respond(.success(id: id, detail: "OK"))
 
@@ -264,6 +294,14 @@ extension ClaudeKVMDaemon {
                     throw VNCError.sendFailed("Missing or unknown key")
                 }
                 try await input.keyTap(sym)
+                try input.checkInputAdmission()
+                respond(.success(id: id, detail: "OK"))
+
+            case "hold_key":
+                guard let keyName = p?.key, let sym = namedKeyToKeysym(keyName), let ms = p?.durationMs else {
+                    throw VNCError.sendFailed("Missing or unknown key/duration_ms")
+                }
+                try await input.holdKey(sym, durationUs: UInt32(ms) * 1000)
                 try input.checkInputAdmission()
                 respond(.success(id: id, detail: "OK"))
 
@@ -297,6 +335,15 @@ extension ClaudeKVMDaemon {
                 try await input.pasteText(text)
                 try input.checkInputAdmission()
                 respond(.success(id: id, detail: "OK"))
+
+            // ── Cursor ────────────────────────────────────────
+
+            case "cursor_position":
+                // fruitctl's own record of the last pointer position it wrote,
+                // in scaled space. It is not read back from the server cursor.
+                let pos = scaling.toScaled(x: input.cursorPosition.x, y: input.cursorPosition.y)
+                respond(.success(id: id, detail: "tracked (\(pos.x), \(pos.y)); not the server cursor",
+                                  x: pos.x, y: pos.y))
 
             // ── Detection ──────────────────────────────────────
 
@@ -345,6 +392,14 @@ extension ClaudeKVMDaemon {
                                   frameContext: current, capabilities: PCRequest.supportedMethods)
                     .withInputSettle(vnc.inputSettle.status()))
 
+            case "release_holds":
+                // Batch end (D27): release this batch's live hold, if any.
+                let held = input.holdScope != nil
+                guard await input.releaseHeldInput() else {
+                    throw VNCError.sendFailed("Batch-scoped mouse hold release could not be confirmed")
+                }
+                respond(.success(id: id, detail: held ? "released" : "none held"))
+
             case "shutdown":
                 input.inputPermit.stopWatchdog()
                 guard await input.releaseHeldInput() else {
@@ -361,6 +416,7 @@ extension ClaudeKVMDaemon {
             input.inputPermit.invalidateIfRequired()
             await input.releaseHeldInput()
             respond(PCResponse.staleScreen(id: id, error: error)
+                    ?? PCResponse.inputRefusal(id: id, error: error)
                     ?? PCResponse.inputNotReady(id: id, error: error)
                     ?? .error(id: id, message: error.localizedDescription))
         }

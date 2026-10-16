@@ -36,6 +36,9 @@ final class VNCBridge: @unchecked Sendable {
     // Buffer allocation can precede a failed native handshake. Only a successful
     // initialize call makes the client available to readers, input and observers.
     private var clientReady = false
+    // Connection generation whose modifier release sync has been written
+    // (native queue only); 0 means none yet.
+    private var modifiersSyncedGeneration = 0
     // One bit per pixel, bounded by the checked framebuffer allocation (at
     // most 32 MiB even for one-byte pixels). Discarded after initial coverage.
     // A rectangle count or summed area cannot detect overlap and holes.
@@ -1108,6 +1111,27 @@ final class VNCBridge: @unchecked Sendable {
         }
     }
 
+    /// Every Shift/Control/Alt/Meta/Super keysym. Closed under the Apple wire
+    /// mapping, so these raw values cover every modifier on either server kind.
+    static let modifierKeysyms: [UInt32] = [
+        0xFFE1, 0xFFE2, 0xFFE3, 0xFFE4, 0xFFE9, 0xFFEA, 0xFFE7, 0xFFE8, 0xFFEB, 0xFFEC,
+    ]
+
+    /// Modifier sync: a release-only key-up for every modifier, written once
+    /// per connection generation immediately before its first input. A
+    /// modifier left down by an earlier client or session cannot combine with
+    /// this owner's input. Deferred from connect so a connection used only for
+    /// observation still writes no input at all. Never presses anything.
+    private func syncModifiersBeforeFirstInput(_ client: UnsafeMutablePointer<rfbClient>) throws {
+        let generation = framebufferDiagnostics.connectionGeneration
+        guard modifiersSyncedGeneration != generation else { return }
+        for key in Self.modifierKeysyms {
+            guard operations.sendKey(client, key, false) else { throw VNCError.sendFailed("modifier release sync") }
+            ledgerInput(client, type: rfbKeyEvent)
+        }
+        modifiersSyncedGeneration = generation
+    }
+
     func sendMouseEvent(x: Int, y: Int, buttonMask: Int = 0,
                         context: VNCInputContext? = nil, releaseOnly: Bool = false,
                         inputPermit: NativeInputPermit? = nil) async throws {
@@ -1127,7 +1151,10 @@ final class VNCBridge: @unchecked Sendable {
                   let nativeX = Int32(exactly: pointerX), let nativeY = Int32(exactly: pointerY) else {
                 throw VNCError.sendFailed("Pointer coordinates outside current framebuffer")
             }
-            if !releaseOnly { try inputPermit?.check(context: context) }
+            if !releaseOnly {
+                try inputPermit?.check(context: context)
+                try syncModifiersBeforeFirstInput(client)
+            }
             guard operations.sendPointer(client, nativeX, nativeY, Int32(buttonMask)) else {
                 throw VNCError.sendFailed("pointer event")
             }
@@ -1147,7 +1174,10 @@ final class VNCBridge: @unchecked Sendable {
             try admitSettledInput()
             // Apple's server: Super is Command and Meta is Option.
             let wireKey = Self.wireKeysym(key, appleServer: isMacOS)
-            if !releaseOnly { try inputPermit?.check(context: context) }
+            if !releaseOnly {
+                try inputPermit?.check(context: context)
+                try syncModifiersBeforeFirstInput(client)
+            }
             guard operations.sendKey(client, wireKey, down) else { throw VNCError.sendFailed("key event") }
             ledgerInput(client, type: rfbKeyEvent)
         }

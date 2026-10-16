@@ -32,11 +32,33 @@ An example click, once its location has been observed, is:
 {"action":"mouse_click","x":640,"y":400,"button":"left"}
 ```
 
-Other input actions include `mouse_double_click`, `mouse_move`, `hover`,
-`nudge`, `mouse_drag`, `scroll`, `key_tap`, `key_combo`, `key_type`, and `paste`.
-Use the schema's actual fields and bounds. `paste` uses clipboard behavior;
-choose `key_type` when modifying the clipboard is inappropriate. Do not send
-secrets through either action.
+Other input actions include `mouse_double_click`, `triple_click`,
+`mouse_move`, `hover`, `nudge`, `mouse_drag`, `scroll`, `key_tap`,
+`key_combo`, `hold_key`, `key_type`, and `paste`. Use the schema's actual
+fields and bounds. `paste` uses clipboard behavior; choose `key_type` when
+modifying the clipboard is inappropriate. Do not send secrets through either
+action.
+
+- `mouse_click` accepts `modifiers` (for example `["shift"]` or `["cmd"]`),
+  pressed before the click and released after it in the same call.
+- `mouse_drag` accepts `button` (`left`, `right` or `middle`).
+- `hold_key {key, duration_ms}` holds one key for up to 10000 ms and releases
+  it before the call returns, including on cancellation or failure.
+- `cursor_position` returns the last pointer position Fruitctl wrote, in
+  scaled coordinates. It is Fruitctl's own record, not the server's cursor;
+  the target's cursor can differ after local mouse movement.
+- `mouse_down {x, y, button?}` and `mouse_up {x?, y?, button?}` are valid only
+  inside one `action_queue` batch. A held button stays pressed across that
+  batch's later actions (so `mouse_move` drags) and is force-released at batch
+  end or abort; a hold never spans two calls. As a single `vnc_command` both
+  are refused with code `-32011` and `data.reason: hold_outside_batch`. A
+  batch that releases a button it did not press, or presses a held button
+  twice, is refused before any action runs (`button_not_held`,
+  `button_already_held`).
+
+Before the first input on each VNC connection, Fruitctl writes one key-up for
+every modifier so a modifier left down by an earlier client cannot combine
+with this session's input. It never presses a key for this.
 
 After input, request a fresh screenshot and verify the intended visible state.
 `cursor_crop` can inspect detail; `detect_elements` supplies OCR;

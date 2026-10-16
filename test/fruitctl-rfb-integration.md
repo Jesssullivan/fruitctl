@@ -45,13 +45,22 @@ per request mode. The MCP run adds four more:
   dimensions, allocation metadata and every RGB pixel, and require an increasing
   server marker. Each capture follows pointer input and must contain the marker
   at the exact coordinate received by the RFB server. Button and key press/release
-  messages are also checked.
+  messages are also checked, after the release-only key-up for every modifier
+  that precedes the connection's first input.
+- Native only, after the captures: `triple_click`, a `shift`+`cmd`
+  `mouse_click`, a right-button `mouse_drag`, a 150 ms `hold_key` and
+  `cursor_position`, then batch-scoped holds: an unscoped `mouse_down` must be
+  refused with `-32011` `hold_outside_batch` and write nothing, a scoped hold
+  must stay pressed across a move until `mouse_up`, a request from outside the
+  batch must force-release a live hold, and `release_holds` must release one.
+  Every resulting RFB message is compared exactly, in order.
 - After a prior complete capture, return only half of the framebuffer. Require
   an error with no image within ten seconds; cached complete pixels must not
   become a successful fresh capture.
 - Advertise a full raw rectangle, send half its bytes and close the connection.
   Require an error with no image within ten seconds.
-- Native only: send `key_combo ["alt","cmd","n"]` and require Alt_L down,
+- Native only: send `key_combo ["alt","cmd","n"]` and require, after the
+  release-only modifier key-ups that precede the first input, Alt_L down,
   Meta_L down, `n` down/up, then Meta_L and Alt_L up. Then stop answering
   non-incremental requests. Require the original five-second fresh-capture
   timeout with no image, no superseding incremental request during the pending
