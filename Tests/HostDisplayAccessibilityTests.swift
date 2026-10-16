@@ -190,6 +190,10 @@ final class HostDisplayAccessibilityTests: XCTestCase {
                                                                        root: app)])["nodes"]).first.flatMap(object))
         XCTAssertEqual(node["label"], .string(String(repeating: "x", count: 256)))
         XCTAssertEqual(node["value"], .string(String(repeating: "x", count: 256)))
+        let wide = HostAccessibilitySnapshot.bounded(String(repeating: "\u{1F600}", count: 200))
+        XCTAssertEqual(wide.utf16.count, 256)
+        XCTAssertEqual(wide, String(repeating: "\u{1F600}", count: 128))
+        XCTAssertEqual(HostAccessibilitySnapshot.bounded("x" + String(repeating: "\u{1F600}", count: 200)).utf16.count, 255)
 
         let own = HostAXApplication(processID: 9, bundleID: nil, name: nil, root: FakeAXNode("AXApplication"))
         let other = HostAXApplication(processID: 4, bundleID: nil, name: nil, root: FakeAXNode("AXApplication"))

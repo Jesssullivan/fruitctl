@@ -122,7 +122,8 @@ enum HostAccessibilitySnapshot {
                        geometry: HostDisplayGeometry) -> [String: HostValue] {
         var result: [String: HostValue] = ["ref": .string(ref), "parent": parent.map { .string($0) } ?? .null,
                                            "depth": .integer(Int64(depth)),
-                                           "role": .string(bounded(attributes.role ?? "AXUnknown"))]
+                                           "role": .string(bounded(attributes.role.flatMap {
+                                               $0.isEmpty ? nil : $0 } ?? "AXUnknown"))]
         if let subrole = attributes.subrole { result["subrole"] = .string(bounded(subrole)) }
         if let label = attributes.label, !label.isEmpty { result["label"] = .string(bounded(label)) }
         if attributes.isSecure {
@@ -140,8 +141,18 @@ enum HostAccessibilitySnapshot {
         return result
     }
 
+    /// Bounds UTF-16 length (the broker's string length) on a character
+    /// boundary, so truncation never splits a surrogate pair or a grapheme.
     static func bounded(_ text: String) -> String {
-        text.count <= maximumText ? text : String(text.prefix(maximumText))
+        guard text.utf16.count > maximumText else { return text }
+        var length = 0
+        var end = text.startIndex
+        for character in text {
+            length += character.utf16.count
+            guard length <= maximumText else { break }
+            end = text.index(after: end)
+        }
+        return String(text[..<end])
     }
 }
 
@@ -180,7 +191,7 @@ struct HostSystemAXNode: HostAXNode, @unchecked Sendable {
         guard limit > 0, AXUIElementCopyAttributeValues(element, kAXChildrenAttribute as CFString, 0,
                                                         limit, &values) == .success,
               let items = values as? [AnyObject] else { return [] }
-        return items.compactMap { item in
+        return items.compactMap { item -> HostAXNode? in
             guard CFGetTypeID(item) == AXUIElementGetTypeID() else { return nil }
             return HostSystemAXNode(element: item as! AXUIElement)
         }
