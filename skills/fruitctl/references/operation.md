@@ -89,6 +89,8 @@ a capture that cannot get fresh pixels fails as `-32010` `stale_screen`.
   (50-10000). After `timeout_ms` (100-20000, at least `stable_ms`) it fails
   with code `-32011`, `data.reason: stable_timeout`. Ignore animated areas
   such as clocks, cursors and progress indicators that never stop changing.
+  It returns no image, so it never authorizes input: input stays authorized
+  by your last image observation only while the display is unchanged.
 
 With the optional host helper configured, screenshots use its owned
 ScreenCaptureKit image. OCR, crop, baseline, diff, zoom, stability and queue
@@ -120,6 +122,10 @@ A step may carry `expect`, checked with fresh captures right after that step:
   `timeout_ms` (default 3000) for the change to appear.
 - `stable_ms` then waits until the screen is unchanged for that long, allowing
   `timeout_ms` plus `stable_ms` in total.
+
+Expectations never authorize later input. If the display changes identity
+mid-batch (resize or reconnect), the next input step is refused until a new
+screenshot.
 
 An unmet expectation fails as code `-32011` with `data.reason`
 `change_not_observed` or `stable_timeout` and stops the batch at that step;

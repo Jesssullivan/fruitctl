@@ -86,7 +86,10 @@ per request mode. The MCP run adds four more:
   the exact native region. A region `diff_check` with an ignore mask must
   report exactly the unmasked changed box at ratio 1. `wait_for_stable` must
   settle when the whole display is ignored, and must fail as `-32011`
-  `stable_timeout` within its bound when it is not. Every other
+  `stable_timeout` within its bound when it is not. After that failure,
+  neither `expect_baseline` nor a settled `wait_for_stable` may grant input
+  authorization: a following `mouse_move` must be refused and send nothing.
+  Every other
   combination must return JSON-RPC `-32010` with `data.reason`
   `server_silent` within the original five-second deadline and no image. Each
   scenario runs the daemon with `--rfb-wire-ledger` and requires the ledger's

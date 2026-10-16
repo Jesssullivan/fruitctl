@@ -230,7 +230,10 @@ was fresh. A capture failure inside the wait stays `-32010` `stale_screen`.
 cached frame. A queue step's `expect` runs in the same executor operation as
 the step, as private native methods: `expect_baseline` before the step, then
 `expect_change` and `wait_for_stable` after it. An unmet expectation therefore
-stops the batch before the next step's input.
+stops the batch before the next step's input. `wait_for_stable` and the
+expectation methods return no image, so they keep the request's prior input
+authorization only while the display identity is unchanged and never grant
+one; `zoom`, like `screenshot`, adopts its frame.
 
 The Host route answers `screenshot` from its own ScreenCaptureKit image. It
 refuses every observation computed from raw VNC pixels before admission:

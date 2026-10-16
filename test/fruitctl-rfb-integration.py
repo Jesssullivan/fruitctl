@@ -960,6 +960,18 @@ def run_observation_v2(session, request_mode, windows):
             and data.get("captures", 0) >= 2 and not response["image"],
             "changing screen did not time out as stable_timeout: %r" % (error,))
     require(0.6 <= elapsed < 6.0, "stable_timeout ignored its bound: %.3fs" % elapsed)
+
+    # The failed wait revoked input authorization. Image-less checks may keep
+    # one but never grant one, so input stays refused and never reaches the
+    # server (this scenario must stay input-free).
+    for method, params in (("expect_baseline", {}),
+                           ("wait_for_stable", {"stable_ms": 50, "timeout_ms": 1000,
+                                                "ignore": [{"x": 0, "y": 0, "width": WIDTH, "height": HEIGHT}]})):
+        response, _ = timed(method, **params)
+        require(not response["error"], "%s failed: %r" % (method, response["error"]))
+        blocked = session.action("mouse_move", x=1, y=1)
+        require(blocked["error"] and "Observed display changed" in blocked["error"].get("message", ""),
+                "%s granted input authorization from a frame the caller never saw: %r" % (method, blocked["error"]))
     return {"zoom": zoom, "diff": diff, "stable": stable,
             "stableTimeout": {"code": error["code"], "reason": data["reason"], "captures": data["captures"],
                               "elapsedMilliseconds": round(elapsed * 1000, 3)}}

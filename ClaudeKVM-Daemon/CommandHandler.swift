@@ -148,6 +148,8 @@ extension ClaudeKVMDaemon {
             }
             // Screen observations require newly received full pixel coverage,
             // then encode an owned copy bound to the admitted generation.
+            // Image-less checks may keep this authorization, never widen it.
+            let priorContext = input.context
             let capturedFrame: VNCBridge.FrameCapture?
             switch req.method {
             case "screenshot", "cursor_crop", "diff_check", "set_baseline", "detect_elements",
@@ -250,7 +252,7 @@ extension ClaudeKVMDaemon {
                     stability.observe(changed: diff.changed, atMilliseconds: Self.monotonicMilliseconds())
                     frame = next
                 }
-                input.context = frame.inputContext
+                input.context = Self.retainedAuthorization(priorContext, frame.inputContext)
                 let elapsed = Int(stability.elapsed(atMilliseconds: Self.monotonicMilliseconds()))
                 respond(.success(id: id,
                                   detail: "stable for \(stability.stableForMilliseconds) ms after \(elapsed) ms",
@@ -263,7 +265,7 @@ extension ClaudeKVMDaemon {
             case "expect_baseline":
                 guard let frame = capturedFrame else { throw VNCError.sendFailed("No framebuffer") }
                 Self.expectationBaseline.set(frame.pixels, context: frame.inputContext)
-                input.context = frame.inputContext
+                input.context = Self.retainedAuthorization(priorContext, frame.inputContext)
                 respond(.success(id: id, detail: "OK", frameContext: frame.inputContext, provenance: frame.provenance))
 
             case "expect_change":
@@ -280,7 +282,7 @@ extension ClaudeKVMDaemon {
                                                     context: frame.inputContext, include: [rect], exclude: [],
                                                     scaledWidth: scaling.scaledWidth, scaledHeight: scaling.scaledHeight)
                     if diff.changed {
-                        input.context = frame.inputContext
+                        input.context = Self.retainedAuthorization(priorContext, frame.inputContext)
                         respond(.success(id: id, detail: "changeObserved: true", frameContext: frame.inputContext,
                                           provenance: frame.provenance, diff: diff))
                         break
@@ -679,6 +681,14 @@ extension ClaudeKVMDaemon {
     static let expectChangePollMs: UInt64 = 100
 
     static func monotonicMilliseconds() -> UInt64 { DispatchTime.now().uptimeNanoseconds / 1_000_000 }
+
+    /// wait_for_stable and the queue expectation primitives return no image,
+    /// so the caller never saw their frame. They keep the request's prior
+    /// input authorization only while the display identity is unchanged, and
+    /// never grant one: a changed display still needs a new screenshot.
+    static func retainedAuthorization(_ prior: VNCInputContext?, _ current: VNCInputContext) -> VNCInputContext? {
+        prior == current ? prior : nil
+    }
 
     /// Every fresh frame refreshes the mapping before use. Nothing authorizes
     /// input until a handler adopts the frame that it actually encoded.
