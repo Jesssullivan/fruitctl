@@ -306,8 +306,10 @@ always `null` because no input is written to obtain an observation.
 `ordered_after_prior_input` is `true` only when no request was believed
 outstanding at admission and no request leaked through the on-demand gate
 while the observation was pending. Only then must every update that completed
-it answer a request written after any earlier input. Stream mode always has
-LibVNC's re-arm outstanding, so it always reports `false`.
+it answer a request written after any earlier input. Stream mode usually has
+LibVNC's re-arm or a poll outstanding, so it usually reports `false`; an
+observation admitted right after another, before the stream resumes, can
+find nothing outstanding.
 
 On Apple's server the daemon writes Command as `Super_L`/`Super_R` and Option
 as `Meta_L`/`Meta_R`; the `cmd` and `alt`/`option` key names are unchanged.

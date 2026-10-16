@@ -1011,16 +1011,18 @@ def require_provenance(metadata, request_mode, method):
     require(isinstance(prior, dict) and set(prior) == {"full", "incremental"}
             and all(isinstance(value, int) and value >= 0 for value in prior.values()),
             "%s prior unanswered requests %r" % (method, prior))
-    # Ordering is claimed only when nothing was outstanding at admission. In
-    # stream mode LibVNC's re-arm always is; on demand, after an answered
-    # connect request with no leak, nothing is.
+    # Ordering is claimed only when nothing was outstanding at admission. On
+    # demand, after an answered connect request with no leak, nothing is. In
+    # stream mode a re-arm or poll usually is; a capture admitted right after
+    # another, before the stream resumes, may find nothing outstanding, and
+    # then claims ordering exactly as on demand (no fixture leaks a re-arm).
     if request_mode == "on-demand":
         require(requests.get("incremental") == 0, "%s on-demand capture wrote incremental requests" % method)
         require(prior == {"full": 0, "incremental": 0} and provenance["ordered_after_prior_input"] is True,
                 "%s on-demand ordering %r" % (method, provenance))
     else:
-        require(prior["incremental"] >= 1 and provenance["ordered_after_prior_input"] is False,
-                "%s stream mode claimed ordering %r" % (method, provenance))
+        require(provenance["ordered_after_prior_input"] is (prior == {"full": 0, "incremental": 0}),
+                "%s stream mode ordering disagrees with outstanding requests %r" % (method, provenance))
     return provenance
 
 

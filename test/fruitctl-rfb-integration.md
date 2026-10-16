@@ -79,8 +79,9 @@ per request mode. The MCP run adds four more:
   screenshot, `cursor_crop`, `diff_check`, `set_baseline` and
   `detect_elements` results must each carry capture provenance. On demand,
   each must report no request outstanding at admission and
-  `ordered_after_prior_input: true`; in stream mode, LibVNC's re-arm is
-  outstanding, so each must report `false`. The same fresh-answering
+  `ordered_after_prior_input: true`; in stream mode each must report `true`
+  exactly when no request was outstanding at admission (usually a re-arm or
+  poll is, so `false`). The same fresh-answering
   scenarios check observation v2 (TIN-6598). Every fixture update has a new
   marker color, so any cached frame would compare equal. A `zoom` must return
   the exact native region. A region `diff_check` with an ignore mask must
