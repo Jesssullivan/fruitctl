@@ -134,6 +134,35 @@ let
     };
   };
   helperDocument = builtins.fromJSON helperDarwin.home.file."Library/Application Support/fruitctl/config.json".text;
+  uuidHelper = mapping: {
+    enable = true;
+    targets.desktop = {
+      credentialFile = "/Users/fruitctl-test/.config/private/desktop-password";
+      daemonPath = "/Users/fruitctl-test/Applications/qualified-native/claude-kvm-daemon";
+      hostHelper = {
+        sshHost = "fixture-target";
+        command = [ "/Users/fixture/Applications/FruitctlHost.app/Contents/MacOS/FruitctlHost" "--stdio" ];
+        displayUuid = "37d8832a-2d66-02ca-b9f7-8f30a301b230";
+        inherit mapping;
+      };
+    };
+  };
+  uuidMapping = {
+    qualificationReceipt = "fixture/owned-capture-mapping.json";
+    displayUuid = "37D8832A-2D66-02CA-B9F7-8F30A301B230";
+    scale = 2;
+    nativeWidth = 3024;
+    nativeHeight = 1964;
+    scaledWidth = 1512;
+    scaledHeight = 982;
+    displayBounds = { x = 0; y = 0; width = 1512; height = 982; };
+  };
+  uuidDocument = builtins.fromJSON (evaluate "aarch64-darwin" (uuidHelper uuidMapping)).home.file."Library/Application Support/fruitctl/config.json".text;
+  uuidRejected = rejected "aarch64-darwin" (uuidHelper (uuidMapping // { displayUuid = "00000000-0000-4000-8000-000000000000"; }))
+    && rejected "aarch64-darwin" (uuidHelper (uuidMapping // { scale = 0.5; }))
+    && rejected "aarch64-darwin" (uuidHelper (uuidMapping // { displayId = 7; }))
+    && rejected "aarch64-darwin" (pkgs.lib.recursiveUpdate (uuidHelper null) { targets.desktop.hostHelper.displayUuid = "not-a-uuid"; })
+    && rejected "aarch64-darwin" (pkgs.lib.recursiveUpdate (uuidHelper null) { targets.desktop.hostHelper.displayUuid = null; });
   linuxRelay = linux.systemd.user.services.fruitctl-relay.Service;
   darwinBroker = darwin.launchd.agents.fruitctl-broker.config;
   linuxFiles = linux.xdg.configFile;
@@ -218,6 +247,12 @@ assert darwinDocument.targets.desktop.credentialFile == "/Users/fruitctl-test/.c
 assert helperDocument.targets.desktop.hostHelper.mapping.displayBounds.x == -1920;
 assert helperDocument.targets.desktop.hostHelper.mapping.nativeWidth == 3840;
 assert helperDocument.targets.desktop.hostHelper.mapping.qualificationReceipt == "fixture/owned-capture-mapping.json";
+assert !(helperDocument.targets.desktop.hostHelper ? displayUuid) && !(helperDocument.targets.desktop.hostHelper.mapping ? scale);
+assert !(helperDocument.targets.desktop.hostHelper.mapping ? displayUuid);
+assert uuidDocument.targets.desktop.hostHelper.displayUuid == "37d8832a-2d66-02ca-b9f7-8f30a301b230";
+assert !(uuidDocument.targets.desktop.hostHelper ? displayId) && !(uuidDocument.targets.desktop.hostHelper.mapping ? displayId);
+assert uuidDocument.targets.desktop.hostHelper.mapping.scale == 2;
+assert uuidRejected && !(rejected "aarch64-darwin" (uuidHelper uuidMapping)) && !(rejected "aarch64-darwin" (uuidHelper null));
 assert darwinBroker.ProgramArguments == [ "${darwin.programs.fruitctl.package}/bin/fruitctl" "broker" "--socket" "/Users/fruitctl-test/Library/Application Support/fruitctl/run/broker.sock" "--config" "/Users/fruitctl-test/Library/Application Support/fruitctl/config.json" ];
 assert builtins.elem ".agents/skills/fruitctl" skillRoots && builtins.elem ".claude/skills/fruitctl" skillRoots && builtins.elem ".junie/skills/fruitctl" skillRoots;
 assert credentialRejected && missingBridgeRejected && noProfilesRejected && missingDarwinCredentialRejected && missingDarwinNativeRejected;

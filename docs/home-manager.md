@@ -202,6 +202,15 @@ qualified private work and defaults to null; configuring it does not install or
 start an app. Home Manager never creates a qualification receipt or infers
 display geometry.
 
+`hostHelper` names its display by `displayId`, `displayUuid`, or both. The
+CoreGraphics display UUID survives display-ID changes across reconnects; run
+the Host with the same `--display-uuid` (`FruitctlHost --doctor` lists online
+UUIDs). A UUID-only profile learns the current ID from validated Host health, and
+every request carries the UUID for the Host to recheck. A qualified `mapping`
+repeats the same identity and may set `scale` (pixels per point, 1-8): a capture
+at another scale then refuses input even when its pixel sizes match. Unset
+fields are omitted from the generated configuration, never written as null.
+
 The `native-controller` package extracts only the unchanged signed controller
 from the [alpha.3 Darwin runtime](https://github.com/xoxd-ai/fruitctl/releases/tag/v0.1.0-alpha.3).
 Its output contains `bin/claude-kvm-daemon`, the native notices and curated

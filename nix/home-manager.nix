@@ -19,10 +19,11 @@ let
   } // lib.optionalAttrs (target.daemonPath != null || nativePath != null) {
     daemonPath = if target.daemonPath != null then target.daemonPath else nativePath;
   } // lib.optionalAttrs (target.hostHelper != null) {
-    hostHelper = {
-      inherit (target.hostHelper) sshHost command displayId;
+    # Unset display identities and mapping fields stay absent, never null.
+    hostHelper = lib.filterAttrs (_: value: value != null) {
+      inherit (target.hostHelper) sshHost command displayId displayUuid;
     } // lib.optionalAttrs (target.hostHelper.mapping != null) {
-      inherit (target.hostHelper) mapping;
+      mapping = lib.filterAttrs (_: value: value != null) target.hostHelper.mapping;
     };
   };
   brokerConfig = {
@@ -88,14 +89,17 @@ let
           options = {
             sshHost = lib.mkOption { type = lib.types.str; description = "Existing SSH host alias for the separately installed capture/indicator helper."; };
             command = lib.mkOption { type = lib.types.listOf lib.types.str; description = "Absolute helper executable and literal arguments; no shell expression."; };
-            displayId = lib.mkOption { type = lib.types.nullOr lib.types.ints.unsigned; default = null; description = "Qualified target display identifier."; };
+            displayId = lib.mkOption { type = lib.types.nullOr lib.types.ints.unsigned; default = null; description = "Qualified target display identifier. Set this, displayUuid, or both."; };
+            displayUuid = lib.mkOption { type = lib.types.nullOr lib.types.str; default = null; description = "CoreGraphics display UUID (FruitctlHost --doctor lists them). Survives display-ID changes; the Host must run with the same --display-uuid."; };
             mapping = lib.mkOption {
               default = null;
               description = "Qualified capture-to-native input mapping. Without it the helper permits observations only.";
               type = lib.types.nullOr (lib.types.submodule {
                 options = {
                   qualificationReceipt = lib.mkOption { type = lib.types.str; description = "Durable qualification receipt identifying this measured mapping."; };
-                  displayId = lib.mkOption { type = lib.types.ints.positive; description = "Display identifier matching hostHelper.displayId."; };
+                  displayId = lib.mkOption { type = lib.types.nullOr lib.types.ints.positive; default = null; description = "Display identifier matching hostHelper.displayId (null when that is unset)."; };
+                  displayUuid = lib.mkOption { type = lib.types.nullOr lib.types.str; default = null; description = "Display UUID matching hostHelper.displayUuid (null when that is unset)."; };
+                  scale = lib.mkOption { type = lib.types.nullOr lib.types.number; default = null; description = "Qualified HiDPI scale (pixels per point). When set, a capture at another scale refuses input."; };
                   nativeWidth = lib.mkOption { type = lib.types.ints.positive; description = "Qualified native framebuffer width in pixels."; };
                   nativeHeight = lib.mkOption { type = lib.types.ints.positive; description = "Qualified native framebuffer height in pixels."; };
                   scaledWidth = lib.mkOption { type = lib.types.ints.positive; description = "Qualified observation width in pixels."; };
@@ -116,6 +120,8 @@ let
     };
   };
   absolute = value: value != null && lib.hasPrefix "/" value && !(lib.hasInfix "\n" value);
+  displayUuid = value: builtins.match "[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}" value != null;
+  sameUuid = left: right: if left == null || right == null then left == right else lib.toUpper left == lib.toUpper right;
 in {
   options.programs.fruitctl = {
     enable = lib.mkEnableOption "Fruitctl runtime, shared session service and agent skills";
@@ -216,8 +222,8 @@ in {
         { assertion = isDarwin || (cfg.bridgeHost != null && cfg.bridgeHost != "" && !(lib.hasPrefix "-" cfg.bridgeHost) && !(lib.hasInfix "\n" cfg.bridgeHost)); message = "Linux Fruitctl requires an existing Darwin bridgeHost SSH alias."; }
         { assertion = isDarwin || (cfg.nativePackage == null && builtins.all (name: cfg.targets.${name}.targetId == null && cfg.targets.${name}.inputSource == null && cfg.targets.${name}.credentialFile == null && cfg.targets.${name}.daemonPath == null && cfg.targets.${name}.hostHelper == null && cfg.targets.${name}.vnc.username == "" && cfg.targets.${name}.vnc.host == "127.0.0.1" && cfg.targets.${name}.vnc.port == 15900) targetNames); message = "Linux declares Fruitctl target names only; configure physical identities, VNC, credentials and native clients on the Darwin bridge."; }
         { assertion = !isDarwin || builtins.all (name: absolute cfg.targets.${name}.credentialFile && absolute (if cfg.targets.${name}.daemonPath != null then cfg.targets.${name}.daemonPath else nativePath)) targetNames; message = "Each Darwin Fruitctl target requires an absolute credentialFile and a qualified daemonPath or nativePackage."; }
-        { assertion = builtins.all (name: let helper = cfg.targets.${name}.hostHelper; in helper == null || (helper.sshHost != "" && builtins.length helper.command == 2 && absolute (builtins.head helper.command) && builtins.elemAt helper.command 1 == "--stdio" && helper.displayId != null && helper.displayId > 0)) targetNames; message = "Fruitctl hostHelper requires an SSH alias, [ absolute-executable --stdio ] command and positive displayId."; }
-        { assertion = builtins.all (name: let helper = cfg.targets.${name}.hostHelper; mapping = if helper == null then null else helper.mapping; in mapping == null || (mapping.qualificationReceipt != "" && mapping.displayId == helper.displayId && mapping.displayBounds.width > 0 && mapping.displayBounds.height > 0)) targetNames; message = "Fruitctl hostHelper mapping requires its qualification receipt, matching displayId and positive display bounds."; }
+        { assertion = builtins.all (name: let helper = cfg.targets.${name}.hostHelper; in helper == null || (helper.sshHost != "" && builtins.length helper.command == 2 && absolute (builtins.head helper.command) && builtins.elemAt helper.command 1 == "--stdio" && (helper.displayId != null || helper.displayUuid != null) && (helper.displayId == null || helper.displayId > 0) && (helper.displayUuid == null || displayUuid helper.displayUuid))) targetNames; message = "Fruitctl hostHelper requires an SSH alias, [ absolute-executable --stdio ] command and a positive displayId or a displayUuid."; }
+        { assertion = builtins.all (name: let helper = cfg.targets.${name}.hostHelper; mapping = if helper == null then null else helper.mapping; in mapping == null || (mapping.qualificationReceipt != "" && mapping.displayId == helper.displayId && sameUuid mapping.displayUuid helper.displayUuid && (mapping.scale == null || (mapping.scale >= 1 && mapping.scale <= 8)) && mapping.displayBounds.width > 0 && mapping.displayBounds.height > 0)) targetNames; message = "Fruitctl hostHelper mapping requires its qualification receipt, matching displayId/displayUuid, a scale within 1-8 when set, and positive display bounds."; }
       ];
       home.file = lib.optionalAttrs isDarwin {
         "Library/Application Support/fruitctl/config.json".text = builtins.toJSON brokerConfig + "\n";

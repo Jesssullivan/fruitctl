@@ -128,6 +128,8 @@ export function vncCommandTool() {
       '  key_type       {text}                   → type text character by character',
       '  paste          {text}                   → paste text via clipboard',
       '  detect_elements                         → OCR text detection with bounding boxes',
+      '  ax_snapshot    {depth?, focused_app?}   → Host route only: live Accessibility tree with',
+      '                                            role/label/value/frame and structural refs',
       '  configure      {<params>}               → set timing/display params at runtime',
       '  configure      {reset: true}            → reset all params to defaults',
       '  get_timing                              → get current timing + display params',
@@ -144,7 +146,7 @@ export function vncCommandTool() {
         'mouse_click', 'mouse_double_click', 'mouse_move', 'hover', 'nudge',
         'mouse_drag', 'scroll',
         'key_tap', 'key_combo', 'key_type', 'paste',
-        'detect_elements',
+        'detect_elements', 'ax_snapshot',
         'configure', 'get_timing',
         'wait', 'health', 'shutdown',
         'triple_click', 'cursor_position', 'hold_key', 'mouse_down', 'mouse_up',
@@ -171,6 +173,8 @@ export function vncCommandTool() {
       stable_ms: stableMs().optional().describe('wait_for_stable: unchanged duration required'),
       timeout_ms: z.number().int().min(100).max(20000).optional()
         .describe('wait_for_stable: give up with a typed stable_timeout error after this long'),
+      depth: z.number().int().min(1).max(12).optional().describe('ax_snapshot levels below each application (default 6)'),
+      focused_app: z.boolean().optional().describe('ax_snapshot: frontmost application only (default true)'),
       // Configure params (runtime timing/display adjustment)
       reset: z.boolean().optional().describe('Reset all params to defaults'),
       max_dimension: z.number().int().min(320).max(3840).optional()

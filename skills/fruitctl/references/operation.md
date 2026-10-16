@@ -101,6 +101,17 @@ requires an operator-qualified mapping receipt and the native observation
 handshake. If either is unavailable or geometry changes, stop input and report
 the qualification gap.
 
+On the Host route, `vnc_command` action `ax_snapshot` (`depth` 1-12, default 6;
+`focused_app`, default `true`) returns the live Accessibility tree: each node's
+`role`, `label`, `value`, `frame` in framebuffer pixels, `display_frame` in the
+current scaled screenshot coordinates, and a structural `ref`. Secure text is
+redacted. `truncated: true` means the depth, node or time budget ended the read.
+It is observation only: it authorizes no input, does not replace a fresh
+screenshot for verification, and refs are not clickable handles. The raw route
+refuses it with code `unsupported_on_route`; a Host without the Accessibility
+grant refuses it with `accessibility_permission_required`. Report either; do not
+change grants yourself.
+
 If a capture fails or pixels/geometry are uncertain, stop input. After a
 resize/display change, re-establish the session's scaled mapping before acting;
 do not reuse the prior image coordinates. If the frontend cannot render the
