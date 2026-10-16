@@ -284,18 +284,27 @@ jobs:
         if: failure() && needs.changes.outputs.native != 'false'
         env:
           FRUITCTL_NATIVE_CI_OUTPUT: ${{ runner.temp }}/fruitctl-native-${{ github.run_id }}-${{ github.run_attempt }}
+          FRUITCTL_NATIVE_DEPS: ${{ runner.temp }}/fruitctl-native-deps
+          NATIVE_DEPS_OUTCOME: ${{ steps.deps-build.outcome }}
         shell: bash
         run: |
           set -euo pipefail
-          python3 -I - "$FRUITCTL_NATIVE_CI_OUTPUT" <<'PY'
+          # A cold-cache dependency failure leaves its receipt and logs in the
+          # dependency directory, not the controller build directory.
+          outputs=("$FRUITCTL_NATIVE_CI_OUTPUT")
+          if test "$NATIVE_DEPS_OUTCOME" = failure; then
+            outputs=("$FRUITCTL_NATIVE_DEPS" "${outputs[@]}")
+          fi
+          python3 -I - "${outputs[@]}" <<'PY'
           import json
           from pathlib import Path
           import sys
-          output = Path(sys.argv[1])
-          receipt = output / "build-receipt.json"
-          if receipt.is_file():
+          for output in map(Path, sys.argv[1:]):
+              receipt = output / "build-receipt.json"
+              if not receipt.is_file():
+                  continue
               value = json.loads(receipt.read_text())
-              print("Native build:", value.get("status"), value.get("failureClass", ""))
+              print("Native build:", value.get("kind"), value.get("status"), value.get("failureClass", ""))
               label = (value.get("commands") or [{}])[-1].get("label")
               if isinstance(label, str) and Path(label).name == label:
                   log = output / "logs" / (label + ".log")
