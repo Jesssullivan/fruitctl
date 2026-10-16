@@ -164,6 +164,29 @@ deadlines and the `-32013` `input_not_ready` error work. This is one
 measurement of one target, not a qualification of other macOS releases or
 of plain Screen Sharing without Remote Management.
 
+### Apple Screen Sharing quirks observed 2026-10-16
+
+Observed on one macOS 26.7.1 target (PZM) with Remote Management on. These are
+observations of one target, not qualifications.
+
+- **Post-auth input-ignore window.** `screensharingd` logs `ignore key event`
+  and drops input for about 2.5 to 2.8 s after authentication. See
+  [Apple input settle time](#apple-input-settle-time); the controller's
+  `--input-settle-ms` handles it.
+- **Menu-bar indicator fade-in.** macOS fades in its "Screen Sharing active"
+  menu-bar indicator about 1 to 2 s after a viewer connects. A new
+  connection's first frame can catch it mid-fade: at 1280x720 scaled, the only
+  differing pixels were at x 1037-1181, y 1-20. The freshness probe's P-eq arm
+  waits `--eq-settle-seconds` and can ignore that band with `--eq-ignore-rect`.
+- **Chrome Remote Desktop.** Keys ignored by `screensharingd` coincided with
+  local input from Chrome Remote Desktop, which was also attached. Doctor
+  warns `remote_input_owner_other` for it; keep one input owner per Mac.
+- **Third-party RFB control.** With Remote Management on and
+  `VNCLegacyConnectionsEnabled` 0, input from third-party RFB clients was
+  observed dropped, but the input-ignore window confounded the test. Doctor
+  warns `remote_management_vnc_control_disabled`
+  ([target profile](target-profile.md#remote-management-rfb-control)).
+
 ## Agents
 
 | Agent | Adoption surface | Release status |

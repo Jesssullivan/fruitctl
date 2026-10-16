@@ -48,6 +48,38 @@ is `ready`, `deviation` or `unknown`. Every deviation also appears in
 | Display sleep (`pmset displaysleep`) | 0 (never) | `display_sleep_enabled` | A sleeping display gives black captures. Not reported while a power assertion holds the display awake. |
 | Handoff (ByHost `com.apple.coreservices.useractivityd ActivityAdvertisingAllowed`, `ActivityReceivingAllowed`) | Off | `handoff_enabled` | Nearby devices add Dock items, and Universal Clipboard can change the clipboard. |
 | Input source (`com.apple.HIToolbox`) | The profile's `inputSource` | `input_source_mismatch` | Typed input is interpreted by the selected layout or input method, so the same keys can produce different characters. |
+| RFB control under Remote Management (`/Library/Preferences/com.apple.RemoteManagement VNCLegacyConnectionsEnabled`) | 1, or plain Screen Sharing | `remote_management_vnc_control_disabled` | Input from third-party RFB clients was observed dropped with Remote Management on and this key 0. See [below](#remote-management-rfb-control). |
+| All-local-users privileges (`com.apple.RemoteManagement ARD_AllLocalUsersPrivs`) | Control and Observe (0x02) set, Observe only (0x100) clear | `all_local_users_control_not_granted`, `all_local_users_observe_only` | Input is dropped for any user these privileges cover. |
+
+## Remote Management RFB control
+
+Doctor reads four system keys from `/Library/Preferences/com.apple.RemoteManagement`
+and reports each under `targetPreflight.screenSharing.remoteManagementPrefs`:
+`VNCLegacyConnectionsEnabled`, `ARD_AllLocalUsers`, `ARD_AllLocalUsersPrivs`
+and `ScreenSharingReqPermEnabled`. Each is the value read, `absent` when the
+domain was readable and the key unset, or `unknown`. Whether Remote Management
+or plain Screen Sharing is active is `screenSharing.mode`, from the Remote
+Management activation marker. These are system settings, read without sudo,
+whoever the SSH account is.
+
+- `remote_management_vnc_control_disabled` (`screenSharing.vncControl:
+  disabled`): Remote Management is active and `VNCLegacyConnectionsEnabled` is
+  0. Input from third-party RFB clients was observed dropped in this
+  configuration on PZM on 2026-10-16. Causality is not isolated: a ~2.5 s
+  post-auth input-ignore window, now handled by the controller's
+  `--input-settle-ms`, confounded the test
+  ([compatibility](compatibility.md#apple-screen-sharing-quirks-observed-2026-10-16)).
+  Turning the key on also enables the legacy VNC password, which warns
+  `legacy_vnc_password_enabled`. The operator decides which risk to accept.
+- `all_local_users_control_not_granted` and `all_local_users_observe_only`
+  (`screenSharing.allLocalUsersPrivileges: restricted`): `ARD_AllLocalUsersPrivs`
+  lacks the Control and Observe bit (0x02) or has the Observe-only bit (0x100).
+  When `ARD_AllLocalUsers` is on, the same value is the `remote_control_not_permitted`
+  or `observe_only` failure instead, so it is not reported twice.
+- Neither check applies under plain Screen Sharing (`vncControl:
+  not_applicable`).
+- An unreadable key, or an unknown mode, is `unknown`, never ready. Doctor
+  lists `remote_management_vnc_control_unverified` in `unknowns`.
 
 ## Input source
 

@@ -16,7 +16,8 @@ const SECRET = 'offline-probe-secret-0f3c';
 const USERNAME = 'offline-probe-user';
 
 const fakeDaemon = String.raw`#!/usr/bin/env python3
-import base64, hashlib, json, os, struct, sys
+import base64, hashlib, json, os, struct, sys, time, zlib
+started = time.monotonic()
 argv = sys.argv[1:]
 if argv[-2:] != ["--password-fd", "3"] or "--rfb-wire-ledger" not in argv or "VNC_PASSWORD" in os.environ:
     sys.exit(4)
@@ -25,6 +26,36 @@ length = struct.unpack("!I", os.read(3, 4))[0]
 if hashlib.sha256(os.read(3, length)).hexdigest() != os.environ["FAKE_CREDENTIAL_SHA256"]:
     sys.exit(3)
 scene = os.environ.get("FAKE_SCENE", "static")
+# Connection index across controller processes, for the pixel scenes.
+connection = 0
+if os.environ.get("FAKE_STATE"):
+    try:
+        connection = int(open(os.environ["FAKE_STATE"]).read())
+    except OSError:
+        pass
+    open(os.environ["FAKE_STATE"], "w").write(str(connection + 1))
+def png(marks):
+    # 96x53 RGB, filter 0, black except the marked pixels.
+    rows = [bytearray(96 * 3) for _ in range(53)]
+    for (x, y), value in marks.items():
+        rows[y][x * 3:x * 3 + 3] = bytes([value]) * 3
+    def chunk(kind, body):
+        return struct.pack(">I", len(body)) + kind + body + struct.pack(">I", zlib.crc32(kind + body) & 0xFFFFFFFF)
+    data = zlib.compress(b"".join(b"\0" + bytes(row) for row in rows))
+    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", 96, 53, 8, 2, 0, 0, 0)) +
+            chunk(b"IDAT", data) + chunk(b"IEND", b""))
+def pixels():
+    # The menu-bar band is x 70-89, y 0-5. "fade": the indicator is mid-fade
+    # for 1.5 s after each connection. "band": the second connection's
+    # indicator differs for good. "outside": it also differs outside the band.
+    marks = {(80, 2): 255}
+    if scene == "fade" and time.monotonic() - started < 1.5:
+        marks[(80, 2)] = 128
+    if scene in ("band", "outside") and connection == 1:
+        marks[(80, 2)] = 64
+    if scene == "outside" and connection == 1:
+        marks[(10, 30)] = 200
+    return png(marks)
 def out(message):
     sys.stdout.write(json.dumps(message) + "\n"); sys.stdout.flush()
 def wire(incremental, origin):
@@ -52,7 +83,10 @@ for line in sys.stdin:
         wire(1, "libvnc-rearm")
     if scene == "leak":
         sys.stderr.write("[VNC t] Request gate reopened by the server; closed again\n"); sys.stderr.flush()
-    body = b"\x89PNG\r\n\x1a\n" + (b"frame%d" % count if scene == "changing" else b"static")
+    if scene in ("fade", "band", "outside"):
+        body = pixels()
+    else:
+        body = b"\x89PNG\r\n\x1a\n" + (b"frame%d" % count if scene == "changing" else b"static")
     out({"id": request["id"], "result": {"image": base64.b64encode(body).decode(), "scaledWidth": 96,
          "scaledHeight": 53, "connectionGeneration": 1, "allocation": 1,
          "provenance": {"source": "in_session", "request_mode": mode,
@@ -61,7 +95,7 @@ for line in sys.stdin:
 
 const SHORT = ['--gap-seconds', '0', '--idle-seconds', '0', '--long-idle-seconds', '0',
   '--warm-captures', '2', '--idle-captures', '1', '--long-idle-captures', '1',
-  '--ctl-captures', '2', '--eq-captures', '2', '--eq-gap-seconds', '0'];
+  '--ctl-captures', '2', '--eq-captures', '2', '--eq-gap-seconds', '0', '--eq-settle-seconds', '0'];
 
 function workspace() {
   const dir = mkdtempSync(path.join(tmpdir(), 'fp-'));
@@ -235,9 +269,12 @@ test('P-ctl needs each capture to change; P-eq compares against a new connection
       '--save-images', ...SHORT]);
     assert.equal(same.status, 0, same.stdout);
     const receipt = receiptOf(eq);
-    assert.deepEqual(receipt.captures.map(c => c.session), [0, 0, 1]);
+    assert.deepEqual(receipt.captures.map(c => c.session), [0, 0, 1, 1]);
+    assert.deepEqual(receipt.captures.map(c => c.phase), ['eq-static', 'eq-static', 'eq-new-connection',
+      'eq-new-connection-settled']);
+    assert.equal(receipt.eqComparison.decidedBy, 'settled-sha256');
     assert.equal(receipt.sessions.length, 2);
-    assert.equal(readdirSync(eq).filter(name => name.endsWith('.png')).length, 3);
+    assert.equal(readdirSync(eq).filter(name => name.endsWith('.png')).length, 4);
     const moving = path.join(w.dir, 'eq-moving');
     runProbe(['--probe', 'P-eq', '--mode', 'stream', '--daemon', w.daemon, '--output-dir', moving, ...SHORT],
       { env: { FAKE_SCENE: 'changing' } });
@@ -245,6 +282,167 @@ test('P-ctl needs each capture to change; P-eq compares against a new connection
   } finally {
     rmSync(w.dir, { recursive: true, force: true });
   }
+});
+
+test('P-eq settles each new connection and can ignore a status-menu band', () => {
+  const w = workspace();
+  try {
+    const eqRun = (name, scene, extra = []) => {
+      const out = path.join(w.dir, name);
+      const result = runProbe(['--probe', 'P-eq', '--mode', 'on-demand', '--daemon', w.daemon, '--output-dir', out,
+        ...SHORT, ...extra], { env: { FAKE_SCENE: scene, FAKE_STATE: path.join(w.dir, `${name}.state`) } });
+      return { result, receipt: receiptOf(out), out };
+    };
+    // The immediate frame catches the indicator mid-fade; the settled one matches.
+    const fade = eqRun('fade', 'fade', ['--eq-settle-seconds', '2.5']);
+    assert.equal(fade.result.status, 0, fade.result.stdout);
+    const fc = fade.receipt.eqComparison;
+    assert.equal(fc.decidedBy, 'settled-sha256');
+    assert.equal(fc.equal, true);
+    assert.equal(fc.immediate.sha256Equal, false);
+    assert.equal(fc.settled.sha256Equal, true);
+    assert.notEqual(fc.immediate.sha256, fc.settled.sha256);
+    // Pixels stay in memory: the differing pixel is located, nothing is saved.
+    assert.deepEqual(fc.immediate.pixels, { equal: false, diffBox: [80, 2, 81, 3], imageSize: [96, 53] });
+    assert.equal(fade.receipt.schedule.eq_settle_seconds, 2.5);
+    assert.equal(fade.receipt.schedule.conformsToDesign, false);
+    assert.equal(fade.receipt.eqComparison.static, true);
+    assert.ok(!readdirSync(fade.out).some(name => name.endsWith('.png')));
+    assert.match(fade.result.stdout, /P-eq decided by settled-sha256/);
+
+    // A lasting indicator difference fails on hashes, passes outside the band.
+    const band = eqRun('band', 'band');
+    assert.equal(band.result.status, 1);
+    assert.match(band.receipt.verdict.reasons[0], /differs from the settled capture of a new connection \(decided by settled-sha256\)/);
+    const ignored = eqRun('band-ignored', 'band', ['--eq-ignore-rect', '70,0,20,6']);
+    assert.equal(ignored.result.status, 0, ignored.result.stdout);
+    const ic = ignored.receipt.eqComparison;
+    assert.deepEqual(ic.ignoreRect, [70, 0, 20, 6]);
+    assert.equal(ic.decidedBy, 'settled-pixels-outside-ignore-rect');
+    assert.deepEqual(ic.settled.pixels, { equal: true, diffBox: [80, 2, 81, 3], imageSize: [96, 53],
+      ignoreBoxPixels: [70, 0, 90, 6] });
+    assert.deepEqual(ignored.receipt.schedule.eq_ignore_rect, [70, 0, 20, 6]);
+    const outside = eqRun('outside', 'outside', ['--eq-ignore-rect', '70,0,20,6']);
+    assert.equal(outside.result.status, 1);
+    assert.equal(outside.receipt.eqComparison.decidedBy, 'settled-pixels-outside-ignore-rect');
+    assert.deepEqual(outside.receipt.eqComparison.settled.pixels.diffBox, [10, 2, 81, 31]);
+
+    const settle = runProbe(['--probe', 'P-eq', '--mode', 'stream', '--daemon', w.daemon, '--dry-run']);
+    assert.match(settle.stdout, /schedule \(5 captures, at least 12 s of waiting\)/);
+    assert.match(settle.stdout, /eq-new-connection-settled\s+wait 4 s/);
+    assert.match(settle.stdout, /no ignore band \(sha256 equality only\)/);
+    for (const bad of ['1,2,3', '1,2,0,4', '-1,0,2,2', 'a,b,c,d']) {
+      const refused = runProbe(['--probe', 'P-eq', '--mode', 'stream', '--daemon', w.daemon, '--dry-run',
+        '--eq-ignore-rect', bad]);
+      assert.equal(refused.status, 2, bad);
+      assert.match(refused.stderr, /--eq-ignore-rect/);
+    }
+  } finally {
+    rmSync(w.dir, { recursive: true, force: true });
+  }
+});
+
+// The stdlib-only PNG decoder against small generated PNGs, every filter type.
+const pngUnit = String.raw`
+import importlib.util, json, pathlib, struct, sys, zlib
+spec = importlib.util.spec_from_file_location('owned_freshness_probe', pathlib.Path(sys.argv[1]))
+probe = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(probe)
+def paeth(a, b, c):
+    p = a + b - c
+    pa, pb, pc = abs(p - a), abs(p - b), abs(p - c)
+    return a if pa <= pb and pa <= pc else b if pb <= pc else c
+def encode(width, height, channels, rows, filters, chunks=1):
+    stride = width * channels
+    out, previous = b"", bytes(stride)
+    for y, row in enumerate(rows):
+        kind = filters[y % len(filters)]
+        line = bytearray()
+        for i in range(stride):
+            left = row[i - channels] if i >= channels else 0
+            up = previous[i]
+            corner = previous[i - channels] if i >= channels else 0
+            predictor = [0, left, up, (left + up) >> 1, paeth(left, up, corner)][kind]
+            line.append((row[i] - predictor) & 0xFF)
+        out += bytes([kind]) + bytes(line)
+        previous = row
+    data = zlib.compress(out)
+    def chunk(kind, body):
+        return struct.pack(">I", len(body)) + kind + body + struct.pack(">I", zlib.crc32(kind + body) & 0xFFFFFFFF)
+    color = 2 if channels == 3 else 6
+    size = len(data) // chunks + 1
+    idat = b"".join(chunk(b"IDAT", data[i:i + size]) for i in range(0, len(data), size))
+    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, color, 0, 0, 0)) +
+            chunk(b"tEXt", b"Comment\x00offline") + idat + chunk(b"IEND", b""))
+results = {}
+for channels in (3, 4):
+    width, height = 7, 6
+    rows = [bytes(((x * 37 + y * 91 + c * 53) ^ (x * y)) & 0xFF for x in range(width) for c in range(channels))
+            for y in range(height)]
+    for filters in ([0], [1], [2], [3], [4], [0, 1, 2, 3, 4, 4]):
+        decoded = probe.decode_png(encode(width, height, channels, rows, filters, chunks=3))
+        results["%d-%s" % (channels, filters)] = decoded == (width, height, channels, rows)
+base = [bytes(4 * 3) for _ in range(4)]
+changed = [bytearray(row) for row in base]
+changed[1][2 * 3] = 9
+changed = [bytes(row) for row in changed]
+a = probe.decode_png(encode(4, 4, 3, base, [0]))
+b = probe.decode_png(encode(4, 4, 3, changed, [4]))
+results["same"] = probe.compare_pixels(a, a, None)
+results["differs"] = probe.compare_pixels(a, b, None)
+results["ignored"] = probe.compare_pixels(a, b, [2, 0, 3, 2])
+results["column"] = probe.compare_pixels(a, b, [1, 0, 2, 4])
+results["rect"] = probe.pixel_rect([1037, 1, 145, 20], 2560, 1440, 1280, 720)
+results["clamped"] = probe.pixel_rect([90, 50, 20, 20], 96, 53)
+errors = []
+good = encode(2, 2, 3, [bytes(6), bytes(6)], [0])
+for label, data in (("signature", b"GIF89a"), ("truncated", good[:-6]),
+                    ("crc", good[:30] + bytes([good[30] ^ 1]) + good[31:]), ("valid", good)):
+    try:
+        probe.decode_png(data)
+        errors.append([label, "decoded"])
+    except ValueError as error:
+        errors.append([label, str(error)])
+def chunk(kind, body):
+    return struct.pack(">I", len(body)) + kind + body + struct.pack(">I", zlib.crc32(kind + body) & 0xFFFFFFFF)
+def raw_png(color, idat):
+    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", 2, 2, 8, color, 0, 0, 0)) +
+            chunk(b"IDAT", zlib.compress(idat)) + chunk(b"IEND", b""))
+for label, data in (("gray", raw_png(0, bytes(6))), ("badfilter", raw_png(2, b"\x05" + bytes(6) + b"\x00" + bytes(6))),
+                    ("short", raw_png(2, bytes(7)))):
+    try:
+        probe.decode_png(data)
+        errors.append([label, "decoded"])
+    except ValueError as error:
+        errors.append([label, str(error)])
+results["errors"] = errors
+print(json.dumps(results))
+`;
+
+test('PNG decoder handles RGB and RGBA with filter types 0-4 and compares outside a band', () => {
+  const result = spawnSync('python3', ['-I', '-S', '-B', '-c', pngUnit, probe], { encoding: 'utf8', timeout: 10000 });
+  assert.equal(result.status, 0, result.stderr);
+  const r = JSON.parse(result.stdout);
+  for (const channels of [3, 4]) {
+    for (const filters of ['[0]', '[1]', '[2]', '[3]', '[4]', '[0, 1, 2, 3, 4, 4]']) {
+      assert.equal(r[`${channels}-${filters}`], true, `${channels} channels, filters ${filters}`);
+    }
+  }
+  assert.deepEqual(r.same, { equal: true, diffBox: null });
+  assert.deepEqual(r.differs, { equal: false, diffBox: [2, 1, 3, 2] });
+  assert.deepEqual(r.ignored, { equal: true, diffBox: [2, 1, 3, 2] });
+  assert.deepEqual(r.column, { equal: false, diffBox: [2, 1, 3, 2] });
+  // The PZM band at 1280x720 scaled, on a 2560x1440 capture.
+  assert.deepEqual(r.rect, [2074, 2, 2364, 42]);
+  assert.deepEqual(r.clamped, [90, 50, 96, 53]);
+  const errors = Object.fromEntries(r.errors);
+  assert.equal(errors.signature, 'not a PNG');
+  assert.equal(errors.truncated, 'truncated PNG chunk');
+  assert.equal(errors.crc, 'PNG chunk CRC mismatch');
+  assert.equal(errors.valid, 'decoded');
+  assert.match(errors.gray, /unsupported PNG: depth 8, color type 0/);
+  assert.equal(errors.badfilter, 'invalid PNG filter type 5');
+  assert.equal(errors.short, 'PNG image data has the wrong length');
 });
 
 // Unit-level verdict rules and the observation-only method gate.
@@ -269,6 +467,12 @@ results["input"] = probe.evaluate("P0", "stream", [capture(0)], [dict(session, l
 results["reconnected"] = probe.evaluate("P1", "on-demand", [capture(0), capture(1, connectionGeneration=2)], [session])
 results["incremental"] = probe.evaluate("P1", "on-demand", [capture(0)],
                                         [dict(session, ledger={"inputLines": 0, "incrementalRearm": 1})])
+eq_static = [capture(0, phase="eq-static"), capture(1, phase="eq-static")]
+results["eqNoSettled"] = probe.evaluate("P-eq", "stream", eq_static + [capture(2, phase="eq-new-connection", session=1)],
+                                        [session])
+results["eqImmediateOnlyDiffers"] = probe.evaluate("P-eq", "stream", eq_static + [
+    capture(2, phase="eq-new-connection", session=1, sha256="b" * 64),
+    capture(3, phase="eq-new-connection-settled", session=1)], [session])
 try:
     probe.DaemonSession.rpc(types.SimpleNamespace(broken=None), "key_tap", 1)
     results["gate"] = "sent"
@@ -289,4 +493,7 @@ test('verdict rules and the method gate', () => {
   assert.match(r.reconnected[1][0], /connection did not survive: generations/);
   assert.match(r.incremental[1][0], /on-demand mode wrote 1 incremental requests/);
   assert.match(r.gate, /observation-only runner refused to send 'key_tap'/);
+  assert.deepEqual(r.eqNoSettled[1], ['no settled capture from a new connection']);
+  // Only the settled capture decides; a mid-fade immediate frame is recorded, not judged.
+  assert.deepEqual(r.eqImmediateOnlyDiffers, ['PASS', []]);
 });

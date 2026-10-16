@@ -1,0 +1,13 @@
+Synthetic remote_management_prefs section in the 2026-10-16 probe format,
+shaped after the PZM configuration in which third-party RFB input was observed
+dropped: Remote Management on, access for all local users with full control
+(kickstart's signed 0xC00000FF) and the legacy VNC password off.
+
+@@fruitctl-probe remote_management_prefs@@
+read=ok
+ARD_AllLocalUsers=1
+ARD_AllLocalUsersPrivs=-1073741569
+VNCLegacyConnectionsEnabled=0
+ScreenSharingReqPermEnabled=absent
+
+@@fruitctl-status remote_management_prefs 0@@

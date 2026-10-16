@@ -184,6 +184,7 @@ It does not:
 | --- | --- |
 | `os.supported` | macOS 26.6.1 or later, or any macOS 27 release ([compatibility](compatibility.md#macos-target-support)) |
 | `screenSharing.mode` | `remote_management`, `screen_sharing`, `off` or `unknown` |
+| `screenSharing.remoteManagementPrefs` | `VNCLegacyConnectionsEnabled`, `ARD_AllLocalUsers`, `ARD_AllLocalUsersPrivs` and `ScreenSharingReqPermEnabled` as read, `absent`, or `unknown` ([target profile](target-profile.md#remote-management-rfb-control)) |
 | `failures` | Typed codes; the target is not usable as sampled |
 | `targetProfile` | Each [target profile](target-profile.md) setting as `ready`, `deviation` or `unknown`, plus the input source |
 | `session.remoteInputOwners` | Other remote desktop hosts found on the target, or `unknown` |
@@ -197,6 +198,8 @@ The session and Host warnings are listed below. The
 | Warning | Condition |
 | --- | --- |
 | `legacy_vnc_password_enabled` | The legacy VNC password is on (CVE-2026-43760, CVE-2026-43665). |
+| `remote_management_vnc_control_disabled` | Remote Management is on and `VNCLegacyConnectionsEnabled` is 0. Third-party RFB input was observed dropped in this configuration; causality is not isolated ([target profile](target-profile.md#remote-management-rfb-control)). |
+| `all_local_users_control_not_granted`, `all_local_users_observe_only` | `ARD_AllLocalUsersPrivs` lacks the Control and Observe bit (0x02) or has the Observe-only bit (0x100). With access for all local users on, this is the `remote_control_not_permitted` or `observe_only` failure instead. |
 | `secure_input_held` | Another process holds Secure Input; typed input may be refused. |
 | `screen_sharing_input_recent` | A Screen Sharing client sent input recently. This may be Fruitctl's own session; otherwise another client is active, and each Mac should have only one input owner. |
 | `remote_input_owner_other` | Another remote desktop host (for example Chrome Remote Desktop, TeamViewer or Parsec) is running, holds a power assertion or sent input. The finding's `owner` names it. Each Mac should have one input owner. |
@@ -228,8 +231,9 @@ supported configuration.
 When doctor cannot establish a fact, it lists it in `unknowns` instead of
 reporting a pass. That includes an unreadable Screen Sharing override, an
 absent or unreadable Remote Management marker, a missing IOConsoleUsers list
-(screen lock and Secure Input), a console user home that cannot be
-checked for the Host, an unreadable process list
+(screen lock and Secure Input), RFB control under Remote Management that
+cannot be judged (`remote_management_vnc_control_unverified`), a console user
+home that cannot be checked for the Host, an unreadable process list
 (`remote_input_owner_unverified`), and target profile settings that were not
 read (`target_profile_unverified`, `input_source_unverified`).
 
