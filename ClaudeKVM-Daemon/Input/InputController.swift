@@ -11,6 +11,10 @@ final class InputController {
     private(set) var heldButtons = false
     private var heldContext: VNCInputContext?
     let inputPermit: NativeInputPermit
+    /// Absolute deadline (inputSettle clock) of the request being handled;
+    /// nil when the caller supplied none.
+    var requestDeadlineNs: UInt64?
+    let inputSettle: VNCInputSettle
     typealias PointerSender = (Int, Int, Int, VNCInputContext?, Bool) async throws -> Void
     typealias KeySender = (UInt32, Bool, VNCInputContext?, Bool) async throws -> Void
     private let pointerSender: PointerSender
@@ -20,10 +24,12 @@ final class InputController {
     init(vnc: VNCBridge, timing: InputTiming = .init(),
          pointerSender: PointerSender? = nil, keySender: KeySender? = nil,
          sleeper: ((UInt32) async throws -> Void)? = nil,
-         inputPermit: NativeInputPermit = NativeInputPermit()) {
+         inputPermit: NativeInputPermit = NativeInputPermit(),
+         inputSettle: VNCInputSettle? = nil) {
         self.vnc = vnc
         self.timing = timing
         self.inputPermit = inputPermit
+        self.inputSettle = inputSettle ?? vnc.inputSettle
         self.pointerSender = pointerSender ?? { x, y, mask, context, release in
             try await vnc.sendMouseEvent(x: x, y: y, buttonMask: mask, context: context,
                                         releaseOnly: release, inputPermit: inputPermit)
@@ -59,6 +65,16 @@ final class InputController {
         context = admitted
     }
 
+    /// Wait out the connection's input settle time before an event is
+    /// written. Free once settled. Bounded by the request deadline and, in
+    /// helper mode, by the native permit lease, which a wait must not outlive.
+    func awaitInputReady() async throws {
+        try await inputSettle.waitUntilReady(generation: context?.connectionGeneration,
+                                             deadlineNs: requestDeadlineNs,
+                                             budgetNs: { [inputPermit] in inputPermit.remainingNanoseconds() })
+        try checkInputAdmission()
+    }
+
     func pause(_ microseconds: UInt32) async throws {
         try checkInputAdmission()
         try await sleeper(microseconds)
@@ -67,6 +83,7 @@ final class InputController {
 
     func emitPointer(x: Int, y: Int, buttonMask: Int = 0) async throws {
         try checkInputAdmission()
+        try await awaitInputReady()
         // A failed write may still have reached the server. Track before send.
         if buttonMask != 0 {
             if heldKeys.isEmpty && !heldButtons { heldContext = context }
@@ -79,6 +96,7 @@ final class InputController {
 
     func emitKey(key: UInt32, down: Bool) async throws {
         try checkInputAdmission()
+        try await awaitInputReady()
         if down && !heldKeys.contains(key) {
             if heldKeys.isEmpty && !heldButtons { heldContext = context }
             heldKeys.append(key)

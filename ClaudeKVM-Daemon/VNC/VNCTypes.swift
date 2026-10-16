@@ -201,9 +201,15 @@ enum VNCError: LocalizedError {
     case framebufferAllocationFailed
     case sendFailed(String)
     case staleScreen(reason: VNCStaleScreenReason, data: VNCStaleScreenData)
+    /// The connection's input settle time has not elapsed and the request
+    /// cannot wait for it. No event was written.
+    case inputNotReady(remainingMilliseconds: Int)
 
     /// JSON-RPC error code for every stale_screen observation failure.
     static let staleScreenCode = -32010
+    /// JSON-RPC error code for input_not_ready (`data.reason`, `data.remaining_ms`).
+    static let inputNotReadyCode = -32013
+    static let inputNotReadyReason = "input_not_ready"
     /// Deadline failures keep this compatible message prefix.
     static let staleScreenDeadlineMessage = "No fresh complete framebuffer update within 5 seconds"
 
@@ -216,6 +222,8 @@ enum VNCError: LocalizedError {
         case .framebufferAllocationFailed: "Failed to allocate framebuffer."
         case .sendFailed(let msg): "Failed to send VNC event: \(msg)"
         case .staleScreen(_, let data): data.message
+        case .inputNotReady(let remaining):
+            "Input not ready: the server ignores input for \(remaining) ms more after connecting"
         }
     }
 
@@ -257,4 +265,6 @@ struct VNCConfiguration {
     /// Write a header-only client-to-server ledger to stderr (no payloads).
     var wireLedger: Bool = false
     var requestMode: VNCRequestMode = .stream
+    /// `--input-settle-ms`: nil selects 3000 ms for an Apple server, else 0.
+    var inputSettleMilliseconds: Int?
 }

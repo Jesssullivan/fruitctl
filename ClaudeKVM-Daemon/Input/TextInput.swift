@@ -33,6 +33,7 @@ extension InputController {
     /// clientCutText → 30ms → cmd+v (macOS) or ctrl+v (other).
     func pasteText(_ text: String) async throws {
         try checkInputAdmission()
+        try await awaitInputReady()
         try await vnc.sendClipboardText(text, context: context, inputPermit: inputPermit)
         try await pause(timing.pasteSettleUs)
         if vnc.isMacOS {

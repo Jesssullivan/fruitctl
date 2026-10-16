@@ -42,6 +42,9 @@ REQUEST_MODELS = ("immediate", "latest-wins", "first-wins", "session-start-only"
 # Synthetic hypotheses for Apple's idle-screen behavior, run per request mode.
 MODEL_SCENARIOS = ("latest-wins", "first-wins", "session-start-only", "silent")
 STALE_SCREEN_CODE = -32010
+INPUT_NOT_READY_CODE = -32013
+# Synthetic input settle for the fixture; Apple's default is 3000 ms.
+FIXTURE_INPUT_SETTLE_MS = 800
 
 
 def require(condition, message):
@@ -125,6 +128,8 @@ class RfbFixture:
         # Receipt time and connection for each event, kept apart so event
         # records keep their exact historical shape.
         self.event_times = []
+        # When ServerInit was sent on each connection (input settle origin).
+        self.server_init_times = []
         self.requests = []
         self.errors = []
         self.connections = []
@@ -143,6 +148,7 @@ class RfbFixture:
         with self.lock:
             return {"frames": dict(self.frames), "events": list(self.events),
                     "eventTimes": list(self.event_times),
+                    "serverInitTimes": list(self.server_init_times),
                     "requests": list(self.requests), "errors": list(self.errors),
                     "connections": [dict(record) for record in self.connections]}
 
@@ -204,6 +210,8 @@ class RfbFixture:
             name = b"Fruitctl owned offline RFB fixture"
             connection.sendall(struct.pack("!HH", WIDTH, HEIGHT) + format_bytes
                                + struct.pack("!I", len(name)) + name)
+            with self.lock:
+                self.server_init_times.append({"at": time.monotonic(), "connection": index})
             self.pixel_format = PIXEL_FORMAT.unpack(format_bytes)
             while not self.stopping:
                 kind = exact_read(connection, 1)[0]
@@ -940,6 +948,71 @@ def run_model_scenario(model, request_mode, args):
     return report
 
 
+def run_input_settle_scenario(args):
+    """--input-settle-ms holds the first input until the settle time after
+    ServerInit; observation is not delayed and a short deadline is typed."""
+    fixture = RfbFixture()
+    session = None
+    settle = FIXTURE_INPUT_SETTLE_MS / 1000
+    report = {"transport": "native", "scenario": "input-settle", "loopbackPort": fixture.port,
+              "status": "failed", "captures": [], "inputSettleMilliseconds": FIXTURE_INPUT_SETTLE_MS,
+              "claimedScope": "synthetic-loopback-RFB-only; Apple's ~2.5 s input drop is not modeled"}
+    try:
+        session = NativeSession(args.daemon, fixture.port, ["--input-settle-ms", str(FIXTURE_INPUT_SETTLE_MS)])
+        report["route"] = "native-PC"
+        health = session.action("health")
+        require(not health["error"], "health failed during the settle time")
+        metadata = health["metadata"]
+        require(metadata.get("input_ready") is False and 0 < metadata.get("input_settle_remaining_ms", 0)
+                <= FIXTURE_INPUT_SETTLE_MS and metadata.get("input_settle_ms") == FIXTURE_INPUT_SETTLE_MS,
+                "health did not report the pending input settle: %r" % {k: metadata.get(k) for k in
+                ("input_ready", "input_settle_remaining_ms", "input_settle_ms")})
+        start = time.monotonic()
+        sequence, _, _ = inspect_capture(session.action("screenshot"), fixture)
+        observed = time.monotonic()
+        init_at = fixture.snapshot()["serverInitTimes"][0]["at"]
+        require(observed < init_at + settle, "observation was delayed by the input settle time")
+        report["observationMilliseconds"] = round((observed - start) * 1000, 3)
+        refused = session.action("key_tap", key="a", deadline_ms=0)
+        error = refused["error"] or {}
+        require(error.get("code") == INPUT_NOT_READY_CODE, "short deadline was not typed input_not_ready: %r" % error)
+        data = error.get("data") or {}
+        require(data.get("reason") == "input_not_ready" and isinstance(data.get("remaining_ms"), int)
+                and 0 < data["remaining_ms"] <= FIXTURE_INPUT_SETTLE_MS, "input_not_ready data %r" % data)
+        require(not fixture.snapshot()["events"], "a refused input reached the server")
+        report["inputNotReady"] = {"code": error["code"], "reason": data["reason"], "remainingMs": data["remaining_ms"]}
+        require(not session.action("key_tap", key="a")["error"], "settled key tap failed")
+        inspect_capture(session.action("screenshot"), fixture, sequence)
+        snapshot = fixture.snapshot()
+        require([e for e in snapshot["events"] if e["kind"] == "key"] ==
+                [{"kind": "key", "down": 1, "key": ord("a")}, {"kind": "key", "down": 0, "key": ord("a")}],
+                "settled key press/release mismatch")
+        first = snapshot["eventTimes"][0]["at"]
+        require(first - init_at >= settle, "first input arrived %.3f s after ServerInit, before the %.3f s settle"
+                % (first - init_at, settle))
+        report["firstInputAfterServerInitMilliseconds"] = round((first - init_at) * 1000, 3)
+        after = session.action("health")["metadata"]
+        require(after.get("input_ready") is True and after.get("input_settle_remaining_ms") == 0,
+                "health did not report input ready after the settle time")
+        report["status"] = "passed"
+    except Exception as error:
+        report["failure"] = type(error).__name__ + ": " + str(error)
+    finally:
+        if session:
+            report["processExitCode"] = session.close()
+            (args.output_dir / "native-input-settle.stderr.txt").write_bytes(session.stderr)
+        fixture.finished.wait(3)
+        fixture.close()
+        report["fixtureErrors"] = fixture.snapshot()["errors"]
+        if report["status"] == "passed" and (report["fixtureErrors"] or report.get("processExitCode") != 0):
+            report["status"] = "failed"
+            report["failure"] = "fixture errors %r or nonzero exit %r" % (report["fixtureErrors"],
+                                                                          report.get("processExitCode"))
+        (args.output_dir / "native-input-settle.json").write_text(json.dumps(report, indent=2) + "\n")
+    require(report["status"] == "passed", report.get("failure", "fixture failed"))
+    return report
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--daemon", type=Path, required=True, help="existing compiled unsigned native daemon")
@@ -998,6 +1071,8 @@ def main():
             for mode in modes:
                 print("Running %s %s fixture" % (kind, mode), flush=True)
                 receipt["scenarios"].append(run_scenario(kind, mode, args.captures, args))
+        print("Running native input-settle fixture", flush=True)
+        receipt["scenarios"].append(run_input_settle_scenario(args))
         for request_mode in args.request_modes:
             for model in MODEL_SCENARIOS:
                 print("Running native %s request model in %s mode" % (model, request_mode), flush=True)

@@ -260,6 +260,35 @@ On Apple's server the daemon writes Command as `Super_L`/`Super_R` and Option
 as `Meta_L`/`Meta_R`; the `cmd` and `alt`/`option` key names are unchanged.
 The Option mapping remains pending native and attended verification.
 
+### Input readiness after connect
+
+Apple's `screensharingd` silently drops all RFB input, pointer and key, for
+about 2.5 s after the viewer authenticates, and LibVNC still reports each
+write as sent (see [Compatibility](compatibility.md#apple-input-settle-time)).
+The daemon therefore records a monotonic timestamp when ServerInit completes
+on each connection generation and holds input until the settle time has
+elapsed. A reconnect is a new generation and restarts it.
+
+- `--input-settle-ms N` sets the time (0 to 10000). The default is 3000 when
+  the server is detected as Apple (the same ARD credential request that turns
+  on the Option and Command keysym mapping) and 0 otherwise.
+- The first input of a generation waits out the remaining time; later input
+  is not delayed. Waiting is preferred to refusing, and no event is written
+  early. Every write on the native queue rechecks the gate, including
+  release-only writes, the per-generation modifier sync, clipboard text for
+  `paste` and held-input release after an error or abort.
+- The wait ends at once on cancellation or abort. The Node executor passes each
+  request a private `deadline_ms` budget, a little shorter than its own
+  deadline. If the remaining settle time does not fit in it, or in the native
+  input permit's lease on the Host route, the request fails before any event
+  with JSON-RPC code `-32013`, `data.reason` `input_not_ready` and
+  `data.remaining_ms`. The Host route waits out the settle time itself before
+  adopting the observation and requesting the permit, so the lease is never
+  spent waiting.
+- Observation is never delayed: `screenshot`, `health` and the other screen
+  methods run during the settle time. `health` reports `input_ready`,
+  `input_settle_remaining_ms` and `input_settle_ms`.
+
 Input and capture failures are distinct. If an input's execution is uncertain,
 report that uncertainty and avoid replay. If capture fails after known input,
 report both facts and stop until a complete observation is available.

@@ -446,6 +446,38 @@ test('qualified exact geometry renews a permit before native input and never rep
   } finally { await executor.close(); }
 });
 
+test('native input settle is waited out before adoption and the native permit, never during it', async () => {
+  const config = { ...configuration(), mapping };
+  const { executor, vnc, host } = await fixture({ config,
+    nativeOptions: { health: { input_ready: false, input_settle_remaining_ms: 60, input_settle_ms: 3000 } } });
+  try {
+    const marks = [];
+    const execute = vnc.execute.bind(vnc);
+    vnc.execute = async (actions, options) => { marks.push([actions[0].action, performance.now()]); return execute(actions, options); };
+    const action = { action: 'key_tap', key: 'tab' };
+    await executor.execute([action]);
+    assert.deepEqual(marks.map(([name]) => name), ['health', 'adopt_observation', 'key_tap']);
+    assert.ok(marks[1][1] - marks[0][1] >= 55, 'adoption waits for the reported settle time');
+    // The permit is requested only after the wait, so its lease is not spent waiting.
+    const begin = vnc.permitControls.findIndex(control => control.method === 'begin_input_permit');
+    assert.ok(begin >= 0);
+    assert.ok(host.requests.some(request => request.action === 'renew_activity'));
+  } finally { await executor.close(); }
+});
+
+test('a settle time beyond the operation deadline fails as typed input_not_ready before any input', async () => {
+  const config = { ...configuration(), mapping };
+  const { executor, vnc } = await fixture({ config,
+    nativeOptions: { health: { input_ready: false, input_settle_remaining_ms: 2500, input_settle_ms: 3000 } } });
+  await assert.rejects(executor.execute([{ action: 'key_tap', key: 'tab' }], { timeoutMs: 1000 }), error => {
+    assert.equal(error.code, -32013);
+    assert.deepEqual(error.data, { reason: 'input_not_ready', remaining_ms: 2500 });
+    return true;
+  });
+  assert.deepEqual(vnc.calls.map(action => action.action), ['health']);
+  assert.deepEqual(vnc.permitControls, []);
+});
+
 test('VNC/native geometry mismatch prevents input even with a configured receipt', async () => {
   const { executor, vnc } = await fixture({ config: { ...configuration(), mapping },
     nativeOptions: { health: { nativeWidth: 513 } } });

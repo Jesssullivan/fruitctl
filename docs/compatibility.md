@@ -145,6 +145,25 @@ names which one is on. Some results stay `unknown` and are listed as such:
 
 Each run is a single sample of the target. It does not qualify capture or input.
 
+### Apple input settle time
+
+Apple's Screen Sharing server ignores input for a short time after a viewer
+connects. Measured on 2026-10-16 against macOS 26.7.1 with Remote Management on
+and ARD authentication (type 30): `screensharingd` dropped every pointer and key
+event for about 2.5 s after it logged a good authentication, logging
+`ignore key event` with no change on screen. Keys sent 1.3, 1.8 and 2.3 s
+after authentication were ignored, and keys from 2.8 s on were accepted. The
+VNC client cannot detect the drop, because each write succeeds locally.
+
+The native controller holds input for 3000 ms after ServerInit on each
+connection to a server it detects as Apple, and for 0 ms on any other server.
+`--input-settle-ms` overrides the time. With the 3 s hold, the full measured
+journey worked. Observation is not delayed. See
+[Architecture](architecture.md#input-readiness-after-connect) for how waiting,
+deadlines and the `-32013` `input_not_ready` error work. This is one
+measurement of one target, not a qualification of other macOS releases or
+of plain Screen Sharing without Remote Management.
+
 ## Agents
 
 | Agent | Adoption surface | Release status |
