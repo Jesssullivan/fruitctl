@@ -26,8 +26,20 @@ tests on Darwin arm64. An exported source snapshot needs `--source-revision
 controller linkage is GPL-3.0-or-later. The independent host app is MIT.
 `--reuse-inputs /absolute/prior/build` verifies and reuses the prior task-owned
 input archives, patches, source trees and read-only native inputs; it preserves
-the original receipt and creates a separate result directory. No live VNC or
-GUI capture test is part of this command.
+the original receipt and creates a separate result directory. Reuse refuses a
+prior build whose receipt or input manifest names a different source lock or
+dependency build configuration. `--dependencies-only` builds and verifies just
+those inputs under a `fruitctl-native-dependency-build` receipt, which release
+tooling does not accept as a tested native build. `--jobs` accepts 1 up to the
+host's logical CPU count (2 is always accepted). Each `commands[]` entry records
+diagnostic `wallSeconds`. No live VNC or GUI capture test is part of this
+command.
+
+Hosted CI caches a dependency-only build keyed on the runner image, Xcode, SDK,
+cmake, dependency build configuration, source lock and builder script, then
+passes it to `--reuse-inputs`, so every run re-verifies the restored inputs.
+Pull requests that change only `docs/`, `skills/`, root Markdown or the docs
+workflow keep the native check name but run it as a no-op on Linux.
 
 `package_source.py` requires a passing native receipt, an explicit public
 file/hash inventory, exact native output paths and unchanged dependency source.

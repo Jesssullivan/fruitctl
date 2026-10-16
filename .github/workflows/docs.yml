@@ -17,7 +17,8 @@ permissions:
 
 concurrency:
   group: fruitctl-docs-${{ github.ref }}
-  cancel-in-progress: false
+  # Superseded PR pushes cancel; main runs (which may deploy) always finish.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   docs:
