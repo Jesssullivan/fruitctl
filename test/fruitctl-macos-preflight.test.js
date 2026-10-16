@@ -18,7 +18,8 @@ import {
   parseDisplays, parseHostApp, parseTcc, sshProbeArguments, validateSshDestination, runProbe,
   resolvePreflightTarget, macosPreflight, REMOTE_INPUT_OWNERS, TARGET_PROFILE, parseAssertionHolders,
   parseRemoteInputProcesses, evaluateRemoteInputOwners, parseTargetProfile, evaluateTargetProfile,
-  parseInputSources, evaluateInputSource,
+  parseInputSources, evaluateInputSource, describeRemoteManagementPrefs, evaluateVncControl,
+  evaluateAllLocalUsersPrivileges,
 } from '../lib/install/macos-preflight.mjs';
 import { loadConfig } from '../lib/broker/paths.mjs';
 import { doctor } from '../lib/install/index.mjs';
@@ -92,7 +93,10 @@ test('redacted Remote Management bench sample reports warnings, not failures', a
   assert.deepEqual(result.os, { productName: 'macOS', version: '26.7.1', build: '25G313', major: 26, supported: true,
     floor: { version: '26.6.1', advisory: 'CVE-2026-65400', source: 'https://support.apple.com/en-us/148170' }, architecture: 'arm64' });
   assert.deepEqual(result.screenSharing, { service: 'enabled', serviceState: 'not running', remoteManagement: 'on',
-    mode: 'remote_management', observeOnly: false, highPerformance: 'not_detected', curtain: 'unknown', legacyVncPassword: true });
+    mode: 'remote_management', observeOnly: false, highPerformance: 'not_detected', curtain: 'unknown', legacyVncPassword: true,
+    // The bench sample predates the read=ok line; every key it printed was read.
+    remoteManagementPrefs: { VNCLegacyConnectionsEnabled: true, ARD_AllLocalUsers: true, ARD_AllLocalUsersPrivs: 0x400000ff,
+      ScreenSharingReqPermEnabled: true }, vncControl: 'enabled', allLocalUsersPrivileges: 'control' });
   assert.deepEqual(result.session.secureInput, { held: true, process: 'Example Secure App' });
   assert.deepEqual(result.host, { installed: false, grants: { source: 'unreadable', screenRecording: 'unknown', accessibility: 'unknown' } });
   // These samples predate the process and profile sections: unknown, not ready.
@@ -113,9 +117,14 @@ test('redacted laptop sample reads TCC and leaves the VNC account privileges unk
   assert.equal(result.session.screenSharingActivity, false);
   assert.deepEqual(result.session.secureInput, { held: false });
   assert.deepEqual(result.host.grants, { source: 'tcc', screenRecording: 'not_recorded', accessibility: 'not_recorded' });
-  assert.deepEqual(codes(result.unknowns), ['observe_only_unverified', 'curtain_unverified',
-    'remote_input_owner_unverified', 'target_profile_unverified']);
+  assert.deepEqual(codes(result.unknowns), ['observe_only_unverified', 'remote_management_vnc_control_unverified',
+    'curtain_unverified', 'remote_input_owner_unverified', 'target_profile_unverified']);
   assert.deepEqual(result.session.remoteInputOwners, 'unknown');
+  // An empty section is unknown for every key, never absent or ready.
+  assert.equal(result.screenSharing.vncControl, 'unknown');
+  assert.equal(result.screenSharing.allLocalUsersPrivileges, 'unknown');
+  assert.deepEqual(result.screenSharing.remoteManagementPrefs, { VNCLegacyConnectionsEnabled: 'unknown',
+    ARD_AllLocalUsers: 'unknown', ARD_AllLocalUsersPrivs: 'unknown', ScreenSharingReqPermEnabled: 'unknown' });
 });
 
 test('live Screen Sharing input sample warns and says it may be Fruitctl itself', async () => {
@@ -158,6 +167,99 @@ test('Apple remote modes fail typed: disabled, observe only, no control and High
   assert.ok(codes(unreadable.unknowns).includes('displays_unverified'));
   assert.deepEqual(parseDisplays({ status: 0, output: 'display=Panel\nonline=No' }),
     { known: true, count: 1, online: 0, screenSharingVirtual: false });
+});
+
+test('Remote Management with VNCLegacyConnectionsEnabled 0 warns about third-party RFB control', async () => {
+  const sample = parseProbeOutput(await fixture('remote-management-vnc-control-disabled.txt')).get('remote_management_prefs');
+  const result = await evaluateWith({ remote_management_prefs: sample });
+  assert.equal(result.screenSharing.mode, 'remote_management');
+  assert.deepEqual(codes(without(result.warnings)), ['remote_management_vnc_control_disabled']);
+  assert.deepEqual(result.failures, []);
+  const warning = result.warnings.find(item => item.code === 'remote_management_vnc_control_disabled');
+  assert.match(warning.message, /observed dropped in this configuration on PZM/);
+  assert.match(warning.message, /Causality is not isolated: a ~2\.5 s post-auth input-ignore window, now handled by the controller's --input-settle-ms, confounded the test/);
+  assert.deepEqual(result.screenSharing.remoteManagementPrefs, { VNCLegacyConnectionsEnabled: false, ARD_AllLocalUsers: true,
+    ARD_AllLocalUsersPrivs: 0xC00000FF, ScreenSharingReqPermEnabled: 'absent' });
+  assert.equal(result.screenSharing.vncControl, 'disabled');
+  assert.equal(result.screenSharing.allLocalUsersPrivileges, 'control');
+  assert.equal(result.screenSharing.legacyVncPassword, false);
+
+  // Plain Screen Sharing and Screen Sharing off do not apply the Remote Management check.
+  const plain = await evaluateWith({ remote_management_prefs: sample, remote_management_marker: { output: 'value=disabled' } });
+  assert.equal(plain.screenSharing.mode, 'screen_sharing');
+  assert.equal(plain.screenSharing.vncControl, 'not_applicable');
+  assert.ok(!codes(plain.warnings).includes('remote_management_vnc_control_disabled'));
+  assert.deepEqual(evaluateVncControl({ mode: 'off', prefs: { VNCLegacyConnectionsEnabled: false } }), { vncControl: 'not_applicable' });
+  // An unknown mode or an unreadable key is unknown, never a pass.
+  const unsure = await evaluateWith({ remote_management_prefs: sample, remote_management_marker: { output: 'absent' } });
+  assert.equal(unsure.screenSharing.vncControl, 'unknown');
+  assert.ok(codes(unsure.unknowns).includes('remote_management_vnc_control_unverified'));
+  assert.ok(!codes(unsure.warnings).includes('remote_management_vnc_control_disabled'));
+  for (const output of ['read=failed\nVNCLegacyConnectionsEnabled=absent', 'read=ok\nVNCLegacyConnectionsEnabled=absent', '']) {
+    const unread = await evaluateWith({ remote_management_prefs: { output } });
+    assert.equal(unread.screenSharing.vncControl, 'unknown', output);
+    const unknown = unread.unknowns.find(item => item.code === 'remote_management_vnc_control_unverified');
+    assert.match(unknown.message, /VNCLegacyConnectionsEnabled was not readable/, output);
+  }
+  assert.deepEqual(describeRemoteManagementPrefs('read=failed\nVNCLegacyConnectionsEnabled=absent\nARD_AllLocalUsers=1'),
+    { VNCLegacyConnectionsEnabled: 'unknown', ARD_AllLocalUsers: true, ARD_AllLocalUsersPrivs: 'unknown', ScreenSharingReqPermEnabled: 'unknown' });
+  assert.deepEqual(describeRemoteManagementPrefs('read=ok\nVNCLegacyConnectionsEnabled=absent\nARD_AllLocalUsersPrivs=junk'),
+    { VNCLegacyConnectionsEnabled: 'absent', ARD_AllLocalUsers: 'unknown', ARD_AllLocalUsersPrivs: 'unknown', ScreenSharingReqPermEnabled: 'unknown' });
+  // Legacy VNC on is the existing password warning, not this one.
+  const legacy = await evaluateWith({ remote_management_prefs: { output: 'read=ok\nVNCLegacyConnectionsEnabled=1' } });
+  assert.equal(legacy.screenSharing.vncControl, 'enabled');
+  assert.deepEqual(codes(without(legacy.warnings)), ['legacy_vnc_password_enabled']);
+});
+
+test('ARD_AllLocalUsersPrivs without control, or with observe only, warns; unreadable stays unknown', async () => {
+  const privs = (value, allUsers = 0) => ({ remote_management_prefs: { output:
+    `read=ok\nARD_AllLocalUsers=${allUsers}\nARD_AllLocalUsersPrivs=${value}\nVNCLegacyConnectionsEnabled=1` } });
+  const noControl = await evaluateWith(privs(0x40000001));
+  assert.deepEqual(codes(without(noControl.warnings)), ['legacy_vnc_password_enabled', 'all_local_users_control_not_granted']);
+  assert.match(without(noControl.warnings).at(-1).message, /0x40000001 lacks the Control and Observe bit \(0x02\)/);
+  assert.equal(noControl.screenSharing.allLocalUsersPrivileges, 'restricted');
+  const observe = await evaluateWith(privs(0x40000102));
+  assert.deepEqual(codes(without(observe.warnings)), ['legacy_vnc_password_enabled', 'all_local_users_observe_only']);
+  assert.match(without(observe.warnings).at(-1).message, /0x40000102 has the Observe-only bit \(0x100\)/);
+  const both = await evaluateWith(privs(0x101));
+  assert.deepEqual(codes(without(both.warnings)).slice(1), ['all_local_users_control_not_granted', 'all_local_users_observe_only']);
+  const ready = await evaluateWith(privs(-1073741569));
+  assert.deepEqual(codes(without(ready.warnings)), ['legacy_vnc_password_enabled']);
+  assert.equal(ready.screenSharing.allLocalUsersPrivileges, 'control');
+  // With access for all local users on, the same value is already a failure.
+  const applied = await evaluateWith(privs(0x40000102, 1));
+  assert.deepEqual(codes(applied.failures), ['observe_only']);
+  assert.ok(!codes(applied.warnings).includes('all_local_users_observe_only'));
+  // Unreadable or absent privileges are unknown, never control.
+  for (const value of ['absent', 'junk']) {
+    const unread = await evaluateWith(privs(value));
+    assert.equal(unread.screenSharing.allLocalUsersPrivileges, 'unknown', value);
+    assert.ok(!codes(unread.warnings).some(code => code.startsWith('all_local_users_')), value);
+  }
+  assert.deepEqual(evaluateAllLocalUsersPrivileges({ remoteManagement: 'off', prefs: { ARD_AllLocalUsersPrivs: 0x100 } }),
+    { state: 'restricted', warnings: [] });
+});
+
+test('the Remote Management prefs probe separates set, absent and unreadable keys', () => {
+  const lines = PROBE_SCRIPT.split('\n');
+  const start = lines.indexOf('begin remote_management_prefs');
+  const body = lines.slice(start + 1, lines.indexOf('end remote_management_prefs 0')).join('\n');
+  const run = stub => spawnSync('/bin/sh', ['-c', `${stub}\n${body}`]).stdout.toString();
+  const readable = run(`defaults() {
+  case "$*" in
+    'read /Library/Preferences/com.apple.RemoteManagement') return 0 ;;
+    'read /Library/Preferences/com.apple.RemoteManagement VNCLegacyConnectionsEnabled') printf '0\\n' ;;
+    'read /Library/Preferences/com.apple.RemoteManagement ARD_AllLocalUsersPrivs') printf -- '-1073741569\\n' ;;
+    *) return 1 ;;
+  esac
+}`);
+  assert.equal(readable, ['read=ok', 'ARD_AllLocalUsers=absent', 'ARD_AllLocalUsersPrivs=-1073741569',
+    'VNCLegacyConnectionsEnabled=0', 'ScreenSharingReqPermEnabled=absent', ''].join('\n'));
+  assert.deepEqual(describeRemoteManagementPrefs(readable), { VNCLegacyConnectionsEnabled: false, ARD_AllLocalUsers: 'absent',
+    ARD_AllLocalUsersPrivs: 0xC00000FF, ScreenSharingReqPermEnabled: 'absent' });
+  const unreadable = run('defaults() { return 1; }');
+  assert.match(unreadable, /^read=failed\n/);
+  assert.equal(Object.values(describeRemoteManagementPrefs(unreadable)).every(value => value === 'unknown'), true);
 });
 
 test('regression: a failed print-disabled read is unverified, not disabled', async () => {
