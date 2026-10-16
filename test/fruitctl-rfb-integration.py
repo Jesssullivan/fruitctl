@@ -1054,7 +1054,9 @@ def run_input_settle_scenario(args):
         require(not session.action("key_tap", key="a")["error"], "settled key tap failed")
         inspect_capture(session.action("screenshot"), fixture, sequence)
         snapshot = fixture.snapshot()
-        require([e for e in snapshot["events"] if e["kind"] == "key"] ==
+        # The connection's first input is preceded by the modifier release
+        # sync (TIN-6597), which is input too and also waits out the settle.
+        require([e for e in snapshot["events"] if e["kind"] == "key"] == MODIFIER_SYNC +
                 [{"kind": "key", "down": 1, "key": ord("a")}, {"kind": "key", "down": 0, "key": ord("a")}],
                 "settled key press/release mismatch")
         first = snapshot["eventTimes"][0]["at"]
