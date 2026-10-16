@@ -100,6 +100,25 @@ test('journal chains records, verifies and pinpoints tampering', async t => {
   assert.equal(continued.records, 4);
 });
 
+test('a failed append forgets its cached head and never extends a partial record', { skip: process.getuid?.() === 0 }, async t => {
+  const dir = path.join(await directory(t), 'journal');
+  const session = '22222222-3333-4444-8555-666666666666';
+  const journal = new Journal({ dir });
+  const entry = { session, target: 'desktop', method: 'wait', params: {}, result: { outcome: 'ok' } };
+  await journal.append([entry]);
+  const file = path.join(dir, `${session}.jsonl`);
+  await fs.chmod(file, 0o400);
+  await journal.append([entry]);
+  assert.equal(journal.failures, 1);
+  // Simulate the partial record a failed write can leave behind.
+  await fs.chmod(file, 0o600);
+  await fs.appendFile(file, '{"schema":"fruitctl.jour');
+  await journal.append([entry]);
+  assert.equal(journal.failures, 2);
+  assert.match(journal.status().last_error, /fails verification/);
+  assert.equal((await verifyJournal(file)).reason, 'truncated final record');
+});
+
 test('journal params never store type_secret text or credential-like fields', () => {
   assert.deepEqual(redactParams({ action: 'type_secret', ref: 'login', text: 'hunter2', value: 'x' }),
     { ref: 'login', text: '[redacted]', value: '[redacted]' });
@@ -202,6 +221,17 @@ test('telemetry writes per-action JSONL, rotates by size and renders a Prometheu
   assert.equal(telemetry.failures, 0);
 });
 
+test('telemetry caps distinct method labels', async t => {
+  const telemetry = new LatencyTelemetry({ dir: path.join(await directory(t), 'metrics') });
+  for (let index = 0; index < 100; index++) {
+    telemetry.observe({ target: 'desk', method: `m${index}`, route: 'raw', outcome: 'refused', latencyMs: 1 });
+  }
+  const methods = new Set([...telemetry.series.values()].map(series => series.labels.method));
+  assert.equal(methods.size, 65);
+  assert.ok(methods.has('other'));
+  assert.ok(methods.has('m63') && !methods.has('m64'));
+});
+
 test('broker observability defaults the journal on and telemetry off', async t => {
   const stateDir = await directory(t);
   const defaults = brokerObservability({ targets: {} }, { stateDir });
@@ -299,6 +329,15 @@ test('display_asleep is a typed code that never overwrites cleanup failures', ()
   const cleanup = typedFailure(Object.assign(new Error('x'), { code: 'release_unconfirmed', data: { reason: DISPLAY_ASLEEP } }));
   assert.equal(cleanup.code, 'release_unconfirmed');
   assert.equal(typedFailure(Object.assign(new Error('y'), { code: -32010, data: { reason: 'server_silent' } })).code, -32010);
+});
+
+test('display_asleep is typed with the journal and telemetry off', async t => {
+  const lane = new TargetLane({}, async () => ({ async execute() {
+    throw Object.assign(new Error('Display asleep'), { code: -32010, data: { reason: DISPLAY_ASLEEP }, responses: [] });
+  }, async close() {} }), { name: 'desktop' });
+  t.after(() => lane.close());
+  assert.equal(lane.observer, null);
+  await assert.rejects(lane.execute([{ action: 'screenshot' }]), error => error.code === DISPLAY_ASLEEP);
 });
 
 test('broker journals each client session and returns typed display_asleep', async t => {

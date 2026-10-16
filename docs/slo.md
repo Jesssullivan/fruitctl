@@ -91,7 +91,7 @@ oldest is removed.
 since the broker started: `fruitctl_actions_total` and the
 `fruitctl_action_latency_seconds` histogram (buckets 5 ms to 30 s), labelled
 by `target`, `method`, `route` and `outcome`. Action names outside
-`[a-z][a-z0-9_]*` are labelled `other`. Each rewrite goes to a temporary file
+`[a-z][a-z0-9_]*`, and new names after the first 64, are labelled `other`. Each rewrite goes to a temporary file
 and is renamed into place, so a scrape never reads a partial file. Telemetry
 write failures are logged and counted; they never fail an action. The summary
 resets with the broker, so compute objectives from the JSONL.
