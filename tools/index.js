@@ -20,6 +20,7 @@ import { z } from 'zod';
 const coordinate = () => z.number().int().min(0).max(0x7fffffff);
 const button = () => z.enum(['left', 'right', 'middle']).optional().describe('Mouse button (default left)');
 const MODIFIERS = ['shift', 'rshift', 'ctrl', 'rctrl', 'alt', 'option', 'ralt', 'cmd', 'command', 'rcmd'];
+const MODIFIER_ALIASES = { option: 'alt', command: 'cmd' };
 const modifiers = () => z.array(z.enum(MODIFIERS)).min(1).max(MODIFIERS.length).optional()
   .describe('mouse_click only: modifier keys held around the click (e.g. ["shift"] or ["cmd"])');
 const durationMs = () => z.number().int().min(1).max(10000).optional()
@@ -56,6 +57,9 @@ export function validateActionParameters(input) {
   if (input.modifiers !== undefined && input.action !== 'mouse_click') {
     throw new Error(`modifiers apply only to mouse_click, not ${input.action}`);
   }
+  // Aliases name one key; the native controller refuses a repeated keysym.
+  const keys = (input.modifiers || []).map(name => MODIFIER_ALIASES[name] || name);
+  if (new Set(keys).size !== keys.length) throw new Error('modifiers must name distinct keys');
 }
 
 /** Whole-batch hold check before admission: every mouse_up releases a button

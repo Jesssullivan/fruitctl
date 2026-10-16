@@ -101,6 +101,11 @@ test('parameter validation covers hold_key, modifier placement and mouse_up coor
   assert.throws(() => validateActionParameters({ action: 'mouse_up', x: 1 }), /both x and y/);
   assert.throws(() => validateActionParameters({ action: 'mouse_double_click', x: 1, y: 1, modifiers: ['cmd'] }),
     /only to mouse_click/);
+  // The native controller refuses a repeated keysym; aliases are one key.
+  for (const modifiers of [['shift', 'shift'], ['cmd', 'command'], ['option', 'alt']]) {
+    assert.throws(() => validateActionParameters({ action: 'mouse_click', x: 1, y: 1, modifiers }), /distinct keys/);
+  }
+  validateActionParameters({ action: 'mouse_click', x: 1, y: 1, modifiers: ['shift', 'rshift', 'cmd', 'alt'] });
   validateActionParameters({ action: 'mouse_up' });
   validateActionParameters({ action: 'cursor_position' });
   validateActionBatch([{ action: 'mouse_down', x: 1, y: 1 }, { action: 'mouse_up' },
