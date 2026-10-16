@@ -19,12 +19,16 @@ The source targets Apple silicon macOS 15 or later. Check the
 | Agent adapter or Linux SSH bridge | Install the matching adapter; keep credentials on the Darwin controller. |
 | Darwin VNC controller | Configure the target profile and credential provider. It receives target pixels over VNC. |
 | Target's Apple Screen Sharing | The target owner enables the service and chooses permitted users. |
-| Optional Fruitctl Host on the target | The target user enables capture and grants that app Screen Capture access. |
+| Optional Fruitctl Host on the target | The target user enables capture and grants that app Screen Capture and Accessibility access. |
 
-The Host source supplies images and an indicator, with no local input service.
-Its permission example therefore requests no Accessibility, event-posting, input
-monitoring, microphone or Full Disk Access policy. VNC input remains with the
-controller and the target's Screen Sharing service.
+The Host source supplies images, an Accessibility snapshot and an indicator, with
+no local input service. It reads the Accessibility tree for `ax_snapshot` only;
+it posts no events and clicks no elements. The Accessibility grant is expected
+on a standard Host install (D10). Without it, capture still works and
+`ax_snapshot` fails with the typed code `accessibility_permission_required`.
+The Host requests no event-posting, input monitoring, microphone or Full Disk
+Access policy. VNC input remains with the controller and the target's Screen
+Sharing service.
 
 ## Unmanaged target: attended Host setup
 
@@ -38,12 +42,15 @@ steps in their logged-in desktop session:
    Recording**. Follow Apple's requested **Quit & Reopen** step when shown.
    [Apple's recording access guide](https://support.apple.com/guide/mac-help/control-access-screen-system-audio-recording-mchld6aa7d23/mac)
    describes the user's setting; its title does not mean Fruitctl captures audio.
-3. Start one attended capture through the configured Host attachment. A later
+3. Enable that same app in **System Settings → Privacy & Security →
+   Accessibility**. The Host never prompts for it. `FruitctlHost --doctor` and
+   Host health report `accessibility_trusted` for the running process.
+4. Start one attended capture through the configured Host attachment. A later
    direct-capture alert can require a separate choice even when the ordinary
    recording preflight is true. If access is declined or a prompt remains
    unresolved, end the attempt and return when the user is ready; do not repeat
    prompts or report capture success from preflight alone.
-4. Confirm the chosen display produces complete images, the purple indication
+5. Confirm the chosen display produces complete images, the purple indication
    stays visible locally and absent from agent images, and **Fruitctl → Stop
    agent control** ends control and clears the indication. Record the exact
    release and macOS version before treating that route as qualified.
@@ -94,8 +101,10 @@ Then complete the profile and attended setup:
    permission or capture succeeded.
 
 The example has one `ScreenCapture` entry using `Authorization`; it does not
-include `Allowed` or any other service. Additional input services belong to a
-separately justified input component, not this image-only Host.
+include `Allowed` or any other service. It does not yet carry the expected
+Accessibility entry, so the target user grants Accessibility during the
+attended setup above. Additional input services belong to a
+separately justified input component, not this observation-only Host.
 
 Apple's [Restrictions schema](https://raw.githubusercontent.com/apple/device-management/release/mdm/profiles/com.apple.applicationaccess.yaml)
 also defines `forceBypassScreenCaptureAlert` from macOS 15.1. It is an MDM
@@ -214,9 +223,10 @@ The session and Host warnings are listed below. The
 | `host_grants_unverified` | The SSH session could not read the system TCC.db. |
 
 The Host route with Screen Recording and Accessibility granted is the standard
-macOS install. Raw VNC with no grants is the degraded fallback. The current
-image-only Host does not yet use Accessibility; the warning tracks the planned
-standard install.
+macOS install. Raw VNC with no grants is the degraded fallback. The Host uses
+Accessibility for `ax_snapshot`; without the grant that action fails with
+`accessibility_permission_required` while capture continues. The raw route
+refuses `ax_snapshot` with `unsupported_on_route`.
 
 Reading TCC.db needs Full Disk Access for the SSH session. Doctor does not
 need it, and it is optional. Without it, both grants read as `unknown`;

@@ -1,10 +1,14 @@
 import AppKit
+import ApplicationServices
 import CoreGraphics
 import Darwin
 
 struct HostOptions {
     var captureChoice: Bool?
     var displayID: CGDirectDisplayID?
+    /// Canonical display UUID; resolved against the online display list at
+    /// launch and again after every display reconfiguration.
+    var displayUUID: String?
     var requestPermission = false
     var mode: Mode = .application
     enum Mode { case application, stdio, doctor, help }
@@ -27,10 +31,18 @@ struct HostOptions {
             case "--request-screen-capture": options.requestPermission = true
             case "--display-id":
                 index += 1
-                guard index < arguments.count, let id = UInt32(arguments[index]), id > 0 else {
+                guard options.displayID == nil, options.displayUUID == nil,
+                      index < arguments.count, let id = UInt32(arguments[index]), id > 0 else {
                     throw HostLeaseError.invalidParameters
                 }
                 options.displayID = id
+            case "--display-uuid":
+                index += 1
+                guard options.displayID == nil, options.displayUUID == nil, index < arguments.count,
+                      let uuid = HostDisplayIdentity.canonical(arguments[index]) else {
+                    throw HostLeaseError.invalidParameters
+                }
+                options.displayUUID = uuid
             default: throw HostLeaseError.invalidParameters
             }
             index += 1
@@ -51,6 +63,7 @@ final class HostApplicationController: NSObject, NSApplicationDelegate, NSMenuDe
     private let capture: HostCapture
     private let capturePreferences: HostCapturePreferences
     private let permission: HostCapturePermission
+    private let accessibility: HostAccessibilityProvider
     private let instanceID = UUID().uuidString
     private var lease = HostLeaseState()
     private var availability = HostAvailabilityState()
@@ -59,6 +72,10 @@ final class HostApplicationController: NSObject, NSApplicationDelegate, NSMenuDe
     private var overlayReady = false
     private var lastUIHeartbeat: UInt64?
     private var captureInProgress = false
+    private var axSnapshotInProgress = false
+    /// UUID of the display capture is bound to; nil when it has none or the
+    /// configured UUID is no longer online.
+    private var boundDisplayUUID: String?
     private var timer: Timer?
     private var notifications: [NSObjectProtocol] = []
     private var signalSources: [DispatchSourceSignal] = []
@@ -92,9 +109,23 @@ final class HostApplicationController: NSObject, NSApplicationDelegate, NSMenuDe
         capturePreferences = preferences
         let authorization = HostCapturePermission.system()
         permission = authorization
-        capture = HostCapture(preferences: preferences, permission: authorization,
-                              displayID: options.displayID ?? CGMainDisplayID())
+        let displayID = options.displayID ?? CGMainDisplayID()
+        capture = HostCapture(preferences: preferences, permission: authorization, displayID: displayID)
+        accessibility = HostSystemAccessibilityProvider()
+        boundDisplayUUID = HostDisplayIdentity.uuid(of: displayID)
         super.init()
+    }
+
+    /// A configured UUID is re-resolved after every reconfiguration. When it
+    /// is no longer online the capture binds to no display and fails closed.
+    private func rebindConfiguredDisplay() {
+        guard let configured = options.displayUUID else {
+            boundDisplayUUID = HostDisplayIdentity.uuid(of: capture.displayID); return
+        }
+        // Display ID 0 is CoreGraphics' null display: never active or shareable.
+        let resolved = HostDisplayIdentity.resolveOnline(configured) ?? 0
+        capture.rebind(displayID: resolved)
+        boundDisplayUUID = resolved == 0 ? nil : configured
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -280,6 +311,7 @@ final class HostApplicationController: NSObject, NSApplicationDelegate, NSMenuDe
                 guard let self else { return }
                 self.generation &+= 1
                 self.invalidateActivity(reason: .displayChanged)
+                self.rebindConfiguredDisplay()
                 self.renderer.rebuild()
             }
         })
@@ -394,6 +426,10 @@ final class HostApplicationController: NSObject, NSApplicationDelegate, NSMenuDe
                 throw HostCaptureError.displayUnavailable
             }
         }
+        if let uuid = request.params["display_uuid"] {
+            guard let text = uuid.string, let wanted = HostDisplayIdentity.canonical(text),
+                  wanted == boundDisplayUUID else { throw HostCaptureError.displayUnavailable }
+        }
         if let mode = request.params["capture_backend"] {
             guard mode.string == "owned_sck" else { throw HostLeaseError.invalidParameters }
         }
@@ -420,6 +456,9 @@ final class HostApplicationController: NSObject, NSApplicationDelegate, NSMenuDe
                 uiHeartbeatAt: lastUIHeartbeat, captureReady: captureReady,
                 overlayReady: overlayReady && renderer.hasVisibleDisplayPanels)),
             "raw_vnc_exclusion": .boolean(false), "display_id": .integer(Int64(capture.displayID)),
+            "display_uuid": boundDisplayUUID.map { .string($0) } ?? .null,
+            "display_geometry": HostDisplayGeometry.current(capture.displayID).map { .object($0.metadata) } ?? .null,
+            "accessibility_trusted": .boolean(accessibility.isTrusted()),
             "displayGeneration": .integer(Int64(clamping: generation)),
             "ui_heartbeat_age_ms": age.map { .integer(Int64(clamping: $0)) } ?? .null,
             "lease_remaining_ms": .integer(Int64(clamping: current.map {
@@ -464,7 +503,8 @@ final class HostApplicationController: NSObject, NSApplicationDelegate, NSMenuDe
                 status["instance_label"] = .string(String(instanceID.prefix(8)))
                 status["idle_reference_exporting"] = .boolean(idleReference.isExporting)
                 status["capabilities"] = .array(["capture", "begin_activity", "renew_activity",
-                                                 "release_activity", "export_idle_reference"].map { .string($0) })
+                                                 "release_activity", "export_idle_reference",
+                                                 "ax_snapshot"].map { .string($0) })
                 status["input_service"] = .boolean(false)
                 return .ok(request, status)
             case "begin_activity":
@@ -528,7 +568,9 @@ final class HostApplicationController: NSObject, NSApplicationDelegate, NSMenuDe
                                             displayGeneration: generation, now: now)
                 guard HostLeaseState.isReady(now: now, uiHeartbeatAt: lastUIHeartbeat,
                     captureReady: captureReady, overlayReady: overlayReady && renderer.hasVisibleDisplayPanels),
-                    !captureInProgress, !idleReference.isExporting else { throw HostLeaseError.notReady }
+                    !captureInProgress, !axSnapshotInProgress, !idleReference.isExporting else {
+                    throw HostLeaseError.notReady
+                }
                 captureInProgress = true
                 defer { captureInProgress = false }
                 do {
@@ -544,6 +586,57 @@ final class HostApplicationController: NSObject, NSApplicationDelegate, NSMenuDe
                     }
                     return .ok(request, readiness(now: completedAt, activity: current)
                         .merging(image.metadata) { _, imageValue in imageValue })
+                } catch {
+                    if lease.release(connectionID: connectionID, sessionID: session) { clearActivityUI() }
+                    throw error
+                }
+            case "ax_snapshot":
+                // Observation only, under the same activity lease as capture.
+                // Every call reads live Accessibility state; nothing is cached.
+                try validateDisplay(request)
+                try requireAvailable()
+                let axRequest = try HostAXRequest.parse(request.params)
+                let session = try request.requiredString("session_id")
+                _ = try lease.requireOwner(sessionID: session, connectionID: connectionID,
+                                            displayGeneration: generation, now: now)
+                guard HostLeaseState.isReady(now: now, uiHeartbeatAt: lastUIHeartbeat,
+                    captureReady: captureReady, overlayReady: overlayReady && renderer.hasVisibleDisplayPanels),
+                    !captureInProgress, !axSnapshotInProgress, !idleReference.isExporting else {
+                    throw HostLeaseError.notReady
+                }
+                guard accessibility.isTrusted() else { throw HostAccessibilityError.permissionRequired }
+                let displayID = capture.displayID
+                guard let geometry = HostDisplayGeometry.current(displayID) else {
+                    throw HostCaptureError.displayUnavailable
+                }
+                let applications = accessibility.applications(focusedOnly: axRequest.focusedApplicationOnly,
+                                                              excluding: getpid())
+                guard !applications.isEmpty else { throw HostAccessibilityError.applicationUnavailable }
+                axSnapshotInProgress = true
+                defer { axSnapshotInProgress = false }
+                do {
+                    // Synchronous AX IPC runs off the main actor so Stop, the
+                    // UI heartbeat and display notifications stay responsive.
+                    let deadline = DispatchTime.now().uptimeNanoseconds
+                        + HostAccessibilitySnapshot.budgetNanoseconds
+                    let snapshot = try await Task.detached(priority: .userInitiated) {
+                        try HostAccessibilitySnapshot.build(applications: applications, request: axRequest,
+                            geometry: geometry) { DispatchTime.now().uptimeNanoseconds >= deadline }
+                    }.value
+                    let completedAt = clock.milliseconds()
+                    let current = try lease.requireOwner(sessionID: session, connectionID: connectionID,
+                        displayGeneration: generation, now: completedAt)
+                    try requireAvailable()
+                    guard accessibility.isTrusted() else { throw HostAccessibilityError.permissionRequired }
+                    guard capture.displayID == displayID, HostDisplayGeometry.current(displayID) == geometry else {
+                        throw HostLeaseError.displayChanged
+                    }
+                    guard HostLeaseState.isReady(now: completedAt, uiHeartbeatAt: lastUIHeartbeat,
+                        captureReady: captureReady, overlayReady: overlayReady && renderer.hasVisibleDisplayPanels) else {
+                        throw HostLeaseError.notReady
+                    }
+                    return .ok(request, readiness(now: completedAt, activity: current)
+                        .merging(snapshot) { _, value in value })
                 } catch {
                     if lease.release(connectionID: connectionID, sessionID: session) { clearActivityUI() }
                     throw error
@@ -574,6 +667,8 @@ final class HostApplicationController: NSObject, NSApplicationDelegate, NSMenuDe
             return .failure(id: request.id, message: error.rawValue)
         } catch let error as HostIdleReferenceError {
             return .failure(id: request.id, message: error.rawValue)
+        } catch let error as HostAccessibilityError {
+            return .failure(id: request.id, message: error.rawValue)
         } catch {
             return .failure(id: request.id, message: "host_action_failed")
         }
@@ -597,10 +692,13 @@ struct FruitctlHostMain {
             case .help:
                 print("""
                 FruitctlHost — optional macOS human activity indicator and owned SCK capture
-                Usage: FruitctlHost [--enable-capture | --disable-capture] [--request-screen-capture] [--display-id ID]
+                Usage: FruitctlHost [--enable-capture | --disable-capture] [--request-screen-capture]
+                                    [--display-id ID | --display-uuid UUID]
                        FruitctlHost --stdio
                        FruitctlHost --doctor
                 --stdio attaches to an already running same-user Aqua app; it never launches UI.
+                --display-uuid survives display-ID changes; an absent UUID fails with
+                configured_display_unavailable. --doctor lists online display UUIDs.
                 Capture starts disabled on fresh installs; explicit operator opt-in persists.
                 The local menu can enable/disable capture; IPC cannot change the opt-in.
                 Permission requests require the explicit
@@ -615,6 +713,13 @@ struct FruitctlHostMain {
                 let report: [String: HostValue] = [
                     "socket_present": .boolean(socketPresent), "raw_vnc_exclusion": .boolean(false),
                     "screen_capture_permission": .boolean(CGPreflightScreenCaptureAccess()),
+                    "accessibility_trusted": .boolean(AXIsProcessTrusted()),
+                    "displays": .array(HostDisplayIdentity.onlineDisplays().map { display in
+                        .object(["display_id": .integer(Int64(display)),
+                                 "display_uuid": HostDisplayIdentity.uuid(of: display).map { .string($0) } ?? .null,
+                                 "main": .boolean(CGDisplayIsMain(display) != 0),
+                                 "geometry": HostDisplayGeometry.current(display).map { .object($0.metadata) } ?? .null])
+                    }),
                     "bundle_id": .string(Bundle.main.bundleIdentifier ?? "unbundled"),
                     "gui_started": .boolean(false), "capture_started": .boolean(false)
                 ]
@@ -623,6 +728,16 @@ struct FruitctlHostMain {
             case .stdio:
                 try HostIPC.attachStdio()
             case .application:
+                var options = options
+                if let uuid = options.displayUUID {
+                    // Typed launch failure: never fall back to the main display.
+                    guard let display = HostDisplayIdentity.resolveOnline(uuid) else {
+                        HostApplicationController.writeError(
+                            "FruitctlHost: configured_display_unavailable (display UUID not online).\n")
+                        exit(3)
+                    }
+                    options.displayID = display
+                }
                 let app = NSApplication.shared
                 let controller = HostApplicationController(options: options)
                 app.delegate = controller

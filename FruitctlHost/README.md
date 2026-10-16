@@ -4,6 +4,7 @@ This optional macOS 15+ Apple silicon app renders the purple human indicator
 and captures its configured display through ScreenCaptureKit. The existing
 LibVNC client and input writer remain on the controlling Darwin seat; the
 target continues to serve Apple Screen Sharing. This app has no input service.
+With the Accessibility grant it also returns a read-only Accessibility snapshot.
 
 The indicator is allowed only for the owned ScreenCaptureKit observation path.
 Each capture excludes the complete running Fruitctl Host application, identified
@@ -51,7 +52,13 @@ automatically retried. This utility does not change capture opt-in or TCC.
 The product app identity is `com.xoxd.fruitctl.host`. Release signing and
 notarization apply to the complete bundle; they do not grant screen recording.
 Capture is disabled on a fresh install. An attended launch may select
-`--enable-capture`, optionally `--display-id <configured-display-id>`. This
+`--enable-capture`, optionally `--display-id <configured-display-id>` or
+`--display-uuid <display-uuid>` (not both). The UUID is resolved with
+`CGDisplayCreateUUIDFromDisplayID` over the online display list at launch and
+again after every display reconfiguration, so it survives display-ID changes.
+An absent UUID exits with `configured_display_unavailable` instead of falling
+back to the main display; one that disappears later binds no display and fails
+closed. `--doctor` lists each online display's ID, UUID and geometry. This
 explicit choice persists in the app's preferences before any OS consent request,
 so macOS Quit & Reopen can drop startup arguments without losing the choice.
 `--disable-capture` persists the opposite choice. A screen-recording grant alone
@@ -68,12 +75,13 @@ request OS consent; Disable capture persists opt-out, clears the current lease,
 hides panels, and prevents begin/capture. Neither action clears human stop or
 creates a lease. IPC cannot enable capture, grant permission, or change these
 preferences. Stop immediately invalidates
-the app's lease, hides panels, and latches begin/renew/capture unavailable. Only
+the app's lease, hides panels, and latches begin/renew/capture/AX snapshot unavailable. Only
 the local menu's Allow action clears that latch; IPC and session/display wake
 events cannot clear it. Allow establishes no lease and does not override other
 readiness checks. The latch lasts for the resident process lifetime; restarting
 the app is a new attended launch. The menu uses AppKit and requests no
-Accessibility permission.
+Accessibility permission; `ax_snapshot` only uses a grant the user made in
+System Settings.
 
 The persistent capture choice and process-local human stop latch are distinct.
 After any restart, a controller still needs a fresh lease and complete excluded
@@ -110,6 +118,7 @@ Each connection is serialized, and at most eight same-user connections attach.
 | `renew_activity` | Same session/connection, strictly increasing `sequence`, fresh `challenge`; requires recent main-thread heartbeat and capture/UI readiness. |
 | `release_activity` | `session_id`; releases only this connection's activity and hides the indicator. |
 | `capture` / `screenshot` | `session_id`, optional `max_dimension` (256–4096; default 1280), same configured display. Requires a live ready lease. Returns a complete PNG with image and display mapping metadata. |
+| `ax_snapshot` | `session_id`, optional `depth` (1–12; default 6) and boolean `focused_app` (default `true`: frontmost application only; `false`: every regular visible application). Requires the same live ready lease as capture and the Accessibility grant. Reads the live tree off the main thread within a 200 ms budget, breadth first, at most 1,500 nodes and 200 children per element. Returns readiness plus `ax_snapshot`. |
 | `export_idle_reference` | `instance_id` must match the resident app; `reference_id` must match the transient local-menu arm reported by `health`. Optional display/backend must match configuration. Consumes the arm once and exports one full-native PNG plus a hashed private receipt while naturally idle. Creates no lease, readiness or input observation. |
 
 Unknown actions, including OCR, diff, ordinary baseline and custom input, fail explicitly
@@ -122,7 +131,27 @@ Acknowledgements bind `instance_id`, `session_id`, `sequence`, `challenge`,
 `overlay_ready`, `ui_heartbeat_age_ms`, and `lease_remaining_ms`. Capture additionally
 returns `image` (base64 PNG), `mimeType`, `nativeWidth`, `nativeHeight`,
 `scaledWidth`, `scaledHeight`, `display_bounds`, `pixels_per_point_x/y`, and
-`cursor_included`. Bounds use the Core Graphics global display coordinate space.
+`cursor_included`, plus the display mode's `pixel_width`, `pixel_height`,
+`point_width`, `point_height` and `scale` (pixels per point). Capture size is the
+mode's pixel framebuffer; `CGDisplayPixelsWide/High` report points on HiDPI and
+are not used. Bounds use the Core Graphics global display coordinate space.
+Health and every acknowledgement also report `display_uuid`, `display_geometry`
+(the same five mode fields, or null) and `accessibility_trusted` from
+`AXIsProcessTrusted`. An optional `display_uuid` request parameter must match the
+bound display.
+
+`ax_snapshot` returns `{schema: "fruitctl.ax-snapshot.v1", coordinate_space:
+"framebuffer_pixels", framebuffer, depth, focused_app, applications, nodes,
+node_count, truncated}`. Each node has `ref`, `parent`, `depth`, `role` and,
+when present, `subrole`, `label` (title or description), `value` and `frame`.
+Frames are the element's visible part on the configured display in framebuffer
+pixels, or null when it has none. Refs such as `ax:<pid>:0.2.1` are structural
+paths: they stay stable while the tree's shape is unchanged and are not handles.
+Secure text fields report `value_redacted: true` and never a value. Text is
+bounded to 256 characters. Every call reads live state; nothing is cached, and
+the snapshot authorizes no input. Missing trust fails with
+`accessibility_permission_required`; no candidate application fails with
+`accessibility_application_unavailable`.
 A display-change notification invalidates the lease, advances generation, and
 rebuilds all display panels. A capture with changed/incomplete geometry fails.
 `activity_eligible` reports the current owned console-session and awake-display

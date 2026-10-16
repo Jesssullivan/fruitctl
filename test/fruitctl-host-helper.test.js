@@ -1172,3 +1172,186 @@ test('helper SSH shutdown uses the remaining clean-release budget after native r
   host.child.emit('close', null, 'SIGKILL');
   await assert.rejects(executor.close(), /owned SSH exit unconfirmed/);
 });
+
+// TIN-6603: display UUID binding, HiDPI scale and the Host-only AX snapshot.
+const DISPLAY_UUID = '37D8832A-2D66-02CA-B9F7-8F30A301B230';
+const axSnapshot = (overrides = {}) => ({ schema: 'fruitctl.ax-snapshot.v1', coordinate_space: 'framebuffer_pixels',
+  framebuffer: { pixel_width: 512, pixel_height: 256, point_width: 256, point_height: 128, scale: 2 },
+  depth: 6, focused_app: true, truncated: false, node_count: 2,
+  applications: [{ pid: 77, ref: 'ax:77:0', bundle_id: 'com.example.app', name: 'Example' }],
+  nodes: [{ ref: 'ax:77:0', parent: null, depth: 0, role: 'AXApplication', frame: null },
+    { ref: 'ax:77:0.0', parent: 'ax:77:0', depth: 1, role: 'AXButton', label: 'OK',
+      frame: { x: 20, y: 40, width: 60, height: 80 } }], ...overrides });
+const axHost = ({ trusted = true, snapshot = axSnapshot(), uuid } = {}) => ({ alter(request, response) {
+  if (!response.success) return response;
+  const result = { ...response.result, accessibility_trusted: trusted,
+    ...(uuid === undefined ? {} : { display_uuid: uuid }) };
+  if (request.action === 'health') result.capabilities = ['capture', 'begin_activity', 'renew_activity',
+    'release_activity', 'export_idle_reference', 'ax_snapshot'];
+  if (request.action === 'ax_snapshot') result.ax_snapshot = snapshot;
+  return { ...response, result };
+} });
+
+test('display UUID configuration is canonicalized, needs one identity and binds the qualified mapping', async () => {
+  const base = configuration();
+  delete base.displayId;
+  assert.throws(() => new HostHelperExecutor({ nativeExecutor: native(), hostHelper: base,
+    spawnImpl: helper().spawnImpl }), /Invalid host-helper configuration/);
+  for (const displayUuid of ['not-a-uuid', 7, '37D8832A2D6602CAB9F78F30A301B230']) {
+    assert.throws(() => new HostHelperExecutor({ nativeExecutor: native(), hostHelper: { ...base, displayUuid },
+      spawnImpl: helper().spawnImpl }), /Invalid host-helper configuration/);
+  }
+  const uuidMapping = { ...mapping, displayId: undefined, displayUuid: DISPLAY_UUID.toLowerCase() };
+  for (const invalid of [{ ...uuidMapping, displayUuid: undefined }, { ...uuidMapping, displayId: 42 },
+    { ...uuidMapping, scale: 0.5 }, { ...uuidMapping, scale: Number.NaN }]) {
+    assert.throws(() => new HostHelperExecutor({ nativeExecutor: native(),
+      hostHelper: { ...base, displayUuid: DISPLAY_UUID, mapping: invalid }, spawnImpl: helper().spawnImpl }),
+    /Invalid qualified host-helper mapping/);
+  }
+  const executor = new HostHelperExecutor({ nativeExecutor: native(), spawnImpl: helper().spawnImpl,
+    hostHelper: { ...base, displayUuid: DISPLAY_UUID.toLowerCase(), mapping: { ...uuidMapping, scale: 2 } } });
+  try {
+    assert.equal(executor.config.displayUuid, DISPLAY_UUID);
+    assert.equal(executor.config.mapping.displayUuid, DISPLAY_UUID);
+    assert.equal(executor.displayId, undefined);
+  } finally { await executor.close(); }
+});
+
+test('a UUID-only profile learns the display ID from health and sends the UUID on every request', async () => {
+  const config = configuration();
+  delete config.displayId;
+  config.displayUuid = DISPLAY_UUID;
+  const { executor, host } = await fixture({ config, helperOptions: axHost({ uuid: DISPLAY_UUID }) });
+  try {
+    assert.equal(executor.displayId, 42);
+    const [response] = await executor.execute([{ action: 'screenshot' }]);
+    assert.equal(response.result.display_id, 42);
+    assert.ok(host.requests.every(request => request.action === 'release_activity' ||
+      request.params.display_uuid === DISPLAY_UUID));
+    assert.ok(host.requests.filter(request => request.action !== 'release_activity')
+      .every(request => request.action === 'health' ? request.params.display_id === undefined
+        : request.params.display_id === 42));
+  } finally { await executor.close(); }
+  await assert.rejects(fixture({ config, helperOptions: axHost({ uuid: '00000000-0000-4000-8000-000000000000' }) }),
+    /Host-helper health binding failed/);
+  await assert.rejects(fixture({ config }), /Host-helper health binding failed/);
+});
+
+test('capture scale must match pixels per point and a qualified mapping scale', async () => {
+  const scaled = (scale, extra = {}) => ({ alter(request, response) {
+    if (request.action !== 'capture') return response;
+    return { ...response, result: { ...response.result, scale, pixel_width: 512, pixel_height: 256, ...extra } };
+  } });
+  {
+    const { executor } = await fixture({ helperOptions: scaled(2) });
+    try {
+      const [response] = await executor.execute([{ action: 'screenshot' }]);
+      assert.equal(response.result.scale, 2);
+    } finally { await executor.close(); }
+  }
+  for (const options of [scaled(3), scaled(2, { pixel_width: 256 }), scaled(9)]) {
+    const { executor } = await fixture({ helperOptions: options });
+    try {
+      await assert.rejects(executor.execute([{ action: 'screenshot' }]), /Invalid host-helper capture geometry/);
+    } finally { await executor.close(); }
+  }
+  const { executor, vnc } = await fixture({ config: { ...configuration(), mapping: { ...mapping, scale: 1 } },
+    helperOptions: scaled(2) });
+  try {
+    await assert.rejects(executor.execute([{ action: 'key_tap', key: 'tab' }]),
+      /Host-helper qualified mapping changed/);
+    assert.equal(vnc.calls.some(action => action.action === 'key_tap'), false);
+  } finally { await executor.close(); }
+});
+
+test('ax_snapshot routes to the Host under the activity lease with pixel and display frames', async () => {
+  const { executor, vnc, host } = await fixture({ helperOptions: axHost() });
+  try {
+    assert.ok(executor.capabilities.actions.includes('ax_snapshot'));
+    const [response] = await executor.execute([{ action: 'ax_snapshot', depth: 3, focused_app: false }]);
+    const request = host.requests.find(entry => entry.action === 'ax_snapshot');
+    assert.equal(request.params.depth, 3);
+    assert.equal(request.params.focused_app, false);
+    assert.equal(request.params.session_id, host.state().session_id);
+    assert.deepEqual(host.requests.map(entry => entry.action), ['health', 'begin_activity', 'renew_activity',
+      'ax_snapshot']);
+    assert.equal(response.result.detail, 'ax_snapshot: 2 nodes');
+    assert.equal(response.result.session_id, undefined);
+    assert.equal(response.result.challenge, undefined);
+    const button = response.result.ax_snapshot.nodes[1];
+    assert.deepEqual(button.frame, { x: 20, y: 40, width: 60, height: 80 });
+    assert.deepEqual(button.display_frame, { x: 10, y: 20, width: 30, height: 40 });
+    assert.deepEqual(response.result.ax_snapshot.display, { width: 256, height: 128 });
+    assert.equal(response.result.ax_snapshot.nodes[0].display_frame, undefined);
+    assert.deepEqual(vnc.calls, []);
+    // A VNC display with another aspect still yields the Host screenshot's
+    // uniform scaling, never independent per-axis factors.
+    vnc.display = { width: 300, height: 100 };
+    const [wide] = await executor.execute([{ action: 'ax_snapshot' }]);
+    assert.deepEqual(wide.result.ax_snapshot.display, { width: 300, height: 150 });
+    assert.deepEqual(wide.result.ax_snapshot.nodes[1].display_frame, { x: 11, y: 23, width: 35, height: 47 });
+  } finally { await executor.close(); }
+});
+
+test('malformed AX snapshots fail closed', async t => {
+  const node = axSnapshot().nodes[1];
+  const cases = {
+    schema: axSnapshot({ schema: 'other' }),
+    'frame outside framebuffer': axSnapshot({ nodes: [axSnapshot().nodes[0], { ...node, frame: { x: 500, y: 0, width: 60, height: 1 } }] }),
+    'orphan parent': axSnapshot({ nodes: [axSnapshot().nodes[0], { ...node, parent: 'ax:77:0.9' }] }),
+    'redacted with value': axSnapshot({ nodes: [axSnapshot().nodes[0], { ...node, value_redacted: true, value: 'x' }] }),
+    'count mismatch': axSnapshot({ node_count: 5 }),
+    'unbounded label': axSnapshot({ nodes: [axSnapshot().nodes[0], { ...node, label: 'x'.repeat(257) }] }),
+    'unbounded application name': axSnapshot({ applications: [{ ...axSnapshot().applications[0], name: 'x'.repeat(257) }] }),
+    'non-string bundle id': axSnapshot({ applications: [{ ...axSnapshot().applications[0], bundle_id: 7 }] }),
+  };
+  for (const [name, snapshot] of Object.entries(cases)) {
+    await t.test(name, async () => {
+      const { executor } = await fixture({ helperOptions: axHost({ snapshot }) });
+      try {
+        await assert.rejects(executor.execute([{ action: 'ax_snapshot' }]), /Invalid host-helper AX snapshot/);
+      } finally { await executor.close(); }
+    });
+  }
+});
+
+test('ax_snapshot refuses before admission on an older Host, invalid parameters or a missing grant', async () => {
+  {
+    const { executor, host } = await fixture();
+    try {
+      assert.equal(executor.capabilities.actions.includes('ax_snapshot'), false);
+      await assert.rejects(executor.execute([{ action: 'ax_snapshot' }]), error =>
+        isPreAdmissionRefusal(error) && /predates it/.test(error.message));
+      assert.deepEqual(host.requests.map(entry => entry.action), ['health']);
+    } finally { await executor.close(); }
+  }
+  {
+    const { executor } = await fixture({ helperOptions: axHost() });
+    try {
+      for (const action of [{ action: 'ax_snapshot', depth: 0 }, { action: 'ax_snapshot', depth: 13 },
+        { action: 'ax_snapshot', focused_app: 'yes' }]) {
+        await assert.rejects(executor.execute([action]), error => isPreAdmissionRefusal(error));
+      }
+    } finally { await executor.close(); }
+  }
+  const { executor, host } = await fixture({ helperOptions: axHost({ trusted: false }) });
+  try {
+    await assert.rejects(executor.execute([{ action: 'ax_snapshot' }]), error =>
+      isPreAdmissionRefusal(error) && error.code === 'accessibility_permission_required');
+    assert.deepEqual(host.requests.map(entry => entry.action), ['health']);
+  } finally { await executor.close(); }
+});
+
+test('a Host accessibility refusal keeps its sanitized typed reason', async () => {
+  const { executor, host } = await fixture({ helperOptions: { alter(request, response) {
+    if (request.action === 'ax_snapshot') return refused(request, 'accessibility_permission_required');
+    return axHost().alter(request, response);
+  } } });
+  try {
+    await assert.rejects(executor.execute([{ action: 'ax_snapshot' }]), error => {
+      const id = host.requests.find(entry => entry.action === 'ax_snapshot').id;
+      assert.equal(error.message, `Host helper refused request: accessibility_permission_required; request=${id}`);
+      return true;
+    });
+  } finally { await executor.close(); }
+});

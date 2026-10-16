@@ -47,7 +47,9 @@ reports `input_ready` and `input_settle_remaining_ms`. Code `-32013`
 `data.remaining_ms`. No input was sent, so retry once that time has passed. Code
 `-32011` is a typed input refusal written before any event, for example
 `mouse_down` outside one `action_queue` batch; see
-[operation](references/operation.md) for the input actions. Inspect the current
+[operation](references/operation.md) for the input actions. Code
+`unsupported_on_route` means the action (for example `ax_snapshot`) needs
+the Host route. Inspect the current
 image and its scaled coordinates, perform authorized bounded input, and obtain
 a new screenshot to verify the result. OCR, a process health response, or an
 input acknowledgement alone does not prove that the requested desktop change

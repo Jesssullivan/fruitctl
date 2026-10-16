@@ -7,7 +7,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
-import { presentationLabels, unattestedLabels, RAW_PRESENTATION } from '../lib/mcp/capabilities.js';
+import { presentationLabels, unattestedLabels, RAW_PRESENTATION, nativeCapabilities,
+  isPreAdmissionRefusal } from '../lib/mcp/capabilities.js';
 import { setTimeout as delay } from 'node:timers/promises';
 import net from 'node:net';
 import { readFrames, writeFrame } from '../lib/broker/protocol.mjs';
@@ -216,4 +217,55 @@ test('regression: an error frame from the broker cannot attest the indicator', a
   await client.opened;
   await assert.rejects(client.execute([{ action: 'wait' }]), /queue failed/);
   assert.deepEqual(client.presentation, { route: 'host', indicator: 'unknown' });
+});
+
+test('the raw route refuses ax_snapshot with typed unsupported_on_route before any admission', async t => {
+  const typed = error => isPreAdmissionRefusal(error) && error.code === 'unsupported_on_route' &&
+    /raw VNC route/.test(error.message);
+  for (const capabilities of [nativeCapabilities(), nativeCapabilities(['health', 'ax_snapshot'])]) {
+    assert.throws(() => NativeExecutor.prototype.preflight.call({ isReady: true, terminal: false, capabilities },
+      [{ action: 'wait' }, { action: 'ax_snapshot' }]), typed);
+  }
+  const calls = [];
+  const executor = { presentation: RAW_PRESENTATION, async execute(actions) {
+    calls.push(...actions);
+    NativeExecutor.prototype.preflight.call({ isReady: true, terminal: false, capabilities: nativeCapabilities() }, actions);
+    return actions.map(() => ({ result: { detail: 'OK' } }));
+  } };
+  const session = new McpSession(executor);
+  const refused = await session.command({ action: 'ax_snapshot', depth: 2 });
+  assert.equal(refused.isError, true);
+  assert.equal(refused.structuredContent.error.code, 'unsupported_on_route');
+  assert.deepEqual({ route: refused.structuredContent.route, indicator: refused.structuredContent.indicator },
+    RAW_PRESENTATION);
+  // Other thrown failures keep the message-only shape.
+  const failing = new McpSession({ presentation: RAW_PRESENTATION, async execute() {
+    throw Object.assign(new Error('transport'), { code: 'operation_failed' });
+  } });
+  assert.equal((await failing.command({ action: 'wait' })).structuredContent.error.code, undefined);
+
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'fruitctl-route-'));
+  await fs.chmod(directory, 0o700);
+  t.after(() => fs.rm(directory, { recursive: true, force: true }));
+  const socketPath = path.join(directory, 'broker.sock');
+  const started = [];
+  const broker = await createBroker({ socketPath, config: { targets: {
+    raw: { targetId: 'raw-desktop' },
+    host: { targetId: 'host-desktop', hostHelper: { sshHost: 'target.example' } },
+  } }, factory: async profile => {
+    started.push(profile.targetId);
+    return { presentation: profile.hostHelper ? { route: 'host', indicator: 'unknown' } : RAW_PRESENTATION,
+      async execute(actions) { return actions.map(() => ({ result: { detail: 'OK' } })); }, async close() {} };
+  } });
+  t.after(() => broker.close());
+  const raw = new BrokerExecutor({ socketPath, target: 'raw' });
+  const host = new BrokerExecutor({ socketPath, target: 'host' });
+  t.after(async () => { await raw.close(); await host.close(); });
+  await Promise.all([raw.opened, host.opened]);
+  const viaBroker = await new McpSession(raw).command({ action: 'ax_snapshot' });
+  assert.equal(viaBroker.structuredContent.error.code, 'unsupported_on_route');
+  assert.deepEqual(started, []);
+  await raw.execute([{ action: 'wait' }]);
+  await host.execute([{ action: 'ax_snapshot' }]);
+  assert.deepEqual(started, ['raw-desktop', 'host-desktop']);
 });
