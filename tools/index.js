@@ -35,6 +35,15 @@ export const INPUT_REFUSED_CODE = -32011;
 export function inputRefusal(reason, message) {
   return Object.assign(new Error(message), { code: INPUT_REFUSED_CODE, data: { reason } });
 }
+const extent = () => z.number().int().min(1).max(0x7fffffff);
+// A rectangle in the current scaled display space.
+const rect = () => z.object({ x: coordinate(), y: coordinate(), width: extent(), height: extent() });
+const MAX_REGIONS = 16;
+const regions = () => z.array(rect()).min(1).max(MAX_REGIONS)
+  .describe('Compare only these scaled-space rectangles (default: the whole display)');
+const ignore = () => z.array(rect()).max(MAX_REGIONS)
+  .describe('Scaled-space rectangles excluded from comparison (clocks, cursors, spinners)');
+const stableMs = () => z.number().int().min(50).max(10000);
 
 export function validateActionParameters(input) {
   const required = {
@@ -43,9 +52,14 @@ export function validateActionParameters(input) {
     mouse_drag: ['x', 'y', 'toX', 'toY'], scroll: ['x', 'y', 'direction'],
     nudge: ['dx', 'dy'], key_tap: ['key'], key_type: ['text'], paste: ['text'],
     hold_key: ['key', 'duration_ms'], mouse_down: ['x', 'y'],
+    zoom: ['x', 'y', 'width', 'height'], wait_for_stable: ['stable_ms', 'timeout_ms'],
+    expect_change: ['x', 'y', 'width', 'height'],
   }[input.action] || [];
   for (const field of required) {
     if (input[field] === undefined) throw new Error(`Missing ${field} for ${input.action}`);
+  }
+  if (input.action === 'wait_for_stable' && input.stable_ms > input.timeout_ms) {
+    throw new Error('stable_ms must not exceed timeout_ms for wait_for_stable');
   }
   if (input.action === 'key_combo' && input.key === undefined &&
       (!Array.isArray(input.keys) || input.keys.length === 0)) {
@@ -94,8 +108,10 @@ export function vncCommandTool() {
       'ACTIONS:',
       '  screenshot                              → full screen PNG',
       '  cursor_crop                             → crop around cursor with crosshair',
-      '  diff_check                              → detect screen changes since baseline',
+      '  diff_check     {regions?, ignore?}      → changed ratio + boxes since baseline (replaces it)',
       '  set_baseline                            → save current screen for diff comparison',
+      '  zoom           {x, y, width, height, max_dimension?} → fresh native-resolution PNG of a region',
+      '  wait_for_stable {stable_ms, timeout_ms, regions?, ignore?} → fresh captures until unchanged',
       '  mouse_click    {x, y, button?, modifiers?} → click (left|right|middle), e.g. modifiers ["shift"]',
       '  mouse_double_click {x, y}               → double click',
       '  triple_click   {x, y}                   → triple click (e.g. select a line)',
@@ -120,10 +136,11 @@ export function vncCommandTool() {
       '  shutdown                                → graceful daemon exit',
       '',
       'Use screenshot → analyze → act → verify pattern.',
+      'Observations are always fresh captures; a capture failure is a typed stale_screen error.',
     ].join('\n'),
     inputSchema: {
       action: z.enum([
-        'screenshot', 'cursor_crop', 'diff_check', 'set_baseline',
+        'screenshot', 'cursor_crop', 'diff_check', 'set_baseline', 'zoom', 'wait_for_stable',
         'mouse_click', 'mouse_double_click', 'mouse_move', 'hover', 'nudge',
         'mouse_drag', 'scroll',
         'key_tap', 'key_combo', 'key_type', 'paste',
@@ -147,9 +164,17 @@ export function vncCommandTool() {
       direction: z.enum(['up', 'down', 'left', 'right']).optional().describe('Scroll direction'),
       amount: z.number().int().min(1).max(20).optional().describe('Scroll amount (default 3)'),
       ms: z.number().int().min(50).max(10000).optional().describe('Wait duration in ms (default 500)'),
+      width: extent().optional().describe('Zoom region width in the current scaled display'),
+      height: extent().optional().describe('Zoom region height in the current scaled display'),
+      regions: regions().optional(),
+      ignore: ignore().optional(),
+      stable_ms: stableMs().optional().describe('wait_for_stable: unchanged duration required'),
+      timeout_ms: z.number().int().min(100).max(20000).optional()
+        .describe('wait_for_stable: give up with a typed stable_timeout error after this long'),
       // Configure params (runtime timing/display adjustment)
       reset: z.boolean().optional().describe('Reset all params to defaults'),
-      max_dimension: z.number().int().min(320).max(3840).optional().describe('Max screenshot dimension'),
+      max_dimension: z.number().int().min(320).max(3840).optional()
+        .describe('Max screenshot dimension (configure), or longest zoom image side (zoom, default 1280)'),
       cursor_crop_radius: z.number().int().min(50).max(500).optional().describe('Cursor crop radius'),
       click_hold_ms: z.number().int().min(1).max(500).optional().describe('Click hold duration'),
       double_click_gap_ms: z.number().int().min(1).max(500).optional().describe('Double-click gap'),
@@ -172,6 +197,11 @@ export function vncCommandTool() {
   };
 }
 
+/** Default bound for each action_queue step expectation. */
+export const EXPECT_TIMEOUT_MS = 3000;
+/** Expectation kinds the schema reserves but no backend evaluates yet. */
+export const RESERVED_EXPECTATIONS = Object.freeze(['ax_exists', 'ocr_contains']);
+
 /**
  * Build the stable action_queue tool definition.
  * Executes multiple VNC actions in sequence, returns text-only results.
@@ -182,7 +212,7 @@ export function actionQueueTool() {
       'mouse_click', 'mouse_double_click', 'mouse_move', 'hover', 'nudge',
       'mouse_drag', 'scroll',
       'key_tap', 'key_combo', 'key_type', 'paste',
-      'set_baseline', 'diff_check',
+      'set_baseline', 'diff_check', 'wait_for_stable',
       'wait',
       'triple_click', 'cursor_position', 'hold_key', 'mouse_down', 'mouse_up',
     ]).describe('The action to perform'),
@@ -201,6 +231,19 @@ export function actionQueueTool() {
     direction: z.enum(['up', 'down', 'left', 'right']).optional().describe('Scroll direction'),
     amount: z.number().int().min(1).max(20).optional().describe('Scroll amount (default 3)'),
     ms: z.number().int().min(50).max(10000).optional().describe('Wait duration in ms (default 500)'),
+    regions: regions().optional(),
+    ignore: ignore().optional(),
+    stable_ms: stableMs().optional().describe('wait_for_stable: unchanged duration required'),
+    timeout_ms: z.number().int().min(100).max(20000).optional().describe('wait_for_stable: timeout'),
+    expect: z.object({
+      change_in: rect().optional()
+        .describe('Fail the step unless this scaled rectangle differs from its pre-step frame'),
+      stable_ms: stableMs().optional().describe('Then wait until the screen is unchanged this long'),
+      timeout_ms: z.number().int().min(100).max(10000).optional()
+        .describe(`Bound for each expectation (default ${EXPECT_TIMEOUT_MS})`),
+      ax_exists: z.unknown().optional().describe('Reserved; refused as unsupported'),
+      ocr_contains: z.unknown().optional().describe('Reserved; refused as unsupported'),
+    }).optional().describe('Checked with fresh captures after the step; a failure stops the batch'),
   });
 
   return {
@@ -209,6 +252,8 @@ export function actionQueueTool() {
       'Execute multiple VNC actions in sequence. Returns text results only (no screenshots).',
       'The batch has one 30-second deadline and stops on first error.',
       'Use for batching confident action sequences.',
+      'A step may carry expect {change_in?: {x,y,width,height}, stable_ms?, timeout_ms?}, checked with',
+      'fresh captures after the step; an unmet expectation stops the batch with error code -32011.',
       '',
       'Mouse holds: mouse_down {x, y, button?} presses a button that stays held',
       'across later actions in this batch (mouse_move then drags) until',

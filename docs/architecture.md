@@ -221,6 +221,24 @@ input of each connection generation the native client writes one release-only
 key-up per Shift/Control/Alt/Meta/Super keysym. It is deferred from connect so
 an observation-only connection still writes no input.
 
+Observation conditions that fresh captures did not meet fail with JSON-RPC
+code `-32011`. `data.reason` is `stable_timeout` (`wait_for_stable`, or a queue
+step's `expect.stable_ms`) or `change_not_observed` (a queue step's
+`expect.change_in`), with `elapsed_ms` and `captures`. Every compared frame
+was fresh. A capture failure inside the wait stays `-32010` `stale_screen`.
+`wait_for_stable`, `zoom` and region `diff_check` never compare or return a
+cached frame. A queue step's `expect` runs in the same executor operation as
+the step, as private native methods: `expect_baseline` before the step, then
+`expect_change` and `wait_for_stable` after it. An unmet expectation therefore
+stops the batch before the next step's input.
+
+The Host route answers `screenshot` from its own ScreenCaptureKit image. It
+refuses every observation computed from raw VNC pixels before admission:
+`cursor_crop`, `diff_check`, `set_baseline`, `detect_elements`, `zoom`,
+`wait_for_stable` and the queue expectation methods. The refusal carries the
+string code `unsupported_on_route`. Actions a backend does not offer at all
+keep `unsupported_action`.
+
 `--rfb-wire-ledger` writes one stderr line per framebuffer request: message
 type, incremental flag, length and monotonic milliseconds, never payloads.
 The daemon's own requests are listed after LibVNC reports them sent. LibVNC

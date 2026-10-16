@@ -49,6 +49,7 @@ INPUT_REFUSED_CODE = -32011
 # Release-only key-up per modifier before a connection's first input (TIN-6597).
 MODIFIER_KEYSYMS = (0xFFE1, 0xFFE2, 0xFFE3, 0xFFE4, 0xFFE9, 0xFFEA, 0xFFE7, 0xFFE8, 0xFFEB, 0xFFEC)
 MODIFIER_SYNC = [{"kind": "key", "down": 0, "key": key} for key in MODIFIER_KEYSYMS]
+OBSERVATION_UNMET_CODE = -32011
 
 
 def require(condition, message):
@@ -909,6 +910,61 @@ def require_provenance(metadata, request_mode, method):
     return provenance
 
 
+def run_observation_v2(session, request_mode, windows):
+    """zoom, region diff and stability over fresh captures only (TIN-6598).
+
+    Every fixture update carries a new marker color, so two fresh frames
+    always differ everywhere. A reused or cached frame would compare equal.
+    """
+    def timed(method, **params):
+        start = time.monotonic()
+        response = session.action(method, **params)
+        windows.append((start, time.monotonic()))
+        return response, time.monotonic() - start
+
+    region = {"x": 8, "y": 5, "width": 20, "height": 11}
+    response, _ = timed("zoom", **region)
+    require(not response["error"] and response["image"], "zoom failed: %r" % (response["error"],))
+    width, height, pixels = decode_png(base64.b64decode(response["image"], validate=True))
+    zoom = response["metadata"].get("zoom") or {}
+    require((width, height) == (20, 11) and zoom == {"region": region, "native": region,
+                                                      "image_width": 20, "image_height": 11},
+            "zoom geometry %r" % (zoom,))
+    require(pixels[2] == 73 and pixels == pixels[:3] * (width * height), "zoom pixels are not one fresh marker")
+    require_provenance(response["metadata"], request_mode, "zoom")
+
+    timed("set_baseline")
+    left = {"x": 8, "y": 5, "width": 10, "height": 11}
+    response, _ = timed("diff_check", regions=[region], ignore=[left])
+    diff = response["metadata"].get("diff")
+    require(not response["error"] and response["metadata"].get("detail") == "changeDetected: true",
+            "diff_check failed: %r" % (response["error"],))
+    require(diff == {"changed": True, "changed_ratio": 1, "changed_pixels": 110, "compared_pixels": 110,
+                     "boxes": [{"x": 18, "y": 5, "width": 10, "height": 11}], "boxes_truncated": False,
+                     "baseline": "matched"}, "region diff %r" % (diff,))
+    require_provenance(response["metadata"], request_mode, "diff_check")
+
+    # Ignoring the whole display compares nothing: stable from fresh captures.
+    response, _ = timed("wait_for_stable", stable_ms=200, timeout_ms=3000,
+                        ignore=[{"x": 0, "y": 0, "width": WIDTH, "height": HEIGHT}])
+    stable = response["metadata"].get("stable") or {}
+    require(not response["error"] and stable.get("stable_for_ms", 0) >= 200 and stable.get("captures", 0) >= 2,
+            "wait_for_stable did not settle: %r %r" % (response["error"], stable))
+    require_provenance(response["metadata"], request_mode, "wait_for_stable")
+
+    # Unmasked, every fresh frame differs: a typed timeout, never a cached frame.
+    response, elapsed = timed("wait_for_stable", stable_ms=200, timeout_ms=600)
+    error = response["error"] or {}
+    data = error.get("data") or {}
+    require(error.get("code") == OBSERVATION_UNMET_CODE and data.get("reason") == "stable_timeout"
+            and data.get("captures", 0) >= 2 and not response["image"],
+            "changing screen did not time out as stable_timeout: %r" % (error,))
+    require(0.6 <= elapsed < 6.0, "stable_timeout ignored its bound: %.3fs" % elapsed)
+    return {"zoom": zoom, "diff": diff, "stable": stable,
+            "stableTimeout": {"code": error["code"], "reason": data["reason"], "captures": data["captures"],
+                              "elapsedMilliseconds": round(elapsed * 1000, 3)}}
+
+
 def run_model_scenario(model, request_mode, args):
     """One synthetic Apple idle-screen hypothesis against one request mode."""
     name = model + "-" + request_mode
@@ -967,6 +1023,7 @@ def run_model_scenario(model, request_mode, args):
                 require(not response["error"], "%s failed on a fresh-answering model" % method)
                 report["observationProvenance"][method] = require_provenance(
                     response["metadata"], request_mode, method)
+            report["observationV2"] = run_observation_v2(session, request_mode, windows)
         report["status"] = "passed"
     except Exception as error:
         report["failure"] = type(error).__name__ + ": " + str(error)

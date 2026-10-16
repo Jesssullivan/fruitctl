@@ -662,10 +662,26 @@ test('oversized action count is rejected without acquiring activity or issuing i
 test('raw VNC-derived OCR/diff/crop actions fail explicitly with helper capture configured', async () => {
   const { executor, vnc, host } = await fixture();
   try {
+    // Raw-pixel observations, old and new, are typed unsupported_on_route.
     for (const action of ['detect_elements', 'cursor_crop', 'diff_check', 'set_baseline',
-      'configure', 'get_timing', 'shutdown']) {
-      await assert.rejects(executor.execute([{ action }]), /Action unavailable/);
+      'zoom', 'wait_for_stable', 'expect_baseline', 'expect_change']) {
+      await assert.rejects(executor.execute([{ action }]), error => {
+        assert.match(error.message, /Action unavailable on the Host route/);
+        assert.equal(error.code, 'unsupported_on_route');
+        assert.equal(isPreAdmissionRefusal(error), true);
+        return true;
+      });
     }
+    for (const action of ['configure', 'get_timing', 'shutdown']) {
+      await assert.rejects(executor.execute([{ action }]), error => {
+        assert.match(error.message, /Action unavailable/);
+        assert.equal(error.code, 'unsupported_action');
+        return true;
+      });
+    }
+    // An expectation in a batch refuses the whole batch before any input.
+    await assert.rejects(executor.execute([{ action: 'wait' }, { action: 'expect_baseline' },
+      { action: 'mouse_click', x: 1, y: 1 }]), /Action unavailable/);
     await assert.rejects(executor.execute([{ action: 'wait' }, { action: 'detect_elements' }]),
       /Action unavailable/);
     assert.deepEqual(vnc.calls, []);

@@ -34,8 +34,12 @@ struct ClaudeKVMDaemon: AsyncParsableCommand {
               Screen:
                 screenshot                              Scaled PNG of full screen
                 cursor_crop                             Crop around cursor with crosshair
-                diff_check                              Any pixel change since baseline
+                diff_check     {regions?, ignore?}      Changed ratio and boxes since baseline
                 set_baseline                            Save current frame for diff comparison
+                zoom           {x, y, width, height, max_dimension?}
+                                                        Native-resolution PNG of a scaled region
+                wait_for_stable {stable_ms, timeout_ms, regions?, ignore?}
+                                                        Fresh captures until unchanged for stable_ms
 
               Mouse:
                 mouse_move     {x, y}                   Teleport cursor

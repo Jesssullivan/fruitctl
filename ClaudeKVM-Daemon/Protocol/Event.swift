@@ -57,6 +57,12 @@ struct PCResponse: Encodable {
         var input_ready: Bool?
         var input_settle_remaining_ms: Int?
         var input_settle_ms: Int?
+        /// diff_check and expect_change: what changed against the baseline.
+        var diff: FrameDiffSummary?
+        /// zoom: the region the image shows and its pixel dimensions.
+        var zoom: ZoomSummary?
+        /// wait_for_stable: how long the screen stayed unchanged.
+        var stable: StableSummary?
     }
 
     struct ErrorPayload: Encodable {
@@ -65,12 +71,13 @@ struct PCResponse: Encodable {
         var data: ErrorData?
     }
 
-    /// Typed `error.data`: stale_screen (-32010), an input refusal (-32011)
-    /// or input_not_ready (-32013).
+    /// Typed `error.data`: stale_screen (-32010), an input refusal (-32011),
+    /// an unmet observation condition (-32012) or input_not_ready (-32013).
     enum ErrorData: Encodable {
         case staleScreen(StaleScreenData)
         case inputRefusal(InputRefusalData)
         case inputNotReady(InputNotReadyData)
+        case observationUnmet(ObservationUnmetData)
 
         func encode(to encoder: Encoder) throws {
             var container = encoder.singleValueContainer()
@@ -78,6 +85,7 @@ struct PCResponse: Encodable {
             case .staleScreen(let data): try container.encode(data)
             case .inputRefusal(let data): try container.encode(data)
             case .inputNotReady(let data): try container.encode(data)
+            case .observationUnmet(let data): try container.encode(data)
             }
         }
     }
@@ -101,6 +109,20 @@ struct PCResponse: Encodable {
         var diagnostics: VNCFramebufferDiagnostics
     }
 
+    /// `error.data` for code -32011: a stable reason plus bounded counters.
+    struct ObservationUnmetData: Encodable {
+        var reason: String
+        var elapsedMilliseconds: Int
+        var captures: Int
+
+        // swiftlint:disable nesting
+        enum CodingKeys: String, CodingKey {
+            case reason, captures
+            case elapsedMilliseconds = "elapsed_ms"
+        }
+        // swiftlint:enable nesting
+    }
+
     static func success(
         id: PCId?,
         detail: String? = nil,
@@ -113,7 +135,10 @@ struct PCResponse: Encodable {
         elements: [TextElement]? = nil,
         frameContext: VNCInputContext? = nil,
         capabilities: [String]? = nil,
-        provenance: VNCCaptureProvenance? = nil
+        provenance: VNCCaptureProvenance? = nil,
+        diff: FrameDiffSummary? = nil,
+        zoom: ZoomSummary? = nil,
+        stable: StableSummary? = nil
     ) -> PCResponse {
         PCResponse(
             result: ResultPayload(
@@ -123,7 +148,7 @@ struct PCResponse: Encodable {
                 nativeWidth: frameContext?.width, nativeHeight: frameContext?.height,
                 connectionGeneration: frameContext?.connectionGeneration,
                 allocation: frameContext?.allocation, capabilities: capabilities,
-                provenance: provenance
+                provenance: provenance, diff: diff, zoom: zoom, stable: stable
             ),
             error: nil, id: id
         )
@@ -167,6 +192,15 @@ struct PCResponse: Encodable {
             data: .inputRefusal(InputRefusalData(reason: refusal.rawValue))), id: id)
     }
 
+    /// The typed unmet observation condition, or nil for any other error.
+    static func observationUnmet(id: PCId?, error: Error) -> PCResponse? {
+        guard let typed = error as? ObservationUnmetError else { return nil }
+        return PCResponse(result: nil, error: ErrorPayload(
+            code: ObservationUnmetError.code, message: typed.message,
+            data: .observationUnmet(ObservationUnmetData(reason: typed.reason.rawValue,
+                elapsedMilliseconds: typed.elapsedMilliseconds, captures: typed.captures))), id: id)
+    }
+
     static func inputPermit(id: PCId?, receipt: NativeInputPermit.Receipt) -> PCResponse {
         let binding = receipt.binding
         return PCResponse(result: ResultPayload(detail: "OK", scaledWidth: binding.scaledWidth,
@@ -180,6 +214,59 @@ struct PCResponse: Encodable {
             maximum_round_trip_ms: NativeInputPermit.maximumRoundTripMilliseconds,
             native_permit_remaining_ms: receipt.remainingMilliseconds), error: nil, id: id)
     }
+}
+
+/// zoom: the region an image shows. Map an image pixel (u, v) back to the
+/// display as `region.x + u * region.width / image_width` (likewise y).
+struct ZoomSummary: Encodable, Equatable {
+    /// The requested region, clamped to the current display, in scaled pixels.
+    let region: FrameRect
+    /// The native framebuffer pixels the image was cropped from.
+    let native: FrameRect
+    let imageWidth: Int
+    let imageHeight: Int
+
+    enum CodingKeys: String, CodingKey {
+        case region, native
+        case imageWidth = "image_width"
+        case imageHeight = "image_height"
+    }
+}
+
+/// wait_for_stable: the unchanged run that satisfied the request.
+struct StableSummary: Encodable, Equatable {
+    let stableMilliseconds: Int
+    let stableForMilliseconds: Int
+    let elapsedMilliseconds: Int
+    let captures: Int
+
+    enum CodingKeys: String, CodingKey {
+        case captures
+        case stableMilliseconds = "stable_ms"
+        case stableForMilliseconds = "stable_for_ms"
+        case elapsedMilliseconds = "elapsed_ms"
+    }
+}
+
+/// An observation condition that fresh captures did not meet within its
+/// bound. Every capture was fresh; a capture failure stays stale_screen.
+struct ObservationUnmetError: LocalizedError, Equatable {
+    enum Reason: String, CaseIterable {
+        /// wait_for_stable: the compared pixels kept changing until timeout_ms.
+        case stableTimeout = "stable_timeout"
+        /// expect_change: the region never differed from its pre-step frame.
+        case changeNotObserved = "change_not_observed"
+    }
+
+    /// JSON-RPC error code for every unmet observation condition.
+    static let code = -32011
+
+    let reason: Reason
+    let message: String
+    let elapsedMilliseconds: Int
+    let captures: Int
+
+    var errorDescription: String? { message }
 }
 
 /// PC (Procedure Call) notification — no id, server->caller.

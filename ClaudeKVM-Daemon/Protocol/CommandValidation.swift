@@ -94,6 +94,31 @@ extension PCRequest {
         if method == "key_type" || method == "paste" {
             guard let text = p?.text, text.utf8.count <= 1_048_576 else { throw CommandValidationError.invalid("text") }
         }
+        // Observation rectangles use the current scaled display space.
+        if method == "zoom" || method == "expect_change" {
+            guard let rect = p?.rect, rect.isInside(width: scaling.scaledWidth, height: scaling.scaledHeight) else {
+                throw CommandValidationError.invalid("x/y/width/height")
+            }
+        }
+        if method == "zoom" { try check(p?.maxDimension, "max_dimension", 320...3840) }
+        if method == "expect_change" { try check(p?.timeoutMs, "timeout_ms", 100...10_000) }
+        if method == "diff_check" || method == "wait_for_stable" {
+            for (name, rects) in [("regions", p?.regions), ("ignore", p?.ignore)] {
+                guard let rects else { continue }
+                // An empty region list would compare nothing and always pass.
+                guard rects.count <= FrameRegion.maximumRects, name == "ignore" || !rects.isEmpty,
+                      rects.allSatisfy({ $0.isInside(width: scaling.scaledWidth, height: scaling.scaledHeight) }) else {
+                    throw CommandValidationError.invalid(name)
+                }
+            }
+        }
+        if method == "wait_for_stable" {
+            try check(p?.stableMs, "stable_ms", 50...10_000, required: true)
+            try check(p?.timeoutMs, "timeout_ms", 100...20_000, required: true)
+            if let stable = p?.stableMs, let timeout = p?.timeoutMs, stable > timeout {
+                throw CommandValidationError.invalid("stable_ms")
+            }
+        }
         guard method == "configure" else { return }
         try check(p?.maxDimension, "max_dimension", 320...3840)
         try check(p?.cursorCropRadius, "cursor_crop_radius", 50...500)
