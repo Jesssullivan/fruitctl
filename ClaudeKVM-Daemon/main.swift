@@ -150,12 +150,22 @@ struct ClaudeKVMDaemon: AsyncParsableCommand {
                          ordered_after_prior_input true only when no earlier
                          request was outstanding.
 
+            INPUT SETTLE (--input-settle-ms):
+              Apple Screen Sharing silently drops all input for about 2.5 s
+              after authentication. The first input of each connection waits
+              until N ms after ServerInit (default 3000 on Apple, 0 otherwise);
+              a reconnect restarts it. Observation is never delayed. health
+              reports input_ready and input_settle_remaining_ms.
+
             ERRORS:
               Screen observations that obtain no fresh complete frame return
               code -32010 with data.reason (server_silent, metadata_only,
               incomplete_coverage, late_complete, allocation_changed,
               disconnected, request_failed, capture_busy, cancelled) and
               data.diagnostics.
+              Input that cannot wait out the settle time within its deadline
+              returns code -32013, data.reason input_not_ready and
+              data.remaining_ms; no event is written.
 
             OUTPUT:
               stdout  PC responses and notifications (NDJSON).
@@ -210,6 +220,10 @@ struct ClaudeKVMDaemon: AsyncParsableCommand {
           help: "Write a header-only client-to-server RFB ledger to stderr (request type, incremental flag, length, monotonic ms; input coalesced without counts, timing or lengths; never payloads).")
     var rfbWireLedger: Bool = false
 
+    @Option(name: .customLong("input-settle-ms"),
+            help: "Hold input until N ms after ServerInit on each connection (0...10000). Default: 3000 for Apple Screen Sharing (ARD), else 0.")
+    var inputSettleMs: Int?
+
     @Option(name: .customLong("rfb-request-mode"),
             help: "Framebuffer request mode: stream (default) or on-demand (no incremental requests; LibVNC's own requests are gated off).")
     var rfbRequestMode: String = VNCRequestMode.stream.rawValue
@@ -233,6 +247,9 @@ struct ClaudeKVMDaemon: AsyncParsableCommand {
         }
         if let attempts = maxReconnectAttempts, !(0...100).contains(attempts) {
             throw ValidationError("--max-reconnect-attempts must be 0...100")
+        }
+        if let settle = inputSettleMs, !(0...VNCInputSettle.maximumMilliseconds).contains(settle) {
+            throw ValidationError("--input-settle-ms must be 0...10000")
         }
         guard VNCRequestMode(rawValue: rfbRequestMode) != nil else {
             throw ValidationError("--rfb-request-mode must be stream or on-demand")
@@ -263,6 +280,7 @@ struct ClaudeKVMDaemon: AsyncParsableCommand {
         if noReconnect { vncConfig.autoReconnect = false }
         vncConfig.wireLedger = rfbWireLedger
         vncConfig.requestMode = VNCRequestMode(rawValue: rfbRequestMode) ?? .stream
+        vncConfig.inputSettleMilliseconds = inputSettleMs
 
         let vnc = VNCBridge(config: vncConfig)
         vnc.verbose = verbose
@@ -278,7 +296,7 @@ struct ClaudeKVMDaemon: AsyncParsableCommand {
             throw ExitCode.failure
         }
 
-        log("macOS mode: \(vnc.isMacOS)")
+        log("macOS mode: \(vnc.isMacOS); input settle: \(vnc.inputSettle.status().settleMilliseconds) ms")
 
         let scaling = DisplayScaling(
             nativeWidth: vnc.framebufferWidth,

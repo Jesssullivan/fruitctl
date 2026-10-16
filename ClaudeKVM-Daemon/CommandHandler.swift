@@ -116,6 +116,13 @@ extension ClaudeKVMDaemon {
         let id = req.id
         let p = req.params
 
+        // The private deadline_ms budget (stamped by the Node executor) bounds
+        // only the input settle wait; nothing else in a request waits on it.
+        input.requestDeadlineNs = p?.deadlineMs.map {
+            input.inputSettle.now() &+ UInt64(max(0, $0)) * 1_000_000
+        }
+        defer { input.requestDeadlineNs = nil }
+
         do {
             try Task.checkCancellation()
             if req.method == "adopt_observation" { input.context = nil }
@@ -332,9 +339,11 @@ extension ClaudeKVMDaemon {
                 let current = VNCInputContext(vnc.framebufferDiagnostics)
                 let liveScaling = DisplayScaling(nativeWidth: current.width, nativeHeight: current.height,
                                                  maxDimension: scaling.maxDimension)
-                respond(.success(id: id, detail: "\(vnc.connectionState)",
+                // Readiness is reported, never awaited: health is observation.
+                respond(PCResponse.success(id: id, detail: "\(vnc.connectionState)",
                                   scaledWidth: liveScaling.scaledWidth, scaledHeight: liveScaling.scaledHeight,
-                                  frameContext: current, capabilities: PCRequest.supportedMethods))
+                                  frameContext: current, capabilities: PCRequest.supportedMethods)
+                    .withInputSettle(vnc.inputSettle.status()))
 
             case "shutdown":
                 input.inputPermit.stopWatchdog()
@@ -352,6 +361,7 @@ extension ClaudeKVMDaemon {
             input.inputPermit.invalidateIfRequired()
             await input.releaseHeldInput()
             respond(PCResponse.staleScreen(id: id, error: error)
+                    ?? PCResponse.inputNotReady(id: id, error: error)
                     ?? .error(id: id, message: error.localizedDescription))
         }
     }

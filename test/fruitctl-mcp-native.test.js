@@ -60,6 +60,14 @@ async function main() {
     if(process.env.FRUITCTL_FIXTURE_MODE==='argv' && request.method==='health') {
       emit({id:request.id,result:{detail:JSON.stringify(process.argv.slice(2))}}); continue;
     }
+    if(process.env.FRUITCTL_FIXTURE_MODE==='settle') {
+      const budget=request.params&&request.params.deadline_ms;
+      if(request.method==='key_tap' && !(budget>=2500)) {
+        await emit({id:request.id,error:{code:-32013,message:'Input not ready',
+          data:{reason:'input_not_ready',remaining_ms:2500}}}); continue;
+      }
+      await emit({id:request.id,result:{detail:JSON.stringify(request.params||null)}}); continue;
+    }
     if(request.method==='wait') await new Promise(resolve=>setTimeout(resolve,25));
     if(request.method==='key_tap' && request.params.key==='bad') {
       emit({id:request.id,error:{code:-32000,message:'fixture key refused'}}); continue;
@@ -169,6 +177,24 @@ test('daemon screen observations route through the classifying capture entry poi
   // stale_screen; the raw capture keeps Swift error types (VNCReconnectTests).
   assert.match(handler, /capturedFrame = try await vnc\.captureFreshObservation\(\)/);
   assert.doesNotMatch(handler, /captureFreshFramebuffer\(/);
+});
+
+test('native executor stamps its own deadline_ms budget and keeps typed input_not_ready', async (t) => {
+  const { executor } = await fixture(t, 'settle');
+  // A caller-supplied value never reaches the daemon; the executor's own does.
+  const [stamped] = await executor.execute([{ action: 'key_tap', key: 'a', deadline_ms: 1 }]);
+  const budget = JSON.parse(stamped.result.detail).deadline_ms;
+  assert.ok(Number.isInteger(budget) && budget > 25000 && budget <= 29900, String(budget));
+  const [health] = await executor.execute([{ action: 'health' }], { timeoutMs: 5000 });
+  const healthBudget = JSON.parse(health.result.detail).deadline_ms;
+  assert.ok(healthBudget > 0 && healthBudget <= 4900, String(healthBudget));
+  // Within a short deadline the daemon refuses before any event; the typed
+  // error survives and the executor stays usable.
+  const [short] = await executor.execute([{ action: 'key_tap', key: 'a' }], { timeoutMs: 1000 });
+  assert.equal(short.error.code, -32013);
+  assert.deepEqual(short.error.data, { reason: 'input_not_ready', remaining_ms: 2500 });
+  const [after] = await executor.execute([{ action: 'key_tap', key: 'a' }]);
+  assert.equal(after.error, undefined);
 });
 
 test('native executor stops on the first error without sending the remainder', async (t) => {

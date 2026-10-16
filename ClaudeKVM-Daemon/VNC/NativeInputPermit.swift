@@ -205,6 +205,17 @@ final class NativeInputPermit: @unchecked Sendable {
         }
     }
 
+    /// Remaining grant time, or nil in ordinary raw-VNC mode. A read only:
+    /// it never fails or revokes the permit.
+    func remainingNanoseconds() -> UInt64? {
+        lock.lock()
+        defer { lock.unlock() }
+        guard required else { return nil }
+        guard !failed, let expires else { return 0 }
+        let instant = now()
+        return expires > instant ? expires - instant : 0
+    }
+
     func invalidate() {
         do { try synchronized { throw error("was revoked") } } catch {}
     }

@@ -46,6 +46,7 @@ extension PCRequest {
             throw CommandValidationError.invalid("button")
         }
         if method == "wait" { try check(p?.ms, "ms", 50...10_000) }
+        try check(p?.deadlineMs, "deadline_ms", 0...30_000)
         if method == "key_tap" {
             guard let key = p?.key, namedKeyToKeysym(key) != nil else { throw CommandValidationError.invalid("key") }
         }

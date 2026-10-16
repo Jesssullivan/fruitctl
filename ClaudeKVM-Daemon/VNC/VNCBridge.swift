@@ -22,6 +22,8 @@ final class VNCBridge: @unchecked Sendable {
     // MARK: Internal Properties (accessed by VNCCallbacks)
 
     let config: VNCConfiguration
+    /// Input readiness after ServerInit (Apple ignores early input).
+    let inputSettle: VNCInputSettle
     private let frameStreamStorage = OSAllocatedUnfairLock<AsyncStream<Void>.Continuation?>(initialState: nil)
     var framebufferUpdateContinuation: AsyncStream<Void>.Continuation? {
         get { frameStreamStorage.withLock { $0 } }
@@ -200,8 +202,11 @@ final class VNCBridge: @unchecked Sendable {
          schedule: @escaping VNCWorkScheduler = scheduleVNCWork,
          scheduleFrameDeadline: @escaping VNCWorkScheduler = scheduleVNCWork,
          monotonicNanoseconds: @escaping () -> UInt64 = { DispatchTime.now().uptimeNanoseconds },
-         beforeFreshCaptureAdmission: @escaping () -> Void = {}) {
+         beforeFreshCaptureAdmission: @escaping () -> Void = {},
+         inputSettle: VNCInputSettle? = nil) {
         self.config = config
+        self.inputSettle = inputSettle ?? VNCInputSettle(configuredMilliseconds: config.inputSettleMilliseconds,
+                                                         now: monotonicNanoseconds)
         self.operations = operations
         self.schedule = schedule
         self.scheduleFrameDeadline = scheduleFrameDeadline
@@ -255,6 +260,7 @@ final class VNCBridge: @unchecked Sendable {
         refuseFreshCapture(VNCError.notConnected)
         flushLedgerInput()
         clientReady = false
+        inputSettle.disconnected()
         frameDiagnostics.withLock {
             $0.snapshot.phase = .disconnected
             $0.snapshot.complete = false
@@ -667,6 +673,10 @@ final class VNCBridge: @unchecked Sendable {
             throw CancellationError()
         }
         clientReady = true
+        // rfbInitConnection has returned: ServerInit is complete and any ARD
+        // credential request has already marked the server as Apple.
+        inputSettle.serverInitCompleted(generation: framebufferDiagnostics.connectionGeneration,
+                                        appleServer: isMacOS)
         // On-demand: LibVNC may write no request of its own from here on.
         if config.requestMode == .onDemand { Self.setRequestGate(newClient, open: false) }
         frameDiagnostics.withLock { $0.snapshot.phase = .idle }
@@ -1067,6 +1077,16 @@ final class VNCBridge: @unchecked Sendable {
         return expected
     }
 
+    /// Last check on the native queue, before any write of this generation
+    /// (release-only and modifier writes included): the settle time must
+    /// have elapsed. Callers wait first; this never waits on the queue.
+    private func admitSettledInput() throws {
+        let generation = framebufferDiagnostics.connectionGeneration
+        guard inputSettle.admits(generation: generation) else {
+            throw VNCError.inputNotReady(remainingMilliseconds: max(1, inputSettle.status().remainingMilliseconds))
+        }
+    }
+
     /// Cancellation can arrive while this operation is behind a blocked RFB
     /// decoder. Check again on the native queue before emitting any input.
     private func sendOnNativeQueue(releaseOnly: Bool = false,
@@ -1098,6 +1118,7 @@ final class VNCBridge: @unchecked Sendable {
                   buttonMask >= 0, buttonMask <= 255, !releaseOnly || buttonMask == 0 else {
                 throw VNCError.sendFailed("Observed display changed; take a new screenshot before input")
             }
+            try admitSettledInput()
             let width = Int(client.pointee.width), height = Int(client.pointee.height)
             let pointerX = releaseOnly ? min(max(0, x), max(0, width - 1)) : x
             let pointerY = releaseOnly ? min(max(0, y), max(0, height - 1)) : y
@@ -1123,6 +1144,7 @@ final class VNCBridge: @unchecked Sendable {
             guard admitsInput(context, releaseOnly: releaseOnly), !releaseOnly || !down else {
                 throw VNCError.sendFailed("Observed display changed; take a new screenshot before input")
             }
+            try admitSettledInput()
             // Apple's server: Super is Command and Meta is Option.
             let wireKey = Self.wireKeysym(key, appleServer: isMacOS)
             if !releaseOnly { try inputPermit?.check(context: context) }
@@ -1139,6 +1161,7 @@ final class VNCBridge: @unchecked Sendable {
             guard admitsInput(context, releaseOnly: false), text.utf8.count <= 1_048_576 else {
                 throw VNCError.sendFailed("Clipboard input is unavailable for the observed display")
             }
+            try admitSettledInput()
             let bytes = Array(text.utf8CString)
             try inputPermit?.check(context: context)
             guard operations.sendClientCutText(client, bytes) else { throw VNCError.sendFailed("clipboard text") }

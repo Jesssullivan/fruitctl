@@ -52,12 +52,38 @@ struct PCResponse: Encodable {
         var capabilities: [String]?
         /// How an observation's pixels were obtained (screen observations only).
         var provenance: VNCCaptureProvenance?
+        /// Health only: whether input would be written now, and how long
+        /// the connection's settle time still holds it (see VNCInputSettle).
+        var input_ready: Bool?
+        var input_settle_remaining_ms: Int?
+        var input_settle_ms: Int?
     }
 
     struct ErrorPayload: Encodable {
         var code: Int
         var message: String
-        var data: StaleScreenData?
+        var data: ErrorData?
+    }
+
+    /// Typed `error.data`: stale_screen (-32010) or input_not_ready (-32013).
+    enum ErrorData: Encodable {
+        case staleScreen(StaleScreenData)
+        case inputNotReady(InputNotReadyData)
+
+        func encode(to encoder: Encoder) throws {
+            var container = encoder.singleValueContainer()
+            switch self {
+            case .staleScreen(let data): try container.encode(data)
+            case .inputNotReady(let data): try container.encode(data)
+            }
+        }
+    }
+
+    /// `error.data` for code -32013: the stable reason and the settle time
+    /// still remaining when the request gave up. No event was written.
+    struct InputNotReadyData: Encodable {
+        var reason: String
+        var remaining_ms: Int
     }
 
     /// `error.data` for code -32010: a stable reason plus bounded control-flow
@@ -104,7 +130,25 @@ struct PCResponse: Encodable {
         guard let typed = error as? VNCError, case let .staleScreen(reason, data) = typed else { return nil }
         return PCResponse(result: nil, error: ErrorPayload(
             code: VNCError.staleScreenCode, message: data.message,
-            data: StaleScreenData(reason: reason.rawValue, diagnostics: data.diagnostics)), id: id)
+            data: .staleScreen(StaleScreenData(reason: reason.rawValue, diagnostics: data.diagnostics))), id: id)
+    }
+
+    /// The typed input-readiness failure, or nil for any other error.
+    static func inputNotReady(id: PCId?, error: Error) -> PCResponse? {
+        guard let typed = error as? VNCError, case let .inputNotReady(remaining) = typed else { return nil }
+        return PCResponse(result: nil, error: ErrorPayload(
+            code: VNCError.inputNotReadyCode, message: typed.localizedDescription,
+            data: .inputNotReady(InputNotReadyData(reason: VNCError.inputNotReadyReason,
+                                                   remaining_ms: remaining))), id: id)
+    }
+
+    /// Health: input readiness of the current connection generation.
+    func withInputSettle(_ status: VNCInputSettle.Status) -> PCResponse {
+        guard var result else { return self }
+        result.input_ready = status.ready
+        result.input_settle_remaining_ms = status.remainingMilliseconds
+        result.input_settle_ms = status.settleMilliseconds
+        return PCResponse(result: result, error: error, id: id)
     }
 
     static func inputPermit(id: PCId?, receipt: NativeInputPermit.Receipt) -> PCResponse {

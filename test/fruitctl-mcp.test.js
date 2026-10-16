@@ -323,6 +323,19 @@ test('real MCP errors keep native stale_screen code and data beside the compatib
   assert.deepEqual(both.structuredContent, failedAt(2, stale));
 });
 
+test('real MCP errors keep native input_not_ready code and remaining_ms', async () => {
+  const notReady = { code: -32013, message: 'Input not ready: the server ignores input for 1700 ms more after connecting',
+    data: { reason: 'input_not_ready', remaining_ms: 1700 } };
+  const session = new McpSession({ async execute(actions) {
+    return actions.length === 1 ? [{ error: notReady }] : [success({ detail: 'OK' }), { error: notReady }];
+  } });
+  const single = await session.command({ action: 'key_tap', key: 'tab' });
+  assert.equal(single.isError, true);
+  assert.deepEqual(single.structuredContent, { error: notReady, ...undeclared });
+  const queued = await session.queue({ actions: [{ action: 'screenshot' }, { action: 'key_tap', key: 'tab' }] });
+  assert.deepEqual(queued.structuredContent, failedAt(2, notReady));
+});
+
 test('real MCP task outcomes await ownership release and refuse completion when release fails', async (t) => {
   let entered;
   let acknowledge;

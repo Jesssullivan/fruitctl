@@ -39,7 +39,12 @@ Observe with `vnc_command` action `health`, then `screenshot`. Every result's
 `route` and `indicator` say which route answered. The raw route always reports
 `indicator: absent`. A failed result adds an `error` object with `message` and,
 for typed failures, `code` and `data`; code `-32010` (`stale_screen`) means no
-fresh pixels were captured, so take a new screenshot before any input. Inspect the current
+fresh pixels were captured, so take a new screenshot before any input. On Apple
+Screen Sharing input is held for about 3 s after each connect, because the
+server ignores earlier input; the controller waits for you, and `health`
+reports `input_ready` and `input_settle_remaining_ms`. Code `-32013`
+(`input_not_ready`) means the request's deadline was shorter than
+`data.remaining_ms`. No input was sent, so retry once that time has passed. Inspect the current
 image and its scaled coordinates, perform authorized bounded input, and obtain
 a new screenshot to verify the result. OCR, a process health response, or an
 input acknowledgement alone does not prove that the requested desktop change

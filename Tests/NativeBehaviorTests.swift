@@ -11,6 +11,21 @@ private final class WireTrace {
     var values: [String] { lock.lock(); defer { lock.unlock() }; return events }
 }
 
+/// Fake monotonic clock for the input settle gate. Each settle sleep is
+/// recorded and advances the clock by exactly the requested time.
+private final class SettleClock: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value: UInt64 = 1_000_000_000
+    private var slept: [UInt64] = []
+    func now() -> UInt64 { lock.lock(); defer { lock.unlock() }; return value }
+    func advance(_ nanoseconds: UInt64) { lock.lock(); value += nanoseconds; lock.unlock() }
+    func sleep(_ nanoseconds: UInt64) async throws {
+        try Task.checkCancellation()
+        lock.lock(); slept.append(nanoseconds); value += nanoseconds; lock.unlock()
+    }
+    var sleeps: [UInt64] { lock.lock(); defer { lock.unlock() }; return slept }
+}
+
 final class NativeBehaviorTests: XCTestCase {
     private func request(_ method: String, _ params: String = "{}") throws -> PCRequest {
         try JSONDecoder().decode(PCRequest.self,
@@ -698,5 +713,235 @@ final class NativeBehaviorTests: XCTestCase {
                            ["pause 50000", "pause 50000", "pause 30000", "pause 50000", "pause 50000", "pause 50000"])
             bridge.disconnect(); XCTAssertEqual(bridge.framebufferWidth, 0)
         }
+    }
+
+    // MARK: - Input settle (TIN-5509)
+
+    /// InputController over fake senders: each write is stamped with the
+    /// milliseconds since ServerInit on the fake clock.
+    private func settleHarness(appleServer: Bool = true, configured: Int? = nil)
+        -> (InputController, VNCInputSettle, SettleClock, WireTrace, UInt64) {
+        let clock = SettleClock(), trace = WireTrace()
+        let settle = VNCInputSettle(configuredMilliseconds: configured, now: clock.now, sleep: clock.sleep)
+        settle.serverInitCompleted(generation: 1, appleServer: appleServer)
+        let origin = clock.now()
+        let stamp = { (clock.now() - origin) / 1_000_000 }
+        let input = InputController(vnc: VNCBridge(),
+            pointerSender: { x, y, mask, _, _ in trace.append("pointer \(x),\(y),\(mask) @\(stamp())") },
+            keySender: { key, down, _, _ in trace.append("\(down ? "down" : "up") \(key) @\(stamp())") },
+            sleeper: { _ in }, inputSettle: settle)
+        input.context = VNCInputContext(width: 4, height: 4, connectionGeneration: 1, allocation: 1)
+        return (input, settle, clock, trace, origin)
+    }
+
+    func testInputSettleDefaultsAppleOnlyAndClampsTheFlag() {
+        XCTAssertEqual(VNCInputSettle.effectiveMilliseconds(configured: nil, appleServer: true), 3_000)
+        XCTAssertEqual(VNCInputSettle.effectiveMilliseconds(configured: nil, appleServer: false), 0)
+        XCTAssertEqual(VNCInputSettle.effectiveMilliseconds(configured: 0, appleServer: true), 0)
+        XCTAssertEqual(VNCInputSettle.effectiveMilliseconds(configured: 1_500, appleServer: false), 1_500)
+        XCTAssertEqual(VNCInputSettle.effectiveMilliseconds(configured: 20_000, appleServer: true), 10_000)
+        let idle = VNCInputSettle()
+        XCTAssertFalse(idle.status().connected)
+        XCTAssertFalse(idle.status().ready)
+        XCTAssertFalse(idle.admits(generation: 0))
+    }
+
+    /// Measured on Apple: keys at +1.3 s were ignored. The first input now
+    /// waits to +3.0 s; input after the settle time is immediate.
+    func testFirstInputWaitsOutSettleThenLaterInputIsImmediate() async throws {
+        let (input, settle, clock, trace, _) = settleHarness()
+        clock.advance(1_300_000_000)
+        XCTAssertEqual(settle.status().remainingMilliseconds, 1_700)
+        XCTAssertFalse(settle.status().ready)
+        try await input.keyTap(0x61)
+        XCTAssertEqual(clock.sleeps, [1_700_000_000])
+        XCTAssertEqual(trace.values, ["down 97 @3000", "up 97 @3000"])
+        XCTAssertTrue(settle.status().ready)
+        XCTAssertEqual(settle.status().remainingMilliseconds, 0)
+        try await input.mouseClick(x: 1, y: 2, button: .left)
+        try await input.keyTap(0x62)
+        XCTAssertEqual(clock.sleeps, [1_700_000_000], "settled input never waits again")
+        XCTAssertTrue(trace.values.dropFirst(2).allSatisfy { $0.hasSuffix("@3000") })
+        XCTAssertTrue(input.heldKeys.isEmpty)
+    }
+
+    func testReconnectRestartsTheSettleTime() async throws {
+        let (input, settle, clock, trace, origin) = settleHarness()
+        clock.advance(5_000_000_000)
+        try await input.keyTap(0x61)
+        XCTAssertEqual(clock.sleeps, [])
+        settle.disconnected()
+        XCTAssertFalse(settle.status().ready)
+        XCTAssertFalse(settle.admits(generation: 1))
+        clock.advance(10_000_000)
+        settle.serverInitCompleted(generation: 2, appleServer: true)
+        let reconnectedAt = (clock.now() - origin) / 1_000_000
+        XCTAssertFalse(settle.admits(generation: 2))
+        XCTAssertEqual(settle.status().connectionGeneration, 2)
+        XCTAssertEqual(settle.status().remainingMilliseconds, 3_000)
+        input.context = VNCInputContext(width: 4, height: 4, connectionGeneration: 2, allocation: 1)
+        try await input.keyTap(0x62)
+        XCTAssertEqual(clock.sleeps, [3_000_000_000])
+        XCTAssertEqual(Array(trace.values.suffix(2)),
+                       ["down 98 @\(reconnectedAt + 3_000)", "up 98 @\(reconnectedAt + 3_000)"])
+        XCTAssertTrue(settle.admits(generation: 2))
+        XCTAssertFalse(settle.admits(generation: 1))
+    }
+
+    func testDeadlineShorterThanSettleFailsTypedWithoutAnyEvent() async throws {
+        let (input, _, clock, trace, _) = settleHarness()
+        clock.advance(500_000_000)
+        input.requestDeadlineNs = clock.now() + 1_000_000_000
+        do {
+            try await input.keyTap(0x61)
+            XCTFail("input inside the settle time must not outrun its deadline")
+        } catch VNCError.inputNotReady(let remaining) {
+            XCTAssertEqual(remaining, 2_500)
+        }
+        do {
+            try await input.pasteText("x")
+            XCTFail("paste must wait for the settle time too")
+        } catch VNCError.inputNotReady(let remaining) {
+            XCTAssertEqual(remaining, 2_500)
+        }
+        XCTAssertEqual(trace.values, [])
+        XCTAssertEqual(clock.sleeps, [])
+        XCTAssertTrue(input.heldKeys.isEmpty)
+        // A deadline that covers the remaining time waits instead of failing.
+        input.requestDeadlineNs = clock.now() + 2_600_000_000
+        try await input.keyTap(0x61)
+        XCTAssertEqual(trace.values, ["down 97 @3000", "up 97 @3000"])
+
+        let response = try XCTUnwrap(PCResponse.inputNotReady(id: .number(7),
+            error: VNCError.inputNotReady(remainingMilliseconds: 2_500)))
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(response)) as? [String: Any])
+        let payload = try XCTUnwrap(json["error"] as? [String: Any])
+        XCTAssertEqual(payload["code"] as? Int, -32013)
+        XCTAssertEqual(payload["code"] as? Int, VNCError.inputNotReadyCode)
+        XCTAssertNotEqual(VNCError.inputNotReadyCode, VNCError.staleScreenCode)
+        XCTAssertTrue((payload["message"] as? String)?.hasPrefix("Input not ready") == true)
+        let data = try XCTUnwrap(payload["data"] as? [String: Any])
+        XCTAssertEqual(data["reason"] as? String, "input_not_ready")
+        XCTAssertEqual(data["remaining_ms"] as? Int, 2_500)
+        XCTAssertNil(PCResponse.inputNotReady(id: nil, error: VNCError.notConnected))
+        XCTAssertNil(PCResponse.staleScreen(id: nil, error: VNCError.inputNotReady(remainingMilliseconds: 1)))
+    }
+
+    func testNonAppleServerDefaultsToNoSettle() async throws {
+        let (input, settle, clock, trace, _) = settleHarness(appleServer: false)
+        XCTAssertTrue(settle.status().ready)
+        XCTAssertEqual(settle.status().settleMilliseconds, 0)
+        try await input.keyTap(0x61)
+        XCTAssertEqual(clock.sleeps, [])
+        XCTAssertEqual(trace.values, ["down 97 @0", "up 97 @0"])
+        // An explicit flag value applies to any server.
+        let (configured, _, configuredClock, _, _) = settleHarness(appleServer: false, configured: 1_200)
+        try await configured.keyTap(0x61)
+        XCTAssertEqual(configuredClock.sleeps, [1_200_000_000])
+    }
+
+    func testCancelledSettleWaitWritesNothing() async throws {
+        let clock = SettleClock(), trace = WireTrace()
+        let settle = VNCInputSettle(now: clock.now, sleep: { try await Task.sleep(nanoseconds: $0 * 20) })
+        settle.serverInitCompleted(generation: 1, appleServer: true)
+        let input = InputController(vnc: VNCBridge(),
+            keySender: { key, down, _, _ in trace.append("\(down ? "down" : "up") \(key)") },
+            sleeper: { _ in }, inputSettle: settle)
+        input.context = VNCInputContext(width: 4, height: 4, connectionGeneration: 1, allocation: 1)
+        let task = Task { try await input.keyTap(0x61) }
+        task.cancel()
+        do { try await task.value; XCTFail("cancelled input must not complete") }
+        catch { XCTAssertTrue(error is CancellationError, "\(error)") }
+        XCTAssertEqual(trace.values, [])
+    }
+
+    func testPermitLeaseBoundsTheSettleWait() async throws {
+        let clock = SettleClock()
+        let settle = VNCInputSettle(now: clock.now, sleep: clock.sleep)
+        settle.serverInitCompleted(generation: 1, appleServer: true)
+        do {
+            try await settle.waitUntilReady(budgetNs: { 1_000_000_000 })
+            XCTFail("a wait longer than the permit lease must not start")
+        } catch VNCError.inputNotReady(let remaining) {
+            XCTAssertEqual(remaining, 3_000)
+        }
+        XCTAssertEqual(clock.sleeps, [])
+        try await settle.waitUntilReady(budgetNs: { nil })
+        XCTAssertEqual(clock.sleeps, [3_000_000_000])
+        // Ordinary raw-VNC mode has no lease bound.
+        XCTAssertNil(NativeInputPermit(watchdogEnabled: false).remainingNanoseconds())
+    }
+
+    /// Through the real VNCBridge: the ARD credential callback marks the
+    /// server as Apple during the handshake, so the 3000 ms default applies.
+    /// The native queue refuses every write before the settle time, release
+    /// and clipboard included, while observation stays available.
+    func testBridgeRefusesEveryWriteBeforeSettleAndResetsOnReconnect() async throws {
+        let clock = SettleClock(), trace = WireTrace()
+        let operations = VNCClientOperations(make: { config in
+            rfbGetClient(config.bitsPerSample, config.samplesPerPixel, config.bytesPerPixel)
+        }, initialize: { client in
+            if let credential = vncGetCredential(client, rfbCredentialTypeUser) {
+                free(credential.pointee.userCredential.username)
+                free(credential.pointee.userCredential.password)
+                credential.deallocate()
+            }
+            client.pointee.width = 2; client.pointee.height = 2
+            client.pointee.format.bitsPerPixel = 32
+            guard vncMallocFrameBuffer(client) != 0 else { VNCClientOperations.release(client); return false }
+            vncGotFrameBufferUpdate(client, 0, 0, 2, 2)
+            vncFinishedFrameBufferUpdate(client)
+            return true
+        }, cleanup: VNCClientOperations.release,
+        poll: { _, _, _ in true }, incrementalUpdate: { _ in true }, fullUpdate: { _ in true },
+        sendKey: { _, key, down in
+            trace.append((down ? "down 0x" : "up 0x") + String(key, radix: 16, uppercase: true))
+            return true
+        }, sendPointer: { _, _, _, _ in trace.append("pointer"); return true },
+        sendClientCutText: { _, _ in trace.append("cut"); return true })
+        let bridge = VNCBridge(operations: operations, schedule: { _, _, _ in },
+                               monotonicNanoseconds: clock.now)
+        try await bridge.connect()
+        try await bridge.waitForFramebuffer()
+        XCTAssertTrue(bridge.isMacOS)
+        let context = VNCInputContext(bridge.framebufferDiagnostics)
+        XCTAssertEqual(bridge.inputSettle.status(), VNCInputSettle.Status(
+            connectionGeneration: context.connectionGeneration, connected: true,
+            settleMilliseconds: 3_000, remainingNanoseconds: 3_000_000_000))
+        func refused(_ write: () async throws -> Void) async {
+            do { try await write(); XCTFail("write before the settle time") }
+            catch VNCError.inputNotReady(let remaining) { XCTAssertGreaterThan(remaining, 0) }
+            catch { XCTFail("unexpected \(error)") }
+        }
+        await refused { try await bridge.sendKeyEvent(key: 0x61, down: true, context: context) }
+        await refused { try await bridge.sendKeyEvent(key: 0x61, down: false, context: context, releaseOnly: true) }
+        await refused { try await bridge.sendMouseEvent(x: 1, y: 1, context: context) }
+        await refused { try await bridge.sendClipboardText("x", context: context) }
+        // Observation is never gated.
+        try await bridge.waitForFramebuffer()
+        let health = PCResponse.success(id: .number(1), detail: "connected").withInputSettle(bridge.inputSettle.status())
+        let healthJSON = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(health)) as? [String: Any])
+        let result = try XCTUnwrap(healthJSON["result"] as? [String: Any])
+        XCTAssertEqual(result["input_ready"] as? Bool, false)
+        XCTAssertEqual(result["input_settle_remaining_ms"] as? Int, 3_000)
+        XCTAssertEqual(result["input_settle_ms"] as? Int, 3_000)
+        XCTAssertEqual(trace.values, [])
+
+        clock.advance(3_000_000_000)
+        try await bridge.sendKeyEvent(key: 0x61, down: true, context: context)
+        try await bridge.sendKeyEvent(key: 0x61, down: false, context: context, releaseOnly: true)
+        XCTAssertEqual(trace.values, ["down 0x61", "up 0x61"])
+
+        bridge.disconnect()
+        XCTAssertEqual(bridge.framebufferWidth, 0)
+        XCTAssertFalse(bridge.inputSettle.status().connected)
+        try await bridge.connect()
+        try await bridge.waitForFramebuffer()
+        let reconnected = VNCInputContext(bridge.framebufferDiagnostics)
+        XCTAssertGreaterThan(reconnected.connectionGeneration, context.connectionGeneration)
+        XCTAssertEqual(bridge.inputSettle.status().remainingMilliseconds, 3_000)
+        await refused { try await bridge.sendKeyEvent(key: 0x62, down: true, context: reconnected) }
+        XCTAssertEqual(trace.values, ["down 0x61", "up 0x61"])
+        bridge.disconnect()
     }
 }

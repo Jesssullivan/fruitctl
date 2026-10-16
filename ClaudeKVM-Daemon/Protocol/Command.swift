@@ -46,6 +46,8 @@ struct PCRequest: Decodable {
         let sequence: Int?
         let challenge: String?
         let leaseRemainingMilliseconds: Int?
+        // Private executor budget for this request; bounds the input settle wait.
+        let deadlineMs: Int?
 
         // Configure — timing (ms) + display
         let reset: Bool?
@@ -79,6 +81,7 @@ struct PCRequest: Decodable {
             case sessionID = "session_id"
             case displayID = "display_id"
             case leaseRemainingMilliseconds = "lease_remaining_ms"
+            case deadlineMs = "deadline_ms"
             case reset
             case maxDimension = "max_dimension"
             case clickHoldMs = "click_hold_ms"
