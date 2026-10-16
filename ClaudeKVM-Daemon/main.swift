@@ -179,6 +179,9 @@ struct ClaudeKVMDaemon: AsyncParsableCommand {
               Input refusals return code -32011 with data.reason
               (hold_outside_batch, button_already_held, button_not_held)
               before any event of the refused request.
+              Observation conditions that fresh captures did not meet return
+              code -32012 with data.reason (stable_timeout,
+              change_not_observed), data.elapsed_ms and data.captures.
 
             INPUT HOLDS:
               mouse_down/mouse_up require the hold_scope an executor assigns
