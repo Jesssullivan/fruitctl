@@ -1,0 +1,15 @@
+Synthetic filtered `ps -axo comm=` section: real owners, Apple's CoreParsec
+parsecd (not Parsec) and substring decoys that must not match.
+
+@@fruitctl-probe remote_input_processes@@
+read=ok
+/System/Library/PrivateFrameworks/CoreParsec.framework/parsecd
+/Applications/Parsec.app/Contents/MacOS/parsecd
+/Applications/TeamViewer.app/Contents/MacOS/TeamViewer_Service
+/Applications/TeamViewer.app/Contents/Helpers/TeamViewerHelper
+/Applications/AnyDeskUpdater.app/Contents/MacOS/AnyDeskUpdater
+/usr/local/bin/sunshine-helper
+/Applications/Jump Desktop Connect.app/Contents/MacOS/Jump Desktop Connect
+/opt/parsecd/bin/other
+
+@@fruitctl-status remote_input_processes 0@@

@@ -16,8 +16,11 @@ import {
   parseScreenSharingOverride, parseRemoteManagementPrefs, parseNaprivs, evaluateObserveOnly,
   parseRemoteManagementMarker, parseConsoleSessions, parseSecureInputProcesses, parsePmsetAssertions, parsePmsetSettings,
   parseDisplays, parseHostApp, parseTcc, sshProbeArguments, validateSshDestination, runProbe,
-  resolvePreflightTarget, macosPreflight,
+  resolvePreflightTarget, macosPreflight, REMOTE_INPUT_OWNERS, TARGET_PROFILE, parseAssertionHolders,
+  parseRemoteInputProcesses, evaluateRemoteInputOwners, parseTargetProfile, evaluateTargetProfile,
+  parseInputSources, evaluateInputSource,
 } from '../lib/install/macos-preflight.mjs';
+import { loadConfig } from '../lib/broker/paths.mjs';
 import { doctor } from '../lib/install/index.mjs';
 
 const run = promisify(execFile);
@@ -25,14 +28,19 @@ const fixtures = new URL('./fixtures/macos-preflight/', import.meta.url);
 const fixture = name => fs.readFile(new URL(name, fixtures), 'utf8');
 const cliPath = fileURLToPath(new URL('../bin/fruitctl.mjs', import.meta.url));
 const codes = list => list.map(item => item.code);
+// The redacted base sample has no Host installed; new checks are read past it.
+const without = (list, code = 'host_not_installed') => list.filter(item => item.code !== code);
 
 function render(sections) {
   return Object.entries(sections).map(([name, { output, status = 0 }]) =>
     `@@fruitctl-probe ${name}@@\n${output}\n@@fruitctl-status ${name} ${status}@@\n`).join('\n');
 }
 
+// The redacted laptop sample predates the D12/D14 sections; the synthetic
+// ready profile fills them so other checks start from a clean target.
 async function baseSections() {
-  return Object.fromEntries(parseProbeOutput(await fixture('laptop-26.7.1-tcc-readable.txt')));
+  return Object.fromEntries(parseProbeOutput(await fixture('laptop-26.7.1-tcc-readable.txt') +
+    await fixture('target-profile-ready.txt')));
 }
 
 async function evaluateWith(overrides, options) {
@@ -78,14 +86,19 @@ test('redacted Remote Management bench sample reports warnings, not failures', a
   const result = evaluatePreflight(parseProbeOutput(await fixture('bench-26.7.1-remote-management.txt')), { route: 'raw' });
   assert.equal(result.status, 'warn');
   assert.deepEqual(result.failures, []);
-  assert.deepEqual(codes(result.warnings), ['legacy_vnc_password_enabled', 'secure_input_held', 'host_not_installed']);
+  // The bench was driven through Chrome Remote Desktop while sampled.
+  assert.deepEqual(codes(result.warnings), ['legacy_vnc_password_enabled', 'secure_input_held', 'host_not_installed',
+    'remote_input_owner_other']);
   assert.deepEqual(result.os, { productName: 'macOS', version: '26.7.1', build: '25G313', major: 26, supported: true,
     floor: { version: '26.6.1', advisory: 'CVE-2026-65400', source: 'https://support.apple.com/en-us/148170' }, architecture: 'arm64' });
   assert.deepEqual(result.screenSharing, { service: 'enabled', serviceState: 'not running', remoteManagement: 'on',
     mode: 'remote_management', observeOnly: false, highPerformance: 'not_detected', curtain: 'unknown', legacyVncPassword: true });
   assert.deepEqual(result.session.secureInput, { held: true, process: 'Example Secure App' });
   assert.deepEqual(result.host, { installed: false, grants: { source: 'unreadable', screenRecording: 'unknown', accessibility: 'unknown' } });
-  assert.deepEqual(codes(result.unknowns), ['curtain_unverified']);
+  // These samples predate the process and profile sections: unknown, not ready.
+  assert.deepEqual(codes(result.unknowns), ['curtain_unverified', 'remote_input_owner_unverified', 'target_profile_unverified']);
+  assert.equal(result.targetProfile.settings.stageManager, 'unknown');
+  assert.equal(result.targetProfile.inputSource.matches, 'not_declared');
 });
 
 test('redacted laptop sample reads TCC and leaves the VNC account privileges unknown', async () => {
@@ -100,7 +113,9 @@ test('redacted laptop sample reads TCC and leaves the VNC account privileges unk
   assert.equal(result.session.screenSharingActivity, false);
   assert.deepEqual(result.session.secureInput, { held: false });
   assert.deepEqual(result.host.grants, { source: 'tcc', screenRecording: 'not_recorded', accessibility: 'not_recorded' });
-  assert.deepEqual(codes(result.unknowns), ['observe_only_unverified', 'curtain_unverified']);
+  assert.deepEqual(codes(result.unknowns), ['observe_only_unverified', 'curtain_unverified',
+    'remote_input_owner_unverified', 'target_profile_unverified']);
+  assert.deepEqual(result.session.remoteInputOwners, 'unknown');
 });
 
 test('live Screen Sharing input sample warns and says it may be Fruitctl itself', async () => {
@@ -279,6 +294,251 @@ test("regression: Host lookup uses the console user's home and reports unknown w
     assert.ok(!codes(result.warnings).includes('host_not_installed'));
   }
   assert.deepEqual(parseHostApp('user|absent\nsystem|absent'), { installed: false });
+});
+
+test('D14: competing remote-input owners match exact names, never substrings or Apple parsecd', async () => {
+  const sections = parseProbeOutput(await fixture('remote-input-processes.txt'));
+  const parsed = parseRemoteInputProcesses(sections.get('remote_input_processes'));
+  assert.deepEqual(parsed, { known: true, processes: [{ owner: 'Parsec', process: 'parsecd' },
+    { owner: 'TeamViewer', process: 'TeamViewer_Service' }, { owner: 'Jump Desktop', process: 'Jump Desktop Connect' }] });
+  const result = await evaluateWith({ remote_input_processes: sections.get('remote_input_processes') });
+  assert.deepEqual(without(result.warnings).map(item => [item.code, item.owner]), [['remote_input_owner_other', 'Parsec'],
+    ['remote_input_owner_other', 'TeamViewer'], ['remote_input_owner_other', 'Jump Desktop']]);
+  assert.match(without(result.warnings)[0].message, /^Parsec is running on this Mac \(parsecd\).*one input owner per Mac/);
+  assert.ok(!codes(result.unknowns).includes('remote_input_owner_unverified'));
+
+  // Apple's CoreParsec daemon alone is not Parsec, and a path-less assertion
+  // holder named parsecd cannot name Parsec either.
+  const apple = await evaluateWith({ remote_input_processes: { output: 'read=ok\n/System/Library/PrivateFrameworks/CoreParsec.framework/parsecd' },
+    pmset_assertions: { output: 'Assertion status system-wide:\n   UserIsActive 1\nListed by owning process:\n   pid 9(parsecd): [0x1] 00:00:01 UserIsActive named: "x"' } });
+  assert.deepEqual(apple.session.remoteInputOwners, []);
+  assert.deepEqual(without(apple.warnings), []);
+
+  // Assertion holders and WindowServer input tickles count without a process list.
+  const holders = parseAssertionHolders(await fixture('bench-26.7.1-remote-management.txt'));
+  assert.ok(holders.holders.has('remoting_me2me_host') && holders.input.has('remoting_me2me_host'));
+  const bench = evaluatePreflight(parseProbeOutput(await fixture('bench-26.7.1-remote-management.txt')));
+  assert.deepEqual(bench.session.remoteInputOwners, [{ owner: 'Chrome Remote Desktop', processes: ['remoting_me2me_host'],
+    evidence: ['assertion', 'input'] }]);
+  assert.match(bench.warnings.find(item => item.code === 'remote_input_owner_other').message,
+    /Chrome Remote Desktop is holding a power assertion, sending input on this Mac/);
+  assert.ok(codes(bench.unknowns).includes('remote_input_owner_unverified'));
+
+  for (const output of ['read=failed', '']) {
+    const unknown = await evaluateWith({ remote_input_processes: { output } });
+    assert.equal(unknown.session.remoteInputOwners, 'unknown');
+    assert.ok(codes(unknown.unknowns).includes('remote_input_owner_unverified'));
+  }
+  assert.deepEqual(evaluateRemoteInputOwners({ processes: { known: true, processes: [] },
+    holders: { holders: new Set(['AnyDesk', 'AnyDeskUpdater']), input: new Set() }, assertionsKnown: true }),
+  { owners: [{ owner: 'AnyDesk', processes: ['AnyDesk'], evidence: ['assertion'] }], complete: true });
+});
+
+test('D14: the remote grep keeps only exact owner basenames and filters on the target', () => {
+  const line = PROBE_SCRIPT.split('\n').find(item => item.includes('"$processes" | grep -E'));
+  for (const name of REMOTE_INPUT_OWNERS.flatMap(entry => entry.names)) assert.ok(line.includes(`|${name}|`) || line.includes(`(${name}|`) || line.includes(`|${name})`), name);
+  const processes = ['/Applications/AnyDesk.app/Contents/MacOS/AnyDesk', '/Applications/AnyDeskUpdater.app/Contents/MacOS/AnyDeskUpdater',
+    '/usr/local/bin/sunshine-helper', '/usr/local/bin/sunshine', '/Applications/TeamViewer.app/Contents/Helpers/TeamViewerHelper',
+    '/System/Library/PrivateFrameworks/CoreParsec.framework/parsecd', '/sbin/launchd', 'RustDesk', 'xRustDesk'].join('\n');
+  const shell = spawnSync('/bin/sh', ['-c', `processes=$1\n${line}`, 'sh', processes], { env: { ...process.env, LC_ALL: 'C' } });
+  assert.equal(shell.stdout.toString(), ['/Applications/AnyDesk.app/Contents/MacOS/AnyDesk',
+    '/System/Library/PrivateFrameworks/CoreParsec.framework/parsecd', '/usr/local/bin/sunshine', 'RustDesk', ''].join('\n'));
+});
+
+test('D12: a ready target passes and macOS defaults warn with stable codes', async () => {
+  const ready = parseProbeOutput(await fixture('target-profile-ready.txt'));
+  const clean = evaluateTargetProfile(parseTargetProfile(ready.get('target_profile')));
+  assert.deepEqual(clean.warnings, []);
+  assert.deepEqual(clean.unknown, []);
+  assert.ok(Object.values(clean.settings).every(state => state === 'ready'));
+  assert.equal(clean.appearance, 'light');
+
+  const defaults = parseProbeOutput(await fixture('target-profile-macos-defaults.txt'));
+  const result = await evaluateWith({ target_profile: defaults.get('target_profile') });
+  assert.deepEqual(codes(without(result.warnings)), ['spaces_auto_rearrange_enabled', 'hot_corner_enabled',
+    'click_wallpaper_reveals_desktop', 'menu_bar_auto_hides', 'reduce_transparency_off', 'press_and_hold_enabled',
+    'smart_quotes_enabled', 'smart_dashes_enabled', 'autocorrect_enabled', 'auto_capitalization_enabled',
+    'auto_period_enabled', 'shake_to_locate_enabled']);
+  assert.match(result.warnings.find(item => item.code === 'hot_corner_enabled').message, /\(bottom-right\)/);
+  assert.equal(result.warnings.find(item => item.code === 'hot_corner_enabled').setting, 'hotCorners');
+  // An unreadable ByHost domain is unknown, never ready.
+  assert.equal(result.targetProfile.settings.handoff, 'unknown');
+  assert.equal(result.targetProfile.settings.stageManager, 'ready');
+  assert.equal(result.targetProfile.appearance, 'dark');
+  assert.match(result.unknowns.find(item => item.code === 'target_profile_unverified').message, /unreadable: handoff$/);
+  assert.deepEqual(TARGET_PROFILE.map(item => item.code).sort(), [...new Set(TARGET_PROFILE.map(item => item.code))].sort());
+
+  const stage = await evaluateWith({ target_profile: { output: 'scope=console_user\nuser|com.apple.WindowManager|GloballyEnabled|value|1' } });
+  assert.ok(codes(stage.warnings).includes('stage_manager_enabled'));
+  // A key the probe did not report is unknown; an unset key in a readable
+  // domain is the macOS default (Handoff on).
+  assert.equal(stage.targetProfile.settings.handoff, 'unknown');
+  const handoff = evaluateTargetProfile(parseTargetProfile({ status: 0, output: 'scope=console_user\n' +
+    'byhost|com.apple.coreservices.useractivityd|ActivityAdvertisingAllowed|absent\nbyhost|com.apple.coreservices.useractivityd|ActivityReceivingAllowed|value|0' }));
+  assert.deepEqual(codes(handoff.warnings), ['handoff_enabled']);
+  const hidden = evaluateTargetProfile(parseTargetProfile({ status: 0,
+    output: 'scope=console_user\nuser|NSGlobalDomain|_HIHideMenuBar|value|1\nuser|NSGlobalDomain|AppleMenuBarVisibleInFullscreen|value|1' }));
+  assert.equal(hidden.settings.menuBarAutoHide, 'deviation');
+  const garbled = evaluateTargetProfile(parseTargetProfile({ status: 0,
+    output: 'scope=console_user\nuser|com.apple.dock|mru-spaces|value|maybe\nuser|com.apple.dock|mru-spaces;id|value|0' }));
+  assert.equal(garbled.settings.spacesAutoRearrange, 'unknown');
+  const auto = evaluateTargetProfile(parseTargetProfile({ status: 0,
+    output: 'scope=console_user\nuser|NSGlobalDomain|AppleInterfaceStyleSwitchesAutomatically|value|1' }));
+  assert.equal(auto.appearance, 'auto');
+});
+
+test('D12: another SSH account or no console user leaves every profile setting unknown', async () => {
+  for (const [scope, pattern] of [['other_user', /not the console user/], ['no_console_user', /No user owns the console/]]) {
+    const result = await evaluateWith({ target_profile: { output: `scope=${scope}\nuser|com.apple.dock|mru-spaces|value|1` },
+      input_sources: { output: `scope=${scope}\ncurrent|com.apple.keylayout.US` } }, { inputSource: 'com.apple.keylayout.US' });
+    assert.ok(Object.values(result.targetProfile.settings).every(state => state === 'unknown'), scope);
+    assert.equal(result.targetProfile.appearance, 'unknown');
+    assert.match(result.unknowns.find(item => item.code === 'target_profile_unverified').message, pattern);
+    assert.equal(result.targetProfile.inputSource.matches, 'unknown');
+    assert.ok(codes(result.unknowns).includes('input_source_unverified'));
+    assert.ok(!codes(result.warnings).includes('spaces_auto_rearrange_enabled'));
+  }
+  const missing = await evaluateWith({ target_profile: { output: '', status: 1 } });
+  assert.match(missing.unknowns.find(item => item.code === 'target_profile_unverified').message, /not probed/);
+  // The probe reads the console user's own preferences only as that user.
+  assert.match(PROBE_SCRIPT, /elif \[ "\$ssh_user" = "\$console_user" \]; then profile_scope=console_user/);
+  assert.match(PROBE_SCRIPT, /pref_domain byhost com\.apple\.coreservices\.useractivityd ActivityAdvertisingAllowed ActivityReceivingAllowed/);
+});
+
+test('D12: pref_domain separates set, unset and unreadable keys', () => {
+  const lines = PROBE_SCRIPT.split('\n');
+  const start = lines.indexOf('pref_domain() {');
+  const body = lines.slice(start, lines.indexOf('}', start) + 1).join('\n');
+  const stub = `defaults() {
+  case "$*" in
+    'read com.apple.dock') return 0 ;;
+    'read com.apple.dock mru-spaces') printf '0\\n' ;;
+    'read com.apple.dock wvous-br-corner') printf '14; id\\n2\\n' ;;
+    '-currentHost read com.apple.coreservices.useractivityd'*) return 1 ;;
+    *) return 1 ;;
+  esac
+}`;
+  const shell = spawnSync('/bin/sh', ['-c', `${stub}\n${body}\npref_domain user com.apple.dock mru-spaces wvous-br-corner wvous-tl-corner\npref_domain byhost com.apple.coreservices.useractivityd ActivityAdvertisingAllowed`]);
+  assert.equal(shell.stdout.toString(), ['user|com.apple.dock|mru-spaces|value|0', 'user|com.apple.dock|wvous-br-corner|value|14 id',
+    'user|com.apple.dock|wvous-tl-corner|absent', 'byhost|com.apple.coreservices.useractivityd|ActivityAdvertisingAllowed|unreadable', ''].join('\n'));
+  // `14 id` is not an integer: the corner is unknown, not ready.
+  const parsed = parseTargetProfile({ status: 0, output: `scope=console_user\n${shell.stdout}` });
+  assert.deepEqual(parsed.values.get('wvous-br-corner'), { state: 'value', value: '14 id' });
+  assert.equal(evaluateTargetProfile(parsed).settings.hotCorners, 'unknown');
+});
+
+test('D12: the selected input source is reported and checked against the declared one', async () => {
+  const ready = parseProbeOutput(await fixture('target-profile-ready.txt'));
+  const parsed = parseInputSources(ready.get('input_sources'));
+  assert.deepEqual(parsed, { scope: 'console_user', current: 'com.apple.keylayout.US',
+    selected: [{ kind: 'Keyboard Layout', name: 'U.S.' }, { kind: 'Non Keyboard Input Method', id: 'com.apple.CharacterPaletteIM' }],
+    enabled: [{ kind: 'Keyboard Layout', name: 'U.S.' }] });
+  for (const declared of ['com.apple.keylayout.US', 'U.S.']) {
+    const result = await evaluateWith({}, { inputSource: declared });
+    assert.equal(result.targetProfile.inputSource.matches, true, declared);
+    assert.deepEqual(without(result.warnings), []);
+  }
+  const undeclared = await evaluateWith({});
+  assert.deepEqual(undeclared.targetProfile.inputSource, { current: 'com.apple.keylayout.US',
+    selected: [{ kind: 'Keyboard Layout', name: 'U.S.' }], enabled: [{ kind: 'Keyboard Layout', name: 'U.S.' }],
+    declared: null, matches: 'not_declared' });
+  const wrong = await evaluateWith({}, { inputSource: 'com.apple.keylayout.British' });
+  assert.deepEqual(codes(without(wrong.warnings)), ['input_source_mismatch']);
+  assert.match(without(wrong.warnings)[0].message, /selected input source is com\.apple\.keylayout\.US \/ U\.S\.; this profile declares com\.apple\.keylayout\.British/);
+  // An invalid declared value is ignored rather than echoed.
+  assert.equal((await evaluateWith({}, { inputSource: 'x"; id' })).targetProfile.inputSource.matches, 'not_declared');
+
+  // A selected input method is the active source; its underlying layout is not.
+  const japanese = { output: ['scope=console_user', 'current|com.apple.keylayout.ABC', 'AppleSelectedInputSources|read',
+    'AppleSelectedInputSources|(', 'AppleSelectedInputSources|{', 'AppleSelectedInputSources|"Bundle ID" = "com.apple.inputmethod.Kotoeri.RomajiTyping";',
+    'AppleSelectedInputSources|"Input Mode" = "com.apple.inputmethod.Japanese";', 'AppleSelectedInputSources|InputSourceKind = "Input Mode";',
+    'AppleSelectedInputSources|}', 'AppleSelectedInputSources|)', 'AppleEnabledInputSources|unreadable'].join('\n') };
+  const method = await evaluateWith({ input_sources: japanese }, { inputSource: 'com.apple.keylayout.ABC' });
+  assert.deepEqual(codes(without(method.warnings)), ['input_source_mismatch']);
+  assert.equal(method.targetProfile.inputSource.enabled, 'unknown');
+  assert.deepEqual(without((await evaluateWith({ input_sources: japanese }, { inputSource: 'com.apple.inputmethod.Japanese' })).warnings), []);
+
+  // Old-style plist escapes decode; control characters and quotes are dropped.
+  const escaped = parseInputSources({ status: 0, output: ['scope=console_user', 'current|unreadable', 'AppleSelectedInputSources|read',
+    'AppleSelectedInputSources|{', 'AppleSelectedInputSources|"KeyboardLayout Name" = "U.S. International \\U2013 PC";',
+    'AppleSelectedInputSources|InputSourceKind = "Keyboard Layout";', 'AppleSelectedInputSources|}'].join('\n') });
+  assert.deepEqual(escaped.selected, [{ kind: 'Keyboard Layout', name: 'U.S. International – PC' }]);
+  assert.equal(escaped.current, undefined);
+
+  const unreadable = await evaluateWith({ input_sources: { output: 'scope=console_user\ncurrent|unreadable\nAppleSelectedInputSources|unreadable' } },
+    { inputSource: 'com.apple.keylayout.US' });
+  assert.equal(unreadable.targetProfile.inputSource.matches, 'unknown');
+  assert.ok(codes(unreadable.unknowns).includes('input_source_unverified'));
+  assert.ok(!codes(unreadable.warnings).includes('input_source_mismatch'));
+});
+
+test('the input-source filter keeps only structure and the four named fields', () => {
+  const line = PROBE_SCRIPT.split('\n').find(item => item.includes('InputSourceKind|Input Mode'));
+  const value = ['(', '        {', '        InputSourceKind = "Keyboard Layout";', '        "KeyboardLayout ID" = 0;',
+    '        "KeyboardLayout Name" = "U.S.";', '    },', '        {', '        "Bundle ID" = "com.apple.CharacterPaletteIM";',
+    '        InputSourceKind = "Non Keyboard Input Method";', '        "tsmPrivate" = "secret";', '    }', ')'].join('\n');
+  const shell = spawnSync('/bin/sh', ['-c', `key=AppleSelectedInputSources\nvalue=$1\n${line}`, 'sh', value]);
+  const output = shell.stdout.toString();
+  assert.doesNotMatch(output, /KeyboardLayout ID|tsmPrivate|secret/);
+  assert.deepEqual(parseInputSources({ status: 0, output: `scope=console_user\nAppleSelectedInputSources|read\n${output}` }).selected,
+    [{ kind: 'Keyboard Layout', name: 'U.S.' }, { kind: 'Non Keyboard Input Method', id: 'com.apple.CharacterPaletteIM' }]);
+});
+
+test('the whole probe runs against stubbed macOS commands and parses back', () => {
+  // Shell functions shadow the commands even after the script resets PATH.
+  const stubs = `sw_vers() { printf 'ProductName:\\tmacOS\\nProductVersion:\\t26.7.1\\nBuildVersion:\\t25G313\\n'; }
+uname() { printf 'arm64\\n'; }
+stat() { printf 'operator\\n'; }
+id() { printf 'operator\\n'; }
+dscl() { return 1; }
+launchctl() { return 1; }
+ioreg() { return 1; }
+pmset() { return 1; }
+system_profiler() { return 1; }
+sqlite3() { return 1; }
+ps() { printf '/sbin/launchd\\n/Applications/Parsec.app/Contents/MacOS/parsecd\\n/System/Library/PrivateFrameworks/CoreParsec.framework/parsecd\\n'; }
+defaults() {
+  case "$*" in
+    'read com.apple.dock'|'read NSGlobalDomain') return 0 ;;
+    'read com.apple.dock mru-spaces') printf '1\\n' ;;
+    'read NSGlobalDomain AppleInterfaceStyle') printf 'Dark\\n' ;;
+    'read com.apple.HIToolbox AppleCurrentKeyboardLayoutInputSourceID') printf 'com.apple.keylayout.US\\n' ;;
+    *) return 1 ;;
+  esac
+}`;
+  const shell = spawnSync('/bin/sh', ['-c', `${stubs}\n${probeScript({ vncUser: 'operator' })}`], { env: { ...process.env, LC_ALL: 'C' } });
+  const sections = parseProbeOutput(shell.stdout.toString());
+  for (const name of ['remote_input_processes', 'target_profile', 'input_sources']) assert.ok(sections.has(name), name);
+  const result = evaluatePreflight(sections, { inputSource: 'com.apple.keylayout.US' });
+  assert.deepEqual(result.session.remoteInputOwners, [{ owner: 'Parsec', processes: ['parsecd'], evidence: ['process'] }]);
+  assert.equal(result.targetProfile.scope, 'console_user');
+  assert.equal(result.targetProfile.settings.spacesAutoRearrange, 'deviation');
+  assert.equal(result.targetProfile.settings.stageManager, 'unknown');
+  assert.equal(result.targetProfile.appearance, 'dark');
+  assert.equal(result.targetProfile.inputSource.matches, true);
+  const other = spawnSync('/bin/sh', ['-c', `${stubs}\nid() { printf 'admin\\n'; }\n${PROBE_SCRIPT}`]);
+  const otherSections = parseProbeOutput(other.stdout.toString());
+  assert.equal(otherSections.get('target_profile').output, 'scope=other_user');
+  assert.equal(otherSections.get('input_sources').output, 'scope=other_user');
+});
+
+test('profile inputSource is optional, validated and passed to doctor', async t => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'fruitctl-input-source-'));
+  t.after(() => fs.rm(directory, { recursive: true, force: true }));
+  const configPath = path.join(directory, 'config.json');
+  const write = profile => fs.writeFile(configPath, JSON.stringify({ schema: 'fruitctl.config.v1', targets: { desktop: profile } }));
+  await write({ hostHelper: { sshHost: 'operator@target.example' }, inputSource: 'com.apple.keylayout.US' });
+  assert.deepEqual(await resolvePreflightTarget({ configPath, target: 'desktop' }),
+    { destination: 'operator@target.example', route: 'host', inputSource: 'com.apple.keylayout.US' });
+  for (const bad of ['', '-x', 'a"b', 'x'.repeat(129), 7, 'line\nbreak']) {
+    await write({ inputSource: bad });
+    await assert.rejects(loadConfig(configPath), /inputSource/, JSON.stringify(bad));
+  }
+  const home = await fs.mkdtemp(path.join(directory, 'home-'));
+  const sample = render(Object.fromEntries(parseProbeOutput(await fixture('laptop-26.7.1-tcc-readable.txt') + await fixture('target-profile-ready.txt'))));
+  const result = await doctor({ home, macos: { destination: 'target.example', route: 'raw', inputSource: 'com.apple.keylayout.German' } },
+    { preflightProbe: async () => sample });
+  assert.ok(codes(result.targetPreflight.warnings).includes('input_source_mismatch'));
 });
 
 test('section framing ignores inline, unknown, unterminated and missing sections', async () => {

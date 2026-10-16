@@ -14,6 +14,8 @@ let
     inherit (target) vnc credentialFile;
   } // lib.optionalAttrs (target.targetId != null) {
     inherit (target) targetId;
+  } // lib.optionalAttrs (target.inputSource != null) {
+    inherit (target) inputSource;
   } // lib.optionalAttrs (target.daemonPath != null || nativePath != null) {
     daemonPath = if target.daemonPath != null then target.daemonPath else nativePath;
   } // lib.optionalAttrs (target.hostHelper != null) {
@@ -63,6 +65,12 @@ let
         host = lib.mkOption { type = lib.types.str; default = "127.0.0.1"; description = "Seat-side VNC address, usually an SSH tunnel loopback endpoint."; };
         port = lib.mkOption { type = lib.types.port; default = 15900; description = "Seat-side VNC port; distinct from a local Screen Sharing listener."; };
         username = lib.mkOption { type = lib.types.str; default = ""; description = "Target account name. No password is stored in configuration."; };
+      };
+      inputSource = lib.mkOption {
+        type = lib.types.nullOr (lib.types.strMatching "[A-Za-z0-9][A-Za-z0-9._ ()/+-]{0,127}");
+        default = null;
+        example = "com.apple.keylayout.US";
+        description = "Optional declared target input source, as a HIToolbox source ID or layout name. `fruitctl doctor --macos` warns input_source_mismatch when the target's selected source differs.";
       };
       credentialFile = lib.mkOption {
         type = lib.types.nullOr lib.types.str;
@@ -206,7 +214,7 @@ in {
         { assertion = cfg.bridgeSocketPath == null || absolute cfg.bridgeSocketPath; message = "Fruitctl bridgeSocketPath must be an absolute remote path when supplied."; }
         { assertion = cfg.bridgeCommand == "fruitctl" || absolute cfg.bridgeCommand; message = "Fruitctl bridgeCommand must be fruitctl or an absolute executable path."; }
         { assertion = isDarwin || (cfg.bridgeHost != null && cfg.bridgeHost != "" && !(lib.hasPrefix "-" cfg.bridgeHost) && !(lib.hasInfix "\n" cfg.bridgeHost)); message = "Linux Fruitctl requires an existing Darwin bridgeHost SSH alias."; }
-        { assertion = isDarwin || (cfg.nativePackage == null && builtins.all (name: cfg.targets.${name}.targetId == null && cfg.targets.${name}.credentialFile == null && cfg.targets.${name}.daemonPath == null && cfg.targets.${name}.hostHelper == null && cfg.targets.${name}.vnc.username == "" && cfg.targets.${name}.vnc.host == "127.0.0.1" && cfg.targets.${name}.vnc.port == 15900) targetNames); message = "Linux declares Fruitctl target names only; configure physical identities, VNC, credentials and native clients on the Darwin bridge."; }
+        { assertion = isDarwin || (cfg.nativePackage == null && builtins.all (name: cfg.targets.${name}.targetId == null && cfg.targets.${name}.inputSource == null && cfg.targets.${name}.credentialFile == null && cfg.targets.${name}.daemonPath == null && cfg.targets.${name}.hostHelper == null && cfg.targets.${name}.vnc.username == "" && cfg.targets.${name}.vnc.host == "127.0.0.1" && cfg.targets.${name}.vnc.port == 15900) targetNames); message = "Linux declares Fruitctl target names only; configure physical identities, VNC, credentials and native clients on the Darwin bridge."; }
         { assertion = !isDarwin || builtins.all (name: absolute cfg.targets.${name}.credentialFile && absolute (if cfg.targets.${name}.daemonPath != null then cfg.targets.${name}.daemonPath else nativePath)) targetNames; message = "Each Darwin Fruitctl target requires an absolute credentialFile and a qualified daemonPath or nativePackage."; }
         { assertion = builtins.all (name: let helper = cfg.targets.${name}.hostHelper; in helper == null || (helper.sshHost != "" && builtins.length helper.command == 2 && absolute (builtins.head helper.command) && builtins.elemAt helper.command 1 == "--stdio" && helper.displayId != null && helper.displayId > 0)) targetNames; message = "Fruitctl hostHelper requires an SSH alias, [ absolute-executable --stdio ] command and positive displayId."; }
         { assertion = builtins.all (name: let helper = cfg.targets.${name}.hostHelper; mapping = if helper == null then null else helper.mapping; in mapping == null || (mapping.qualificationReceipt != "" && mapping.displayId == helper.displayId && mapping.displayBounds.width > 0 && mapping.displayBounds.height > 0)) targetNames; message = "Fruitctl hostHelper mapping requires its qualification receipt, matching displayId and positive display bounds."; }

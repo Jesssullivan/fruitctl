@@ -189,6 +189,11 @@ aliases), and reused helper SSH hosts. Different tunnel ports or SSH aliases
 can still reach the same machine, so assign its physical identity explicitly;
 the broker does not infer arbitrary network aliases.
 
+An optional `targets.<profile>.inputSource` declares the target's expected
+input source, such as `com.apple.keylayout.US`. `fruitctl doctor --macos`
+warns `input_source_mismatch` when the target selects another one
+([target profile](target-profile.md#input-source)).
+
 The optional Host/indicator remains a private prototype until its exact
 capture mode passes background and indicator-exclusion qualification. Alpha.8
 ships no Host app, ZIP, package export, service or helper mapping. The existing

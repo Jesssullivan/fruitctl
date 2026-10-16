@@ -26,6 +26,11 @@ read-only checks of the target over SSH.
   access, a High Performance session, the login window or a locked screen.
 - Report each `warnings` entry and each `unknowns` entry as-is. Do not change
   target settings or grants yourself.
+- `remote_input_owner_other` names another remote desktop host on the target.
+  Each Mac should have one input owner; ask the operator before acting.
+- Target profile warnings (Stage Manager, smart quotes, input source and
+  similar) explain why windows may move or typed text may change. Expect that
+  behaviour and verify each result with a fresh screenshot.
 
 ## Control
 

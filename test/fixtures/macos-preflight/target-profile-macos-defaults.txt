@@ -1,0 +1,29 @@
+Synthetic probe sections for a console user who changed nothing: readable
+domains with unset keys (macOS defaults), Dark appearance, and an
+unreadable Handoff ByHost domain.
+
+@@fruitctl-probe target_profile@@
+scope=console_user
+user|com.apple.WindowManager|GloballyEnabled|absent
+user|com.apple.WindowManager|EnableStandardClickToShowDesktop|absent
+user|com.apple.dock|mru-spaces|absent
+user|com.apple.dock|wvous-tl-corner|absent
+user|com.apple.dock|wvous-tr-corner|absent
+user|com.apple.dock|wvous-bl-corner|absent
+user|com.apple.dock|wvous-br-corner|value|14
+user|NSGlobalDomain|_HIHideMenuBar|absent
+user|NSGlobalDomain|AppleMenuBarVisibleInFullscreen|absent
+user|NSGlobalDomain|AppleInterfaceStyle|value|Dark
+user|NSGlobalDomain|AppleInterfaceStyleSwitchesAutomatically|absent
+user|NSGlobalDomain|ApplePressAndHoldEnabled|absent
+user|NSGlobalDomain|NSAutomaticQuoteSubstitutionEnabled|absent
+user|NSGlobalDomain|NSAutomaticDashSubstitutionEnabled|absent
+user|NSGlobalDomain|NSAutomaticSpellingCorrectionEnabled|absent
+user|NSGlobalDomain|NSAutomaticCapitalizationEnabled|absent
+user|NSGlobalDomain|NSAutomaticPeriodSubstitutionEnabled|absent
+user|NSGlobalDomain|CGDisableCursorLocationMagnification|absent
+user|com.apple.universalaccess|reduceTransparency|absent
+byhost|com.apple.coreservices.useractivityd|ActivityAdvertisingAllowed|unreadable
+byhost|com.apple.coreservices.useractivityd|ActivityReceivingAllowed|unreadable
+
+@@fruitctl-status target_profile 0@@
