@@ -94,7 +94,10 @@ Keep passwords, tokens, real desktop contents, and raw conversations out of
 public evidence. Offline results, historical observations, and live receipts
 must be labeled separately.
 
-Publish an initial seven-day baseline and its denominators on October 26.
+Publish an initial seven-day baseline and its denominators once M3′ latency
+telemetry is in place (forecast November 18, 2026, so the baseline is due about
+November 25). The baseline opens the 28-day window; the first 28-day attainment
+claim is therefore expected about December 16–23, 2026.
 If qualification starts too late for seven days of measurements, publish the
 actual interval, pending combinations and a dated baseline reforecast.
 Until a 28-day interval exists, report the available interval without implying
