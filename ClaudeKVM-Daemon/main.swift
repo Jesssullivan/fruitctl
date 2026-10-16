@@ -34,8 +34,12 @@ struct ClaudeKVMDaemon: AsyncParsableCommand {
               Screen:
                 screenshot                              Scaled PNG of full screen
                 cursor_crop                             Crop around cursor with crosshair
-                diff_check                              Any pixel change since baseline
+                diff_check     {regions?, ignore?}      Changed ratio and boxes since baseline
                 set_baseline                            Save current frame for diff comparison
+                zoom           {x, y, width, height, max_dimension?}
+                                                        Native-resolution PNG of a scaled region
+                wait_for_stable {stable_ms, timeout_ms, regions?, ignore?}
+                                                        Fresh captures until unchanged for stable_ms
 
               Mouse:
                 mouse_move     {x, y}                   Teleport cursor
@@ -175,6 +179,9 @@ struct ClaudeKVMDaemon: AsyncParsableCommand {
               Input refusals return code -32011 with data.reason
               (hold_outside_batch, button_already_held, button_not_held)
               before any event of the refused request.
+              Observation conditions that fresh captures did not meet return
+              code -32012 with data.reason (stable_timeout,
+              change_not_observed), data.elapsed_ms and data.captures.
 
             INPUT HOLDS:
               mouse_down/mouse_up require the hold_scope an executor assigns

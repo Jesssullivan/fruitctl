@@ -648,6 +648,224 @@ final class NativeBehaviorTests: XCTestCase {
         XCTAssertEqual(legacyError["code"] as? Int, -32000)
     }
 
+    // MARK: - Observation regions (TIN-6598)
+
+    /// An RGBX frame of one color with optional rectangles of another.
+    private func frame(_ width: Int, _ height: Int, fill: UInt8 = 0,
+                       paint: [(FrameRect, UInt8)] = []) -> Data {
+        var bytes = [UInt8](repeating: fill, count: width * height * 4)
+        for (rect, value) in paint {
+            for y in rect.y..<rect.maxY {
+                for x in rect.x..<rect.maxX { bytes[(y * width + x) * 4] = value }
+            }
+        }
+        return Data(bytes)
+    }
+
+    func testRegionMappingCoversTouchedNativePixelsAndRoundsBoxesOutward() throws {
+        let rect = FrameRect(x: 10, y: 20, width: 30, height: 40)
+        let native = try XCTUnwrap(FrameRegion.toNative(rect, nativeWidth: 2560, nativeHeight: 1440,
+                                                        scaledWidth: 1280, scaledHeight: 720))
+        XCTAssertEqual(native, FrameRect(x: 20, y: 40, width: 60, height: 80))
+        XCTAssertEqual(FrameRegion.toScaled(native, nativeWidth: 2560, nativeHeight: 1440,
+                                            scaledWidth: 1280, scaledHeight: 720), rect)
+        // A one-pixel scaled region on an odd ratio covers every native pixel it touches.
+        XCTAssertEqual(FrameRegion.toNative(FrameRect(x: 0, y: 0, width: 1, height: 1), nativeWidth: 1920,
+                                            nativeHeight: 1081, scaledWidth: 1280, scaledHeight: 721),
+                       FrameRect(x: 0, y: 0, width: 2, height: 2))
+        // A one-pixel native change never vanishes when reported in scaled space.
+        XCTAssertEqual(FrameRegion.toScaled(FrameRect(x: 1919, y: 1080, width: 1, height: 1), nativeWidth: 1920,
+                                            nativeHeight: 1081, scaledWidth: 1280, scaledHeight: 721),
+                       FrameRect(x: 1279, y: 720, width: 1, height: 1))
+        // Regions clamp to the frame; nothing outside it maps to anything.
+        XCTAssertEqual(FrameRegion.toNative(FrameRect(x: 1270, y: 710, width: 50, height: 50), nativeWidth: 1280,
+                                            nativeHeight: 720, scaledWidth: 1280, scaledHeight: 720),
+                       FrameRect(x: 1270, y: 710, width: 10, height: 10))
+        XCTAssertNil(FrameRegion.toNative(FrameRect(x: 1280, y: 0, width: 5, height: 5), nativeWidth: 1280,
+                                          nativeHeight: 720, scaledWidth: 1280, scaledHeight: 720))
+        XCTAssertTrue(FrameRect(x: 1279, y: 719, width: 1, height: 1).isInside(width: 1280, height: 720))
+        for invalid in [FrameRect(x: -1, y: 0, width: 1, height: 1), FrameRect(x: 0, y: 0, width: 0, height: 1),
+                        FrameRect(x: 1279, y: 0, width: 2, height: 1),
+                        FrameRect(x: Int.max, y: 0, width: Int.max, height: 1)] {
+            XCTAssertFalse(invalid.isInside(width: 1280, height: 720))
+        }
+    }
+
+    func testMaskSubtractsIgnoredRectanglesFromRegions() {
+        let mask = FrameMask(width: 10, height: 3, include: [FrameRect(x: 0, y: 0, width: 6, height: 2),
+                                                             FrameRect(x: 4, y: 0, width: 4, height: 1)],
+                             exclude: [FrameRect(x: 2, y: 1, width: 2, height: 5)])
+        XCTAssertEqual(mask.spans(row: 0), [0..<8])
+        XCTAssertEqual(mask.spans(row: 1), [0..<2, 4..<6])
+        XCTAssertEqual(mask.spans(row: 2), [])
+        XCTAssertEqual(mask.includedPixels, 12)
+        XCTAssertEqual(mask.bounds, FrameRect(x: 0, y: 0, width: 8, height: 2))
+        let whole = FrameMask(width: 4, height: 2, include: nil, exclude: [])
+        XCTAssertEqual(whole.includedPixels, 8)
+        // Regions that map to nothing admit nothing; they never widen to the frame.
+        XCTAssertEqual(FrameMask(width: 4, height: 2, include: [], exclude: []).includedPixels, 0)
+        let ignored = FrameMask(width: 4, height: 2, include: nil, exclude: [FrameRect(x: 0, y: 0, width: 4, height: 2)])
+        XCTAssertNil(ignored.bounds)
+    }
+
+    func testCompareCountsColorChangesOnlyAndGroupsSeparateBoxes() throws {
+        let width = 64, height = 32
+        let baseline = frame(width, height)
+        // Padding is not a visible change.
+        var padding = [UInt8](baseline)
+        padding[3] = 255
+        let whole = FrameMask(width: width, height: height, include: nil, exclude: [])
+        let none = try XCTUnwrap(baseline.withUnsafeBytes { old in
+            Data(padding).withUnsafeBytes { FrameRegion.compare(old, $0, width: width, height: height, mask: whole) }
+        })
+        XCTAssertEqual(none, FrameDiff(changedPixels: 0, comparedPixels: width * height))
+        let small = FrameRect(x: 2, y: 2, width: 3, height: 3)
+        let large = FrameRect(x: 40, y: 20, width: 5, height: 6)
+        let current = frame(width, height, paint: [(small, 9), (large, 9)])
+        func diff(_ mask: FrameMask) throws -> FrameDiff {
+            try XCTUnwrap(baseline.withUnsafeBytes { old in
+                current.withUnsafeBytes { FrameRegion.compare(old, $0, width: width, height: height, mask: mask) }
+            })
+        }
+        let both = try diff(whole)
+        XCTAssertEqual(both.changedPixels, 9 + 30)
+        XCTAssertEqual(both.boxes, [large, small]) // largest change first
+        XCTAssertFalse(both.boxesTruncated)
+        XCTAssertEqual(both.ratio, 39.0 / Double(width * height), accuracy: 1e-12)
+        let masked = try diff(FrameMask(width: width, height: height, include: nil, exclude: [large]))
+        XCTAssertEqual(masked.boxes, [small])
+        XCTAssertEqual(masked.comparedPixels, width * height - 30)
+        // Mismatched geometry is not comparable.
+        XCTAssertNil(baseline.withUnsafeBytes { old in
+            Data(count: 8).withUnsafeBytes { FrameRegion.compare(old, $0, width: width, height: height, mask: whole) }
+        })
+        // Many separate changes report the largest boxes and say so.
+        let scattered = (0..<20).map { (FrameRect(x: ($0 % 10) * 40, y: ($0 / 10) * 40, width: 1, height: 1), UInt8(1)) }
+        let wide = frame(400, 80, paint: scattered)
+        let many = try XCTUnwrap(frame(400, 80).withUnsafeBytes { old in
+            wide.withUnsafeBytes { FrameRegion.compare(old, $0, width: 400, height: 80,
+                                                       mask: FrameMask(width: 400, height: 80, include: nil, exclude: [])) }
+        })
+        XCTAssertEqual(many.boxes.count, FrameRegion.maximumBoxes)
+        XCTAssertTrue(many.boxesTruncated)
+    }
+
+    func testEvaluateReportsAbsentMatchedAndGeometryChangedBaselinesInScaledSpace() {
+        let context = VNCInputContext(width: 64, height: 32, connectionGeneration: 1, allocation: 1)
+        let baseline = frame(64, 32)
+        let current = frame(64, 32, paint: [(FrameRect(x: 10, y: 4, width: 4, height: 2), 7)])
+        func evaluate(_ prior: (pixels: Data, context: VNCInputContext)?, _ context: VNCInputContext,
+                      include: [FrameRect]? = nil) -> FrameDiffSummary {
+            FrameRegion.evaluate(baseline: prior, current: current, context: context, include: include,
+                                 exclude: [], scaledWidth: 32, scaledHeight: 16)
+        }
+        XCTAssertEqual(evaluate(nil, context), FrameDiffSummary(changed: false, changedRatio: 0, changedPixels: 0,
+            comparedPixels: 0, boxes: [], boxesTruncated: false, baseline: .absent))
+        let matched = evaluate((pixels: baseline, context: context), context)
+        XCTAssertTrue(matched.changed)
+        XCTAssertEqual(matched.baseline, .matched)
+        XCTAssertEqual(matched.boxes, [FrameRect(x: 5, y: 2, width: 2, height: 1)])
+        XCTAssertEqual(matched.changedRatio, 0.003906)
+        // A region elsewhere sees no change.
+        let elsewhere = evaluate((pixels: baseline, context: context), context,
+                                 include: [FrameRect(x: 20, y: 8, width: 4, height: 4)])
+        XCTAssertFalse(elsewhere.changed)
+        XCTAssertEqual(elsewhere.comparedPixels, 64)
+        // A reallocation cannot be compared pixel by pixel.
+        let reallocated = VNCInputContext(width: 64, height: 32, connectionGeneration: 1, allocation: 2)
+        let moved = evaluate((pixels: baseline, context: reallocated), context,
+                             include: [FrameRect(x: 2, y: 2, width: 3, height: 3)])
+        XCTAssertEqual(moved, FrameDiffSummary(changed: true, changedRatio: 1, changedPixels: 36, comparedPixels: 36,
+            boxes: [FrameRect(x: 2, y: 2, width: 3, height: 3)], boxesTruncated: false, baseline: .geometryChanged))
+    }
+
+    func testStabilityNeedsAnUnchangedRunAndAStableVerdictOutranksTimeout() {
+        var stability = FrameStability(stableMilliseconds: 300, timeoutMilliseconds: 1000,
+                                       startedMilliseconds: 1000, firstCaptureMilliseconds: 1050)
+        XCTAssertFalse(stability.isStable)
+        stability.observe(changed: false, atMilliseconds: 1200)
+        XCTAssertFalse(stability.isStable)
+        stability.observe(changed: true, atMilliseconds: 1300) // the run restarts here
+        stability.observe(changed: false, atMilliseconds: 1500)
+        XCTAssertFalse(stability.isStable)
+        XCTAssertFalse(stability.isExpired(atMilliseconds: 1999))
+        XCTAssertTrue(stability.isExpired(atMilliseconds: 2000))
+        stability.observe(changed: false, atMilliseconds: 2100)
+        XCTAssertTrue(stability.isStable)
+        XCTAssertEqual(stability.stableForMilliseconds, 800)
+        XCTAssertEqual(stability.captures, 5)
+        XCTAssertEqual(stability.elapsed(atMilliseconds: 900), 0)
+        XCTAssertEqual(FrameStability.pollMilliseconds(stableMilliseconds: 50), 50)
+        XCTAssertEqual(FrameStability.pollMilliseconds(stableMilliseconds: 400), 100)
+        XCTAssertEqual(FrameStability.pollMilliseconds(stableMilliseconds: 10_000), 250)
+    }
+
+    func testObservationRequestsValidateRegionsAndBoundsBeforeCapture() throws {
+        let scaling = DisplayScaling(nativeWidth: 1920, nativeHeight: 1080)
+        let methods = Set(PCRequest.supportedMethods)
+        XCTAssertTrue(["zoom", "wait_for_stable", "expect_baseline", "expect_change"].allSatisfy(methods.contains))
+        XCTAssertNoThrow(try request("diff_check").validate(scaling: scaling))
+        XCTAssertNoThrow(try request("zoom", "{\"x\":1270,\"y\":710,\"width\":10,\"height\":10}").validate(scaling: scaling))
+        XCTAssertNoThrow(try request("zoom", "{\"x\":0,\"y\":0,\"width\":1280,\"height\":720,\"max_dimension\":320}")
+            .validate(scaling: scaling))
+        XCTAssertNoThrow(try request("wait_for_stable", "{\"stable_ms\":300,\"timeout_ms\":3000,"
+            + "\"regions\":[{\"x\":0,\"y\":0,\"width\":10,\"height\":10}],\"ignore\":[]}").validate(scaling: scaling))
+        XCTAssertNoThrow(try request("expect_change", "{\"x\":0,\"y\":0,\"width\":1,\"height\":1}").validate(scaling: scaling))
+        let seventeen = Array(repeating: "{\"x\":0,\"y\":0,\"width\":1,\"height\":1}", count: 17).joined(separator: ",")
+        for (method, params) in [
+            ("zoom", "{\"x\":0,\"y\":0,\"width\":1281,\"height\":1}"),
+            ("zoom", "{\"x\":0,\"y\":0,\"width\":0,\"height\":1}"),
+            ("zoom", "{\"x\":0,\"y\":0}"),
+            ("zoom", "{\"x\":0,\"y\":0,\"width\":1,\"height\":1,\"max_dimension\":100}"),
+            ("expect_change", "{\"x\":0,\"y\":0,\"width\":1,\"height\":1,\"timeout_ms\":20000}"),
+            ("diff_check", "{\"regions\":[]}"),
+            ("diff_check", "{\"regions\":[\(seventeen)]}"),
+            ("diff_check", "{\"ignore\":[{\"x\":0,\"y\":700,\"width\":1,\"height\":21}]}"),
+            ("wait_for_stable", "{\"stable_ms\":300}"),
+            ("wait_for_stable", "{\"stable_ms\":3000,\"timeout_ms\":300}"),
+            ("wait_for_stable", "{\"stable_ms\":10,\"timeout_ms\":300}"),
+            ("wait_for_stable", "{\"stable_ms\":300,\"timeout_ms\":20001}"),
+        ] {
+            XCTAssertThrowsError(try request(method, params).validate(scaling: scaling), "\(method) \(params)")
+        }
+    }
+
+    func testObservationResultsAndUnmetConditionEncodeStableWireShapes() throws {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .sortedKeys
+        let unmet = ObservationUnmetError(reason: .stableTimeout, message: "Screen did not stay unchanged",
+                                          elapsedMilliseconds: 3004, captures: 12)
+        XCTAssertEqual(ObservationUnmetError.Reason.allCases.map(\.rawValue), ["stable_timeout", "change_not_observed"])
+        let response = try XCTUnwrap(PCResponse.observationUnmet(id: .number(3), error: unmet))
+        XCTAssertNil(PCResponse.observationUnmet(id: .number(3), error: VNCError.sendFailed("x")))
+        XCTAssertNil(PCResponse.staleScreen(id: .number(3), error: unmet))
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: encoder.encode(response)) as? [String: Any])
+        let payload = try XCTUnwrap(json["error"] as? [String: Any])
+        XCTAssertEqual(payload["code"] as? Int, -32012)
+        XCTAssertEqual(payload["message"] as? String, "Screen did not stay unchanged")
+        let data = try XCTUnwrap(payload["data"] as? [String: Any])
+        XCTAssertEqual(Set(data.keys), ["reason", "elapsed_ms", "captures"])
+        XCTAssertEqual(data["reason"] as? String, "stable_timeout")
+        let diff = FrameDiffSummary(changed: true, changedRatio: 0.5, changedPixels: 2, comparedPixels: 4,
+                                    boxes: [FrameRect(x: 1, y: 2, width: 3, height: 4)], boxesTruncated: false,
+                                    baseline: .matched)
+        let zoom = ZoomSummary(region: FrameRect(x: 1, y: 2, width: 3, height: 4),
+                               native: FrameRect(x: 2, y: 4, width: 6, height: 8), imageWidth: 6, imageHeight: 8)
+        let success = PCResponse.success(id: .number(4), detail: "changeDetected: true", diff: diff, zoom: zoom,
+            stable: StableSummary(stableMilliseconds: 300, stableForMilliseconds: 320, elapsedMilliseconds: 900,
+                                  captures: 5))
+        let result = try XCTUnwrap((JSONSerialization.jsonObject(with: encoder.encode(success)) as? [String: Any])?["result"]
+            as? [String: Any])
+        XCTAssertEqual(result["detail"] as? String, "changeDetected: true")
+        XCTAssertEqual(Set(try XCTUnwrap(result["diff"] as? [String: Any]).keys),
+                       ["changed", "changed_ratio", "changed_pixels", "compared_pixels", "boxes", "boxes_truncated",
+                        "baseline"])
+        XCTAssertEqual(Set(try XCTUnwrap(result["zoom"] as? [String: Any]).keys),
+                       ["region", "native", "image_width", "image_height"])
+        XCTAssertEqual(Set(try XCTUnwrap(result["stable"] as? [String: Any]).keys),
+                       ["stable_ms", "stable_for_ms", "elapsed_ms", "captures"])
+    }
+
     // MARK: - Apple modifier wire trace (TIN-5008)
 
     /// A real VNCBridge over an owned in-memory client: real LibVNCClient

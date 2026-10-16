@@ -7,6 +7,7 @@ struct PCRequest: Decodable {
     // the two private permit controls; they do not assert desktop qualification.
     static let supportedMethods = [
         "screenshot", "cursor_crop", "diff_check", "set_baseline", "detect_elements",
+        "zoom", "wait_for_stable", "expect_baseline", "expect_change",
         "mouse_move", "hover", "nudge", "mouse_click", "mouse_double_click", "mouse_drag", "scroll",
         "key_tap", "key_combo", "key_type", "paste", "configure", "get_timing", "wait", "health", "shutdown",
         "adopt_observation", "begin_input_permit", "grant_input_permit",
@@ -37,6 +38,14 @@ struct PCRequest: Decodable {
         // Private executor -> native batch scope for D27 mouse holds. The
         // executor assigns it per action_queue batch; it is not an MCP field.
         let holdScope: String?
+
+        // Observation regions (scaled display space) and bounds.
+        let width: Int?
+        let height: Int?
+        let regions: [FrameRect]?
+        let ignore: [FrameRect]?
+        let stableMs: Int?
+        let timeoutMs: Int?
 
         // Private broker -> native adoption of an owned external observation.
         // These fields are not part of the public MCP action schema.
@@ -84,6 +93,9 @@ struct PCRequest: Decodable {
             case button, key, keys, text, direction, amount, ms, modifiers
             case durationMs = "duration_ms"
             case holdScope = "hold_scope"
+            case width, height, regions, ignore
+            case stableMs = "stable_ms"
+            case timeoutMs = "timeout_ms"
             case nativeWidth, nativeHeight, scaledWidth, scaledHeight, connectionGeneration, allocation
             case displayGeneration, sequence, challenge
             case instanceID = "instance_id"
@@ -113,6 +125,12 @@ struct PCRequest: Decodable {
             case cursorCropRadius = "cursor_crop_radius"
         }
         // swiftlint:enable nesting
+
+        /// The scaled request rectangle of zoom and expect_change.
+        var rect: FrameRect? {
+            guard let x, let y, let width, let height else { return nil }
+            return FrameRect(x: x, y: y, width: width, height: height)
+        }
     }
 }
 

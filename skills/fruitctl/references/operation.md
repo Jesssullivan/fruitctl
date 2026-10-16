@@ -65,9 +65,38 @@ After input, request a fresh screenshot and verify the intended visible state.
 `set_baseline`/`diff_check` can detect changes. These are aids, not substitutes
 for full-frame identity, completeness, freshness, and mapping checks.
 
+Every observation is a fresh capture. None returns or compares a cached frame;
+a capture that cannot get fresh pixels fails as `-32010` `stale_screen`.
+
+- `zoom {x, y, width, height, max_dimension?}` returns the region at native
+  resolution, never upscaled. The longer image side is at most `max_dimension`
+  (default 1280). Region coordinates are scaled display coordinates. The
+  result's `zoom` field gives the clamped `region`, the `native` pixels and
+  `image_width`/`image_height`. An image pixel `(u, v)` is display point
+  `(region.x + u * region.width / image_width, region.y + v * region.height / image_height)`.
+  Like `screenshot`, a successful zoom refreshes the input mapping.
+- `diff_check` accepts optional `regions` (compare only these rectangles) and
+  `ignore` (exclude these, for example a clock or spinner), up to 16 each. Its
+  text stays `changeDetected: true|false`. The structured `diff` adds
+  `changed_ratio`, `changed_pixels`, `compared_pixels`, up to 16 change `boxes`
+  in scaled coordinates (largest first, `boxes_truncated` when there are
+  more) and `baseline`: `matched`, `geometry_changed` (every compared pixel
+  counts as changed) or `absent` (nothing compared; the first call only sets
+  the baseline). Only color changes count. `diff_check` still replaces the
+  baseline.
+- `wait_for_stable {stable_ms, timeout_ms, regions?, ignore?}` keeps taking
+  fresh captures until the compared pixels stay unchanged for `stable_ms`
+  (50-10000). After `timeout_ms` (100-20000, at least `stable_ms`) it fails
+  with code `-32012`, `data.reason: stable_timeout`. Ignore animated areas
+  such as clocks, cursors and progress indicators that never stop changing.
+  It returns no image, so it never authorizes input: input stays authorized
+  by your last image observation only while the display is unchanged.
+
 With the optional host helper configured, screenshots use its owned
-ScreenCaptureKit image. OCR, crop, baseline, and diff actions are currently
-unavailable in that mode; they must not fall back to raw VNC pixels. Input
+ScreenCaptureKit image. OCR, crop, baseline, diff, zoom, stability and queue
+expectation actions are unavailable in that mode, because they would observe
+raw VNC pixels. They are refused before anything runs with the typed error
+code `unsupported_on_route`; they must not fall back to raw VNC pixels. Input
 requires an operator-qualified mapping receipt and the native observation
 handshake. If either is unavailable or geometry changes, stop input and report
 the qualification gap.
@@ -85,6 +114,24 @@ use individual actions when the whole sequence cannot be bounded. It
 stops on the first error; earlier actions may already have executed. Its
 structured result reports `completed`, `failedIndex` and that first `error`. Inspect
 the outcome and do not automatically replay a failed or timed-out sequence.
+
+A step may carry `expect`, checked with fresh captures right after that step:
+
+- `change_in: {x, y, width, height}` fails the step unless that rectangle
+  differs from a fresh frame captured just before the step. It waits up to
+  `timeout_ms` (default 3000) for the change to appear.
+- `stable_ms` then waits until the screen is unchanged for that long, allowing
+  `timeout_ms` plus `stable_ms` in total.
+
+Expectations never authorize later input. If the display changes identity
+mid-batch (resize or reconnect), the next input step is refused until a new
+screenshot.
+
+An unmet expectation fails as code `-32012` with `data.reason`
+`change_not_observed` or `stable_timeout` and stops the batch at that step;
+the step's own input has already run. `ax_exists` and `ocr_contains` are
+reserved: a batch that uses them is refused as `unsupported_expectation`
+before any step runs. Expectations count toward the batch's 30-second budget.
 Take a new screenshot after a batch. Do not construct a blind sequence through
 unobserved dialogs or permission prompts.
 

@@ -251,9 +251,13 @@ also prints them as text:
 
 A failed result also carries `error` as one object, `{code, message, data}`,
 beside the same labels. A native typed failure keeps its JSON-RPC `code` and
-`data` (for example `-32010` `stale_screen` with `data.reason`, or `-32011`
-for an input refusal such as `hold_outside_batch`); a transport or local
-failure carries `message` only. A failed `action_queue` adds `completed`
+`data` (for example `-32010` `stale_screen` with `data.reason`, `-32011` for an
+input refusal such as `hold_outside_batch`, or `-32012` for an unmet
+`wait_for_stable` or queue expectation). A local refusal made
+before anything ran keeps its string code: `unsupported_action`,
+`unsupported_on_route` (the Host route refuses raw-pixel observations) or
+`unsupported_expectation` (a reserved queue expectation). Any other transport
+or local failure carries `message` only. A failed `action_queue` adds `completed`
 and `failedIndex` and puts its first failure in the same `error` object. A
 failure never attests the overlay, so the Host route reports `indicator:
 unknown` on every error.

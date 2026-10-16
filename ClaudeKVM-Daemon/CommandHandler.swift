@@ -115,6 +115,7 @@ extension ClaudeKVMDaemon {
     ) async {
         let id = req.id
         let p = req.params
+        let receivedMs = Self.monotonicMilliseconds()
 
         // The private deadline_ms budget (stamped by the Node executor) bounds
         // only the input settle wait; nothing else in a request waits on it.
@@ -147,22 +148,19 @@ extension ClaudeKVMDaemon {
             }
             // Screen observations require newly received full pixel coverage,
             // then encode an owned copy bound to the admitted generation.
+            // Image-less checks may keep this authorization, never widen it.
+            let priorContext = input.context
             let capturedFrame: VNCBridge.FrameCapture?
             switch req.method {
-            case "screenshot", "cursor_crop", "diff_check", "set_baseline", "detect_elements":
+            case "screenshot", "cursor_crop", "diff_check", "set_baseline", "detect_elements",
+                 "zoom", "wait_for_stable", "expect_baseline", "expect_change":
                 // Revoke the prior observation before a refresh can fail.
                 input.context = nil
                 // Every capture-path failure leaves as a typed stale_screen.
                 capturedFrame = try await vnc.captureFreshObservation()
             default: capturedFrame = nil
             }
-            if let frame = capturedFrame {
-                scaling.updateGeometry(width: frame.width, height: frame.height)
-                // Do not authorize input from a frame that later fails encoding.
-                input.context = nil
-                input.cursorX = min(max(0, input.cursorX), frame.width - 1)
-                input.cursorY = min(max(0, input.cursorY), frame.height - 1)
-            }
+            if let frame = capturedFrame { admitFreshFrame(frame, input: input, scaling: scaling) }
             switch req.method {
 
             // ── Screen ────────────────────────────────────────
@@ -192,14 +190,114 @@ extension ClaudeKVMDaemon {
                                   x: scaledPos.x, y: scaledPos.y,
                                   frameContext: capturedFrame?.inputContext, provenance: capturedFrame?.provenance))
 
-            case "diff_check":
-                guard let frame = capturedFrame else { throw VNCError.sendFailed("No framebuffer") }
-                let changed = frame.withFramebuffer { buf, _, _ -> Bool in
-                    diffCheck(buffer: buf, context: frame.inputContext)
+            case "zoom":
+                guard let frame = capturedFrame, let rect = p?.rect else { throw VNCError.sendFailed("No framebuffer") }
+                // Validation used the pre-capture mapping; clamp to the fresh frame's.
+                let display = FrameRect(x: 0, y: 0, width: scaling.scaledWidth, height: scaling.scaledHeight)
+                guard let region = rect.intersection(display),
+                      let native = FrameRegion.toNative(region, nativeWidth: frame.width, nativeHeight: frame.height,
+                                                        scaledWidth: scaling.scaledWidth, scaledHeight: scaling.scaledHeight),
+                      let zoomed = frame.withFramebuffer({ buf, w, h in
+                          cropRegionToPNG(buffer: buf, fbWidth: w, fbHeight: h, region: native,
+                                          maxDimension: p?.maxDimension ?? Self.zoomMaxDimension)
+                      }) else {
+                    throw VNCError.sendFailed("Zoom region is unavailable in the current frame")
                 }
                 input.context = frame.inputContext
-                respond(.success(id: id, detail: "changeDetected: \(changed)", frameContext: frame.inputContext,
-                                  provenance: frame.provenance))
+                respond(.success(id: id,
+                                  detail: "zoom \(region.width)×\(region.height) at (\(region.x), \(region.y)) → "
+                                      + "\(zoomed.width)×\(zoomed.height) image",
+                                  image: zoomed.png.base64EncodedString(),
+                                  scaledWidth: scaling.scaledWidth, scaledHeight: scaling.scaledHeight,
+                                  frameContext: frame.inputContext, provenance: frame.provenance,
+                                  zoom: ZoomSummary(region: region, native: native,
+                                                    imageWidth: zoomed.width, imageHeight: zoomed.height)))
+
+            case "diff_check":
+                guard let frame = capturedFrame else { throw VNCError.sendFailed("No framebuffer") }
+                let diff = FrameRegion.evaluate(baseline: Self.framebufferBaseline.snapshot, current: frame.pixels,
+                                                context: frame.inputContext, include: p?.regions,
+                                                exclude: p?.ignore ?? [], scaledWidth: scaling.scaledWidth,
+                                                scaledHeight: scaling.scaledHeight)
+                Self.framebufferBaseline.set(frame.pixels, context: frame.inputContext)
+                input.context = frame.inputContext
+                respond(.success(id: id, detail: "changeDetected: \(diff.changed)", frameContext: frame.inputContext,
+                                  provenance: frame.provenance, diff: diff))
+
+            case "wait_for_stable":
+                guard var frame = capturedFrame, let stableMs = p?.stableMs, let timeoutMs = p?.timeoutMs else {
+                    throw VNCError.sendFailed("No framebuffer")
+                }
+                // Every comparison is between two fresh frames; nothing cached.
+                var stability = FrameStability(stableMilliseconds: stableMs, timeoutMilliseconds: timeoutMs,
+                                               startedMilliseconds: receivedMs,
+                                               firstCaptureMilliseconds: Self.monotonicMilliseconds())
+                let poll = FrameStability.pollMilliseconds(stableMilliseconds: stableMs)
+                while !stability.isStable {
+                    let now = Self.monotonicMilliseconds()
+                    guard !stability.isExpired(atMilliseconds: now) else {
+                        throw ObservationUnmetError(reason: .stableTimeout,
+                            message: "Screen did not stay unchanged for \(stableMs) ms within \(timeoutMs) ms",
+                            elapsedMilliseconds: Int(stability.elapsed(atMilliseconds: now)),
+                            captures: stability.captures)
+                    }
+                    let remaining = stability.timeoutMilliseconds - stability.elapsed(atMilliseconds: now)
+                    try await Task.sleep(nanoseconds: min(poll, remaining) * 1_000_000)
+                    let next = try await vnc.captureFreshObservation()
+                    admitFreshFrame(next, input: input, scaling: scaling)
+                    let diff = FrameRegion.evaluate(baseline: (pixels: frame.pixels, context: frame.inputContext),
+                                                    current: next.pixels, context: next.inputContext,
+                                                    include: p?.regions, exclude: p?.ignore ?? [],
+                                                    scaledWidth: scaling.scaledWidth, scaledHeight: scaling.scaledHeight)
+                    stability.observe(changed: diff.changed, atMilliseconds: Self.monotonicMilliseconds())
+                    frame = next
+                }
+                input.context = Self.retainedAuthorization(priorContext, frame.inputContext)
+                let elapsed = Int(stability.elapsed(atMilliseconds: Self.monotonicMilliseconds()))
+                respond(.success(id: id,
+                                  detail: "stable for \(stability.stableForMilliseconds) ms after \(elapsed) ms",
+                                  frameContext: frame.inputContext, provenance: frame.provenance,
+                                  stable: StableSummary(stableMilliseconds: stableMs,
+                                                        stableForMilliseconds: Int(stability.stableForMilliseconds),
+                                                        elapsedMilliseconds: elapsed, captures: stability.captures)))
+
+            // Private action_queue expectation primitives (not vnc_command actions).
+            case "expect_baseline":
+                guard let frame = capturedFrame else { throw VNCError.sendFailed("No framebuffer") }
+                Self.expectationBaseline.set(frame.pixels, context: frame.inputContext)
+                input.context = Self.retainedAuthorization(priorContext, frame.inputContext)
+                respond(.success(id: id, detail: "OK", frameContext: frame.inputContext, provenance: frame.provenance))
+
+            case "expect_change":
+                guard var frame = capturedFrame, let rect = p?.rect else { throw VNCError.sendFailed("No framebuffer") }
+                guard let baseline = Self.expectationBaseline.snapshot else {
+                    throw CommandValidationError.invalid("expect_change requires a preceding expect_baseline")
+                }
+                // One step's baseline answers only that step's expectation.
+                Self.expectationBaseline.clear()
+                let timeout = UInt64(p?.timeoutMs ?? Self.expectChangeTimeoutMs)
+                var captures = 1
+                while true {
+                    let diff = FrameRegion.evaluate(baseline: baseline, current: frame.pixels,
+                                                    context: frame.inputContext, include: [rect], exclude: [],
+                                                    scaledWidth: scaling.scaledWidth, scaledHeight: scaling.scaledHeight)
+                    if diff.changed {
+                        input.context = Self.retainedAuthorization(priorContext, frame.inputContext)
+                        respond(.success(id: id, detail: "changeObserved: true", frameContext: frame.inputContext,
+                                          provenance: frame.provenance, diff: diff))
+                        break
+                    }
+                    let elapsed = Self.monotonicMilliseconds() - receivedMs
+                    guard elapsed < timeout else {
+                        throw ObservationUnmetError(reason: .changeNotObserved,
+                            message: "No change observed in the expected region within \(timeout) ms",
+                            elapsedMilliseconds: Int(elapsed), captures: captures)
+                    }
+                    try await Task.sleep(nanoseconds: min(Self.expectChangePollMs, timeout - elapsed) * 1_000_000)
+                    frame = try await vnc.captureFreshObservation()
+                    admitFreshFrame(frame, input: input, scaling: scaling)
+                    captures += 1
+                }
 
             case "set_baseline":
                 guard let frame = capturedFrame else { throw VNCError.sendFailed("No framebuffer") }
@@ -418,6 +516,7 @@ extension ClaudeKVMDaemon {
             respond(PCResponse.staleScreen(id: id, error: error)
                     ?? PCResponse.inputRefusal(id: id, error: error)
                     ?? PCResponse.inputNotReady(id: id, error: error)
+                    ?? PCResponse.observationUnmet(id: id, error: error)
                     ?? .error(id: id, message: error.localizedDescription))
         }
     }
@@ -576,6 +675,29 @@ extension ClaudeKVMDaemon {
     }
 
     // MARK: - Helpers
+
+    static let zoomMaxDimension = 1280
+    static let expectChangeTimeoutMs = 3000
+    static let expectChangePollMs: UInt64 = 100
+
+    static func monotonicMilliseconds() -> UInt64 { DispatchTime.now().uptimeNanoseconds / 1_000_000 }
+
+    /// wait_for_stable and the queue expectation primitives return no image,
+    /// so the caller never saw their frame. They keep the request's prior
+    /// input authorization only while the display identity is unchanged, and
+    /// never grant one: a changed display still needs a new screenshot.
+    static func retainedAuthorization(_ prior: VNCInputContext?, _ current: VNCInputContext) -> VNCInputContext? {
+        prior == current ? prior : nil
+    }
+
+    /// Every fresh frame refreshes the mapping before use. Nothing authorizes
+    /// input until a handler adopts the frame that it actually encoded.
+    private func admitFreshFrame(_ frame: VNCBridge.FrameCapture, input: InputController, scaling: DisplayScaling) {
+        scaling.updateGeometry(width: frame.width, height: frame.height)
+        input.context = nil
+        input.cursorX = min(max(0, input.cursorX), frame.width - 1)
+        input.cursorY = min(max(0, input.cursorY), frame.height - 1)
+    }
 
     func nativeXY(_ params: PCRequest.Params?, scaling: DisplayScaling) -> (x: Int, y: Int) {
         let x = params?.x ?? 0

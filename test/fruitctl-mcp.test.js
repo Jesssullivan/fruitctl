@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
-import { createMcpServer, McpSession } from '../lib/mcp/server.js';
+import { createMcpServer, McpSession, expandQueue } from '../lib/mcp/server.js';
 import { NdjsonParser, ResponseBudget, responseMetadata, validateResponse,
   encodeRequest, MAX_REQUEST_FRAME_BYTES } from '../lib/mcp/protocol.js';
 
@@ -384,4 +384,138 @@ test('MCP ownership release has an ordinary deadline and cancellation cannot rep
   const controller = new AbortController();
   controller.abort();
   await assert.rejects(session.release(controller.signal), /cancelled/);
+});
+
+// ── Observation v2 (TIN-6598) ──────────────────────────────────────────
+
+const region = { x: 10, y: 20, width: 30, height: 40 };
+
+test('queue expands expectations into private fresh-capture primitives within one executor operation', async () => {
+  const steps = [
+    { action: 'mouse_click', x: 1, y: 1, expect: { change_in: region, stable_ms: 300 } },
+    { action: 'key_tap', key: 'tab' },
+    { action: 'key_tap', key: 'enter', expect: { stable_ms: 200, timeout_ms: 1000 } },
+  ];
+  const { actions, owners } = expandQueue(steps);
+  assert.deepEqual(actions, [
+    { action: 'expect_baseline' },
+    { action: 'mouse_click', x: 1, y: 1 },
+    { action: 'expect_change', ...region, timeout_ms: 3000 },
+    { action: 'wait_for_stable', stable_ms: 300, timeout_ms: 3300 },
+    { action: 'key_tap', key: 'tab' },
+    { action: 'key_tap', key: 'enter' },
+    { action: 'wait_for_stable', stable_ms: 200, timeout_ms: 1200 },
+  ]);
+  assert.deepEqual(owners.map(({ step }) => step), [0, 0, 0, 0, 1, 2, 2]);
+  let invocations = 0;
+  const session = new McpSession({ async execute(native) {
+    invocations++;
+    assert.deepEqual(native, actions);
+    return native.map(({ action }) => success(action === 'expect_change'
+      ? { detail: 'changeObserved: true', diff: { changed: true, changed_ratio: 0.25 } }
+      : action === 'wait_for_stable'
+        ? { detail: 'stable', stable: { stable_for_ms: 310, elapsed_ms: 900, captures: 6 } }
+        : { detail: 'OK' }));
+  } });
+  const result = await session.queue({ actions: steps });
+  assert.equal(invocations, 1);
+  assert.notEqual(result.isError, true);
+  assert.deepEqual(result.structuredContent, { completed: 3, ...undeclared });
+  assert.equal(result.content[0].text, [
+    '[1] mouse_click: OK [change_in observed (ratio 0.25); stable 310ms]',
+    '[2] key_tap: OK',
+    '[3] key_tap: OK [stable 310ms]',
+  ].join('\n'));
+});
+
+test('an unmet expectation stops the batch at its step with the typed native error', async () => {
+  const unmet = { code: -32012, message: 'No change observed in the expected region within 3000 ms',
+    data: { reason: 'change_not_observed', elapsed_ms: 3004, captures: 31 } };
+  const session = new McpSession({ async execute(native) {
+    assert.equal(native.length, 5);
+    return [success({ detail: 'OK' }), success({ detail: 'OK' }), success({ detail: 'OK' }), { error: unmet }];
+  } });
+  const result = await session.queue({ actions: [
+    { action: 'key_tap', key: 'tab' },
+    { action: 'mouse_click', x: 1, y: 1, expect: { change_in: region } },
+    { action: 'key_type', text: 'never sent' },
+  ] });
+  assert.equal(result.isError, true);
+  assert.deepEqual(result.structuredContent, failedAt(2, unmet));
+  assert.equal(result.content[0].text,
+    '[1] key_tap: OK\n[2] mouse_click: OK; ERROR — expect change_in: No change observed in the expected region within 3000 ms');
+});
+
+test('reserved expectations are refused as unsupported before anything executes', async () => {
+  for (const kind of ['ax_exists', 'ocr_contains']) {
+    let calls = 0;
+    const session = new McpSession({ async execute() { calls++; return []; } });
+    const result = await session.queue({ actions: [
+      { action: 'key_tap', key: 'tab' },
+      { action: 'mouse_click', x: 1, y: 1, expect: { [kind]: 'Save' } },
+    ] });
+    assert.equal(calls, 0);
+    assert.equal(result.isError, true);
+    assert.deepEqual(result.structuredContent, failedAt(2, { code: 'unsupported_expectation',
+      message: `Expectation ${kind} is reserved and not supported yet` }, 0));
+  }
+});
+
+test('typed route refusals keep their code; other thrown failures stay message-only', async () => {
+  const refusal = Object.assign(new Error('Action unavailable on the Host route: it observes raw VNC pixels'),
+    { code: 'unsupported_on_route' });
+  const session = new McpSession({ async execute() { throw refusal; } });
+  const command = await session.command({ action: 'zoom', ...region });
+  assert.deepEqual(command.structuredContent, { error: { code: 'unsupported_on_route', message: refusal.message },
+    ...undeclared });
+  const queued = await session.queue({ actions: [{ action: 'wait_for_stable', stable_ms: 100, timeout_ms: 500 }] });
+  assert.deepEqual(queued.structuredContent, failedAt(1, { code: 'unsupported_on_route', message: refusal.message }));
+  const forged = await new McpSession({ async execute() {
+    throw Object.assign(new Error('transport disconnected'), { code: 'operation_failed' });
+  } }).command({ action: 'wait' });
+  assert.deepEqual(forged.structuredContent, { error: { message: 'transport disconnected' }, ...undeclared });
+});
+
+test('real MCP publishes zoom, wait_for_stable and expect, and validates them before the executor', async (t) => {
+  const calls = [];
+  const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aBXsAAAAASUVORK5CYII=';
+  const { server } = createMcpServer({ executor: { async execute(actions) {
+    calls.push(actions);
+    return actions.map(({ action }) => success(action === 'zoom'
+      ? { detail: 'zoom', image: png, scaledWidth: 1280, scaledHeight: 720,
+        zoom: { region, native: { x: 20, y: 40, width: 60, height: 80 }, image_width: 60, image_height: 80 } }
+      : { detail: 'changeDetected: true', diff: { changed: true, changed_ratio: 0.5, baseline: 'matched',
+        boxes: [region], boxes_truncated: false } }));
+  } } });
+  const client = new Client({ name: 'offline-observation-fixture', version: '1' });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  t.after(async () => { await client.close(); await server.close(); });
+  await server.connect(serverTransport);
+  await client.connect(clientTransport);
+  const { tools } = await client.listTools();
+  const [command, queue] = tools;
+  assert.ok(['zoom', 'wait_for_stable'].every(action => command.inputSchema.properties.action.enum.includes(action)));
+  assert.ok(queue.inputSchema.properties.actions.items.properties.expect);
+  assert.ok(!queue.inputSchema.properties.actions.items.properties.action.enum.includes('zoom'));
+  const call = (arguments_) => client.callTool({ name: 'vnc_command', arguments: arguments_ });
+  const zoomed = await call({ action: 'zoom', ...region, max_dimension: 640 });
+  assert.deepEqual(zoomed.content, [{ type: 'text', text: 'zoom' }, { type: 'image', data: png, mimeType: 'image/png' },
+    { type: 'text', text: `zoom region: ${JSON.stringify(region)}; image 60×80` }]);
+  assert.equal(zoomed.structuredContent.zoom.image_width, 60);
+  assert.equal(Object.hasOwn(zoomed.structuredContent, 'image'), false);
+  const diff = await call({ action: 'diff_check', regions: [region], ignore: [{ x: 0, y: 0, width: 5, height: 5 }] });
+  assert.equal(diff.content[1].text,
+    `diff: changed true (ratio 0.5, baseline matched); boxes ${JSON.stringify([region])}`);
+  assert.equal(diff.structuredContent.diff.changed_ratio, 0.5);
+  // Schema and parameter checks refuse before any executor call.
+  for (const bad of [{ action: 'zoom', x: 1, y: 1 }, { action: 'zoom', ...region, width: 0 },
+    { action: 'wait_for_stable', stable_ms: 500 }, { action: 'wait_for_stable', stable_ms: 5000, timeout_ms: 500 },
+    { action: 'diff_check', regions: [] }]) {
+    assert.equal((await call(bad)).isError, true, JSON.stringify(bad));
+  }
+  const bounded = await client.callTool({ name: 'action_queue', arguments: { actions: [
+    { action: 'wait', expect: { stable_ms: 20000 } }] } });
+  assert.equal(bounded.isError, true);
+  assert.equal(calls.length, 2);
+  assert.deepEqual(calls[0], [{ action: 'zoom', ...region, max_dimension: 640 }]);
 });

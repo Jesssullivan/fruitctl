@@ -80,7 +80,16 @@ per request mode. The MCP run adds four more:
   `detect_elements` results must each carry capture provenance. On demand,
   each must report no request outstanding at admission and
   `ordered_after_prior_input: true`; in stream mode, LibVNC's re-arm is
-  outstanding, so each must report `false`. Every other
+  outstanding, so each must report `false`. The same fresh-answering
+  scenarios check observation v2 (TIN-6598). Every fixture update has a new
+  marker color, so any cached frame would compare equal. A `zoom` must return
+  the exact native region. A region `diff_check` with an ignore mask must
+  report exactly the unmasked changed box at ratio 1. `wait_for_stable` must
+  settle when the whole display is ignored, and must fail as `-32012`
+  `stable_timeout` within its bound when it is not. After that failure,
+  neither `expect_baseline` nor a settled `wait_for_stable` may grant input
+  authorization: a following `mouse_move` must be refused and send nothing.
+  Every other
   combination must return JSON-RPC `-32010` with `data.reason`
   `server_silent` within the original five-second deadline and no image. Each
   scenario runs the daemon with `--rfb-wire-ledger` and requires the ledger's

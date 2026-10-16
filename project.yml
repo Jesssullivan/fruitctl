@@ -135,6 +135,7 @@ targets:
       - ClaudeKVM-Daemon/DisplayScaling.swift
       - ClaudeKVM-Daemon/FramebufferBaseline.swift
       - ClaudeKVM-Daemon/FrameImageEncoder.swift
+      - ClaudeKVM-Daemon/FrameRegion.swift
       - Tests/NativeBehaviorTests.swift
     preBuildScripts:
       - name: Verify locked native inputs before-link

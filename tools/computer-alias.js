@@ -209,7 +209,9 @@ function anthropicSteps(input) {
       }
       // Zoom must be a fresh capture of the region; it is never a crop of an
       // earlier screenshot, so only a backend zoom method can serve it.
-      return [{ action: 'zoom', x: region[0], y: region[1], toX: region[2], toY: region[3] }];
+      // The backend zoom takes an origin and extent in scaled display space.
+      return [{ action: 'zoom', x: region[0], y: region[1], width: region[2] - region[0],
+        height: region[3] - region[1] }];
     }
     case 'wait':
       return [input.duration === undefined ? { action: 'wait' } : { action: 'wait', ms: secondsToMs(input.duration, action) }];
