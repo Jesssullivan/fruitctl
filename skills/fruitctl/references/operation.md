@@ -126,7 +126,7 @@ Some actions need a backend method that this build may not advertise:
 
 | Alias action | Needs |
 | --- | --- |
-| `triple_click` | `mouse_triple_click` |
+| `triple_click` | `triple_click` |
 | `hold_key`, or a click or scroll with `text` modifiers | `key_down`, `key_up` |
 | `cursor_position` | `cursor_position` |
 | `zoom {region}` | `zoom` (a new capture of the region, never a crop of an older image) |
