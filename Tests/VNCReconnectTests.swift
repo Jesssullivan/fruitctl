@@ -1298,7 +1298,8 @@ final class VNCReconnectTests: XCTestCase {
         let incrementalBefore = native.observedIncrementalUpdates
         try await bridge.sendKeyEvent(key: 0x61, down: true)
         try await bridge.sendKeyEvent(key: 0x61, down: false)
-        XCTAssertEqual(keys.values, ["down 0x61", "up 0x61"])
+        // The connection's first input is preceded by the modifier release sync.
+        XCTAssertEqual(keys.values, VNCBridge.modifierKeysyms.map { wire($0, false) } + ["down 0x61", "up 0x61"])
         let waiting = Task { try await bridge.captureFreshFramebuffer() }
         let outcome = Task { () -> VNCBridge.FrameCapture? in
             defer { finished.fulfill() }
@@ -1777,11 +1778,43 @@ final class VNCReconnectTests: XCTestCase {
         catch { XCTFail("unexpected error: \(error)") }
         XCTAssertEqual(harness.native.observedInputWrites, [])
         XCTAssertGreaterThan(harness.native.wire.full, 0)
-        // The seam is live: one explicit pointer write is recorded.
+        // The seam is live: one explicit pointer write is recorded, after the
+        // release-only modifier sync that precedes a connection's first input.
         try await harness.bridge.sendMouseEvent(x: 1, y: 1)
-        XCTAssertEqual(harness.native.observedInputWrites, ["pointer"])
+        XCTAssertEqual(harness.native.observedInputWrites,
+                       Array(repeating: "key", count: VNCBridge.modifierKeysyms.count) + ["pointer"])
         harness.bridge.disconnect(); XCTAssertEqual(harness.bridge.framebufferWidth, 0)
         assertSingleClientAndBufferReleased(harness.native)
+    }
+
+    /// TIN-6597: before the first input of each connection generation the
+    /// bridge writes one release-only key-up per modifier, exactly once. A
+    /// connection that only observes, and a release-only write, write none.
+    func testModifierReleaseSyncPrecedesFirstInputOncePerConnection() async throws {
+        let native = FakeNative(polls: [])
+        let scheduler = ManualScheduler()
+        let keys = RecordedEvents()
+        native.onKey = { key, down in keys.append(self.wire(key, down)) }
+        let bridge = VNCBridge(operations: native.operations, schedule: scheduler.schedule)
+        try await bridge.connect()
+        XCTAssertEqual(bridge.framebufferWidth, 2)
+        XCTAssertEqual(native.observedInputWrites, [])
+        try await bridge.sendKeyEvent(key: 0xFFE1, down: false, releaseOnly: true)
+        XCTAssertEqual(keys.values, ["up 0xFFE1"])
+        try await bridge.sendKeyEvent(key: 0x61, down: true)
+        try await bridge.sendKeyEvent(key: 0x61, down: false)
+        try await bridge.sendMouseEvent(x: 1, y: 1)
+        let sync = VNCBridge.modifierKeysyms.map { wire($0, false) }
+        XCTAssertEqual(Set(VNCBridge.modifierKeysyms).count, 10)
+        XCTAssertEqual(keys.values, ["up 0xFFE1"] + sync + ["down 0x61", "up 0x61"])
+        XCTAssertEqual(native.observedInputWrites.last, "pointer")
+        // A new connection generation syncs again before its first input.
+        bridge.disconnect(); XCTAssertEqual(bridge.framebufferWidth, 0)
+        try await bridge.connect()
+        try await bridge.sendMouseEvent(x: 1, y: 1)
+        XCTAssertEqual(keys.values, ["up 0xFFE1"] + sync + ["down 0x61", "up 0x61"] + sync)
+        bridge.disconnect(); XCTAssertEqual(bridge.framebufferWidth, 0)
+        XCTAssertEqual(native.counts.live, 0)
     }
 
     func testWireKeysymMapsAppleCommandAndOptionOnly() {

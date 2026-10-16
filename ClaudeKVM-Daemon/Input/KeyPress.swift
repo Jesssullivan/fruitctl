@@ -11,6 +11,16 @@ extension InputController {
         }
     }
 
+    /// Hold one key down for `durationUs`, then release it within the same
+    /// call. Cancellation, a lapsed permit or a failed write still releases.
+    func holdKey(_ keysym: UInt32, durationUs: UInt32) async throws {
+        try await releasingOnFailure {
+            try await emitKey(key: keysym, down: true)
+            try await pause(durationUs)
+            try await emitKey(key: keysym, down: false)
+        }
+    }
+
     /// Key combo from keysym array. LIFO modifier order.
     /// Modifiers press (10ms each) → key press-release (30ms) → modifiers release reversed (10ms each).
     func keyCombo(_ keysyms: [UInt32]) async throws {

@@ -209,6 +209,18 @@ server keeps this code and data in the tool result's structured `error` object
 compatible error text and the D7 `route` and `indicator` labels; a failed
 `action_queue` reports its first failure in the same object.
 
+Input refusals use code `-32011` with `data.reason` and are returned before
+any event of the refused request. Mouse holds (D27) are batch-scoped: the
+executor that runs one `action_queue` batch assigns it one private
+`hold_scope`, carries it on every native request of that batch and ends the
+batch with `release_holds`. `mouse_down`/`mouse_up` without that scope are
+refused (`hold_outside_batch`); any native request from outside the batch
+force-releases a live hold first; abort or shutdown releases it through the
+existing held-input release. The scope is not an MCP field. Before the first
+input of each connection generation the native client writes one release-only
+key-up per Shift/Control/Alt/Meta/Super keysym. It is deferred from connect so
+an observation-only connection still writes no input.
+
 `--rfb-wire-ledger` writes one stderr line per framebuffer request: message
 type, incremental flag, length and monotonic milliseconds, never payloads.
 The daemon's own requests are listed after LibVNC reports them sent. LibVNC

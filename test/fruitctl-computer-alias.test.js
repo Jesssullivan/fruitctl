@@ -45,8 +45,12 @@ function fakeExecutor({ capabilities, presentation = RAW_PRESENTATION, handle } 
   };
 }
 
-test('baseline actions match the vnc_command surface', () => {
-  assert.deepEqual([...BASELINE_ACTIONS].sort(), [...vncCommandTool().inputSchema.action.options].sort());
+test('baseline actions are the vnc_command surface older backends shipped', () => {
+  const surface = new Set(vncCommandTool().inputSchema.action.options);
+  for (const action of BASELINE_ACTIONS) assert.ok(surface.has(action), `${action} is not a vnc_command action`);
+  // Newer methods stay outside the baseline: only advertised metadata enables them.
+  assert.deepEqual([...surface].filter(action => !BASELINE_ACTIONS.has(action)).sort(),
+    ['cursor_position', 'hold_key', 'mouse_down', 'mouse_up', 'triple_click']);
 });
 
 test('Anthropic actions translate to Fruitctl actions with scaled coordinates', () => {
@@ -55,7 +59,7 @@ test('Anthropic actions translate to Fruitctl actions with scaled coordinates', 
   assert.deepEqual(steps({ action: 'right_click', coordinate: [1, 2] }), [{ action: 'mouse_click', x: 1, y: 2, button: 'right' }]);
   assert.deepEqual(steps({ action: 'middle_click', coordinate: [1, 2] }), [{ action: 'mouse_click', x: 1, y: 2, button: 'middle' }]);
   assert.deepEqual(steps({ action: 'double_click', coordinate: [3, 4] }), [{ action: 'mouse_double_click', x: 3, y: 4 }]);
-  assert.deepEqual(steps({ action: 'triple_click', coordinate: [3, 4] }), [{ action: 'mouse_triple_click', x: 3, y: 4 }]);
+  assert.deepEqual(steps({ action: 'triple_click', coordinate: [3, 4] }), [{ action: 'triple_click', x: 3, y: 4 }]);
   assert.deepEqual(steps({ action: 'mouse_move', coordinate: [5, 6] }), [{ action: 'mouse_move', x: 5, y: 6 }]);
   assert.deepEqual(steps({ action: 'left_click_drag', start_coordinate: [1, 2], coordinate: [30, 40] }),
     [{ action: 'mouse_drag', x: 1, y: 2, toX: 30, toY: 40 }]);
@@ -176,7 +180,7 @@ test('D27: a mouse hold never spans tool calls, even when mouse_down is advertis
 
 test('capability admission refuses unadvertised actions and lights them up when advertised', () => {
   const extended = [
-    [{ action: 'triple_click', coordinate: [1, 1] }, ['mouse_triple_click'], 'triple_click'],
+    [{ action: 'triple_click', coordinate: [1, 1] }, ['triple_click'], 'triple_click'],
     [{ action: 'hold_key', text: 'shift', duration: 1 }, ['key_down', 'key_up'], 'hold_key'],
     [{ action: 'cursor_position' }, ['cursor_position'], 'cursor_position'],
     [{ action: 'zoom', region: [0, 0, 10, 10] }, ['zoom'], 'zoom'],
@@ -277,7 +281,7 @@ test('refusals are typed, never reach the executor and cannot attest the indicat
 });
 
 test('advertised extended actions light up without an alias change', async t => {
-  const executor = fakeExecutor({ capabilities: known('mouse_triple_click', 'cursor_position', 'key_down', 'key_up'),
+  const executor = fakeExecutor({ capabilities: known('triple_click', 'cursor_position', 'key_down', 'key_up'),
     handle: action => action.action === 'cursor_position' ? { result: { x: 12, y: 34 } } : undefined });
   const { computer } = await connect(t, executor);
   const triple = await computer({ action: 'triple_click', coordinate: [5, 6] });
@@ -289,7 +293,7 @@ test('advertised extended actions light up without an alias change', async t => 
   assert.deepEqual(held.structuredContent, { completed: 3, ...RAW_PRESENTATION,
     alias: { shape: 'anthropic', action: 'hold_key', actions: ['key_down', 'wait', 'key_up'] } });
   assert.deepEqual(executor.batches.map(batch => batch.map(step => step.action)),
-    [['mouse_triple_click'], ['cursor_position'], ['key_down', 'wait', 'key_up']]);
+    [['triple_click'], ['cursor_position'], ['key_down', 'wait', 'key_up']]);
 });
 
 test('a failing step reports progress, the failed index and a typed code', async t => {

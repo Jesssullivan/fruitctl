@@ -10,6 +10,11 @@ final class InputController {
     private(set) var heldKeys: [UInt32] = []
     private(set) var heldButtons = false
     private var heldContext: VNCInputContext?
+    /// D27: buttons pressed by mouse_down, live only inside the one
+    /// action_queue batch named by `holdScope`. Every pointer write while a
+    /// hold is live keeps these bits pressed (a move becomes a drag).
+    private(set) var holdMask = 0
+    private(set) var holdScope: String?
     let inputPermit: NativeInputPermit
     /// Absolute deadline (inputSettle clock) of the request being handled;
     /// nil when the caller supplied none.
@@ -52,7 +57,9 @@ final class InputController {
 
     func adoptObservation(_ expected: VNCInputContext, scaling: DisplayScaling) async throws {
         context = nil
-        guard heldKeys.isEmpty, !heldButtons else {
+        // A live batch-scoped hold (D27) may span re-adoption between that
+        // batch's own actions; any other held state is unconfirmed release.
+        guard heldKeys.isEmpty, !heldButtons || holdScope != nil else {
             throw VNCError.sendFailed("Previous input release is unconfirmed; external adoption refused")
         }
         let admitted = try await vnc.validateExternalObservation(expected)
@@ -84,14 +91,28 @@ final class InputController {
     func emitPointer(x: Int, y: Int, buttonMask: Int = 0) async throws {
         try checkInputAdmission()
         try await awaitInputReady()
+        let mask = buttonMask | holdMask
         // A failed write may still have reached the server. Track before send.
-        if buttonMask != 0 {
+        if mask != 0 {
             if heldKeys.isEmpty && !heldButtons { heldContext = context }
             heldButtons = true
         }
         cursorX = x; cursorY = y
-        try await pointerSender(x, y, buttonMask, context, false)
-        if buttonMask == 0 { heldButtons = false }
+        try await pointerSender(x, y, mask, context, false)
+        if mask == 0 { heldButtons = false }
+    }
+
+    /// Open (or extend) the batch-scoped hold after its press was written.
+    func beginHold(_ button: MouseButton, scope: String) {
+        holdMask |= button.rawValue
+        holdScope = scope
+    }
+
+    /// Drop one held button before its release write; the scope closes with
+    /// the last button. An uncertain write leaves `heldButtons` set.
+    func endHold(_ button: MouseButton) {
+        holdMask &= ~button.rawValue
+        if holdMask == 0 { holdScope = nil }
     }
 
     func emitKey(key: UInt32, down: Bool) async throws {
@@ -109,6 +130,10 @@ final class InputController {
     /// The bridge refuses to release into a different reconnected session.
     @discardableResult
     func releaseHeldInput() async -> Bool {
+        // A release attempt ends any batch-scoped hold. Buttons whose release
+        // is unconfirmed remain `heldButtons`, which refuses successor input.
+        holdMask = 0
+        holdScope = nil
         var unreleased: [UInt32] = []
         for key in heldKeys.reversed() {
             do { try await keySender(key, false, heldContext, true) }
@@ -133,6 +158,25 @@ final class InputController {
                 throw VNCError.sendFailed("Input failed and held-state release could not be confirmed")
             }
             throw error
+        }
+    }
+}
+
+/// Typed input refusals (JSON-RPC code -32011, `data.reason`). Each is raised
+/// before any wire event of the refused request.
+enum NativeInputRefusal: String, Error, LocalizedError {
+    /// mouse_down/mouse_up outside one action_queue batch (D27).
+    case holdOutsideBatch = "hold_outside_batch"
+    case buttonAlreadyHeld = "button_already_held"
+    case buttonNotHeld = "button_not_held"
+
+    static let code = -32011
+
+    var errorDescription: String? {
+        switch self {
+        case .holdOutsideBatch: "mouse_down and mouse_up are only valid inside one action_queue batch"
+        case .buttonAlreadyHeld: "Mouse button is already held in this batch"
+        case .buttonNotHeld: "Mouse button is not held in this batch"
         }
     }
 }

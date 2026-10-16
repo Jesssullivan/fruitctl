@@ -16,8 +16,9 @@ import { z } from 'zod';
 
 export const COMPUTER_TOOL_NAME = 'computer';
 
-// Fruitctl methods shipped by this MCP surface (the vnc_command enum). An older
-// backend without capability metadata is assumed to support only these.
+// Fruitctl methods every backend shipped before capability metadata. An older
+// backend without capability metadata is assumed to support only these; newer
+// vnc_command methods (triple_click, hold_key, ...) must be advertised.
 export const BASELINE_ACTIONS = Object.freeze(new Set([
   'screenshot', 'cursor_crop', 'diff_check', 'set_baseline',
   'mouse_click', 'mouse_double_click', 'mouse_move', 'hover', 'nudge',
@@ -164,7 +165,7 @@ function anthropicSteps(input) {
     case 'left_click': case 'right_click': case 'middle_click':
       return withModifiers([{ action: 'mouse_click', ...at(), button: action.split('_')[0] }], input.text, action);
     case 'double_click': return withModifiers([{ action: 'mouse_double_click', ...at() }], input.text, action);
-    case 'triple_click': return withModifiers([{ action: 'mouse_triple_click', ...at() }], input.text, action);
+    case 'triple_click': return withModifiers([{ action: 'triple_click', ...at() }], input.text, action);
     case 'mouse_move': return [{ action: 'mouse_move', ...at() }];
     case 'left_click_drag': {
       if (input.start_coordinate === undefined) throw invalid(action, 'start_coordinate is required');

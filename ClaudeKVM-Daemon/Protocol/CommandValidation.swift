@@ -11,7 +11,19 @@ extension PCRequest {
     static let inputMethods: Set<String> = [
         "mouse_move", "hover", "nudge", "mouse_click", "mouse_double_click", "mouse_drag", "scroll",
         "key_tap", "key_combo", "key_type", "paste",
+        "triple_click", "hold_key", "mouse_down", "mouse_up",
     ]
+
+    /// D27: valid only with the executor's batch scope.
+    static let holdMethods: Set<String> = ["mouse_down", "mouse_up"]
+
+    /// The private batch scope token, when present and well formed.
+    static func validHoldScope(_ value: String?) -> Bool {
+        guard let value, !value.isEmpty, value.utf8.count <= 256 else { return false }
+        return value.unicodeScalars.allSatisfy {
+            CharacterSet.alphanumerics.contains($0) || "_.:-".unicodeScalars.contains($0)
+        }
+    }
 
     /// Native callers do not necessarily pass through the MCP schema.
     /// Validate the entire request before mutating configuration or emitting input.
@@ -24,9 +36,19 @@ extension PCRequest {
             }
             guard range.contains(value) else { throw CommandValidationError.invalid(name) }
         }
-        if ["mouse_move", "hover", "mouse_click", "mouse_double_click", "mouse_drag", "scroll"].contains(method) {
+        if let scope = p?.holdScope, !Self.validHoldScope(scope) { throw CommandValidationError.invalid("hold_scope") }
+        if Self.holdMethods.contains(method), p?.holdScope == nil { throw NativeInputRefusal.holdOutsideBatch }
+        if method == "release_holds", p?.holdScope == nil { throw CommandValidationError.invalid("hold_scope") }
+        if ["mouse_move", "hover", "mouse_click", "mouse_double_click", "mouse_drag", "scroll",
+            "triple_click", "mouse_down"].contains(method) {
             try check(p?.x, "x", 0...(scaling.scaledWidth - 1), required: true)
             try check(p?.y, "y", 0...(scaling.scaledHeight - 1), required: true)
+        }
+        if method == "mouse_up" {
+            // An explicit release point needs both coordinates; none uses the tracked position.
+            guard (p?.x == nil) == (p?.y == nil) else { throw CommandValidationError.invalid("x/y") }
+            try check(p?.x, "x", 0...(scaling.scaledWidth - 1))
+            try check(p?.y, "y", 0...(scaling.scaledHeight - 1))
         }
         if method == "mouse_drag" {
             try check(p?.toX, "toX", 0...(scaling.scaledWidth - 1), required: true)
@@ -42,8 +64,20 @@ extension PCRequest {
             }
             try check(p?.amount, "amount", 1...20)
         }
-        if method == "mouse_click", let button = p?.button, !["left", "right", "middle"].contains(button) {
+        if ["mouse_click", "mouse_drag", "mouse_down", "mouse_up"].contains(method),
+           let button = p?.button, !["left", "right", "middle"].contains(button) {
             throw CommandValidationError.invalid("button")
+        }
+        if let modifiers = p?.modifiers {
+            guard method == "mouse_click", modifiers.count <= KeySym.modifiers.count,
+                  modifiers.allSatisfy({ modifierNameToKeysym($0) != nil }),
+                  Set(modifiers.compactMap(modifierNameToKeysym)).count == modifiers.count else {
+                throw CommandValidationError.invalid("modifiers")
+            }
+        }
+        if method == "hold_key" {
+            guard let key = p?.key, namedKeyToKeysym(key) != nil else { throw CommandValidationError.invalid("key") }
+            try check(p?.durationMs, "duration_ms", 1...10_000, required: true)
         }
         if method == "wait" { try check(p?.ms, "ms", 50...10_000) }
         try check(p?.deadlineMs, "deadline_ms", 0...30_000)

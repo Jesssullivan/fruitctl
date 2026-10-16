@@ -107,6 +107,21 @@ enum KeySym {
     static let f10: UInt32 = 0xFFC7
     static let f11: UInt32 = 0xFFC8
     static let f12: UInt32 = 0xFFC9
+
+    /// Every Shift/Control/Alt/Meta/Super keysym. The set is closed under the
+    /// Apple wire mapping (Meta→Super, Alt→Meta), so writing each raw member
+    /// releases every modifier either server kind can hold.
+    static let modifiers: [UInt32] = [
+        shiftLeft, shiftRight, ctrlLeft, ctrlRight, altLeft, altRight,
+        metaLeft, metaRight, superLeft, superRight,
+    ]
+}
+
+/// A click modifier name ("shift", "cmd", ...) resolved to its keysym, or nil
+/// for any name that is not a modifier.
+func modifierNameToKeysym(_ name: String) -> UInt32? {
+    guard let keysym = namedKeyToKeysym(name), KeySym.modifiers.contains(keysym) else { return nil }
+    return keysym
 }
 
 // MARK: - Named Key → KeySym Resolution
