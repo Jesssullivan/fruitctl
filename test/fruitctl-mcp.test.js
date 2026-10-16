@@ -429,7 +429,7 @@ test('queue expands expectations into private fresh-capture primitives within on
 });
 
 test('an unmet expectation stops the batch at its step with the typed native error', async () => {
-  const unmet = { code: -32011, message: 'No change observed in the expected region within 3000 ms',
+  const unmet = { code: -32012, message: 'No change observed in the expected region within 3000 ms',
     data: { reason: 'change_not_observed', elapsed_ms: 3004, captures: 31 } };
   const session = new McpSession({ async execute(native) {
     assert.equal(native.length, 5);

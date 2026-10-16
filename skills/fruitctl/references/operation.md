@@ -87,7 +87,7 @@ a capture that cannot get fresh pixels fails as `-32010` `stale_screen`.
 - `wait_for_stable {stable_ms, timeout_ms, regions?, ignore?}` keeps taking
   fresh captures until the compared pixels stay unchanged for `stable_ms`
   (50-10000). After `timeout_ms` (100-20000, at least `stable_ms`) it fails
-  with code `-32011`, `data.reason: stable_timeout`. Ignore animated areas
+  with code `-32012`, `data.reason: stable_timeout`. Ignore animated areas
   such as clocks, cursors and progress indicators that never stop changing.
   It returns no image, so it never authorizes input: input stays authorized
   by your last image observation only while the display is unchanged.
@@ -127,7 +127,7 @@ Expectations never authorize later input. If the display changes identity
 mid-batch (resize or reconnect), the next input step is refused until a new
 screenshot.
 
-An unmet expectation fails as code `-32011` with `data.reason`
+An unmet expectation fails as code `-32012` with `data.reason`
 `change_not_observed` or `stable_timeout` and stops the batch at that step;
 the step's own input has already run. `ax_exists` and `ocr_contains` are
 reserved: a batch that uses them is refused as `unsupported_expectation`

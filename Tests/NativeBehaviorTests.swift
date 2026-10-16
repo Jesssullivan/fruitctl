@@ -841,7 +841,7 @@ final class NativeBehaviorTests: XCTestCase {
         XCTAssertNil(PCResponse.staleScreen(id: .number(3), error: unmet))
         let json = try XCTUnwrap(JSONSerialization.jsonObject(with: encoder.encode(response)) as? [String: Any])
         let payload = try XCTUnwrap(json["error"] as? [String: Any])
-        XCTAssertEqual(payload["code"] as? Int, -32011)
+        XCTAssertEqual(payload["code"] as? Int, -32012)
         XCTAssertEqual(payload["message"] as? String, "Screen did not stay unchanged")
         let data = try XCTUnwrap(payload["data"] as? [String: Any])
         XCTAssertEqual(Set(data.keys), ["reason", "elapsed_ms", "captures"])

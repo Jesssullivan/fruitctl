@@ -253,7 +253,7 @@ export function actionQueueTool() {
       'The batch has one 30-second deadline and stops on first error.',
       'Use for batching confident action sequences.',
       'A step may carry expect {change_in?: {x,y,width,height}, stable_ms?, timeout_ms?}, checked with',
-      'fresh captures after the step; an unmet expectation stops the batch with error code -32011.',
+      'fresh captures after the step; an unmet expectation stops the batch with error code -32012.',
       '',
       'Mouse holds: mouse_down {x, y, button?} presses a button that stays held',
       'across later actions in this batch (mouse_move then drags) until',

@@ -222,7 +222,7 @@ key-up per Shift/Control/Alt/Meta/Super keysym. It is deferred from connect so
 an observation-only connection still writes no input.
 
 Observation conditions that fresh captures did not meet fail with JSON-RPC
-code `-32011`. `data.reason` is `stable_timeout` (`wait_for_stable`, or a queue
+code `-32012`. `data.reason` is `stable_timeout` (`wait_for_stable`, or a queue
 step's `expect.stable_ms`) or `change_not_observed` (a queue step's
 `expect.change_in`), with `elapsed_ms` and `captures`. Every compared frame
 was fresh. A capture failure inside the wait stays `-32010` `stale_screen`.

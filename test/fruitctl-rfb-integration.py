@@ -49,7 +49,7 @@ INPUT_REFUSED_CODE = -32011
 # Release-only key-up per modifier before a connection's first input (TIN-6597).
 MODIFIER_KEYSYMS = (0xFFE1, 0xFFE2, 0xFFE3, 0xFFE4, 0xFFE9, 0xFFEA, 0xFFE7, 0xFFE8, 0xFFEB, 0xFFEC)
 MODIFIER_SYNC = [{"kind": "key", "down": 0, "key": key} for key in MODIFIER_KEYSYMS]
-OBSERVATION_UNMET_CODE = -32011
+OBSERVATION_UNMET_CODE = -32012
 
 
 def require(condition, message):

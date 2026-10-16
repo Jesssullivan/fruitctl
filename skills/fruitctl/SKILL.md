@@ -57,7 +57,7 @@ Observations are always fresh captures. Use `zoom` to read small detail at
 native resolution, `diff_check` with `regions`/`ignore` to see what changed, and
 `wait_for_stable` instead of fixed waits after an action. In `action_queue`, a
 step's `expect` (`change_in`, `stable_ms`) is checked after the step. An unmet
-condition fails as code `-32011` and stops the batch. On the Host route these
+condition fails as code `-32012` and stops the batch. On the Host route these
 raw-pixel observations are refused as `unsupported_on_route`.
 
 ## Computer-use alias

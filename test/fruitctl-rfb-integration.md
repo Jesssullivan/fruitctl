@@ -85,7 +85,7 @@ per request mode. The MCP run adds four more:
   marker color, so any cached frame would compare equal. A `zoom` must return
   the exact native region. A region `diff_check` with an ignore mask must
   report exactly the unmasked changed box at ratio 1. `wait_for_stable` must
-  settle when the whole display is ignored, and must fail as `-32011`
+  settle when the whole display is ignored, and must fail as `-32012`
   `stable_timeout` within its bound when it is not. After that failure,
   neither `expect_baseline` nor a settled `wait_for_stable` may grant input
   authorization: a following `mouse_move` must be refused and send nothing.

@@ -109,7 +109,7 @@ struct PCResponse: Encodable {
         var diagnostics: VNCFramebufferDiagnostics
     }
 
-    /// `error.data` for code -32011: a stable reason plus bounded counters.
+    /// `error.data` for code -32012: a stable reason plus bounded counters.
     struct ObservationUnmetData: Encodable {
         var reason: String
         var elapsedMilliseconds: Int
@@ -259,7 +259,7 @@ struct ObservationUnmetError: LocalizedError, Equatable {
     }
 
     /// JSON-RPC error code for every unmet observation condition.
-    static let code = -32011
+    static let code = -32012
 
     let reason: Reason
     let message: String
