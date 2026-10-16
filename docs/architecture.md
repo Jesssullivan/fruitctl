@@ -95,6 +95,81 @@ an already blocked native write or a suspended native process remains outside
 the responsive-writer timing proof. The broker's 60-second ownership lease
 alone does not prove that the human indicator is active.
 
+### Display wake hold
+
+A target profile may opt in to a display wake hold:
+
+```json
+"wake": { "ssh": "alex@office-desktop", "enabled": true }
+```
+
+While a client owns that target's lease, the broker runs
+`ssh -tt -o BatchMode=yes … -- alex@office-desktop caffeinate -d -u` from a
+fixed argument vector, with no local shell. The remote terminal makes the
+connection's end hang up `caffeinate`, so it does not outlive the hold. Lease
+renewal reuses the running hold. Explicit release, task completion or failure,
+disconnect, lease expiry and broker shutdown terminate it. A Host Stop ends it
+when the broker retires that lease: on the next refused request, or at the
+lease's expiry. The destination uses the same character set as the helper and doctor SSH
+validators and an invalid `wake` profile stops the broker before it opens its
+socket. `enabled: false` turns the hold off without deleting the destination.
+
+The hold is advisory. Spawn or exit failures are logged on the broker's
+stderr, backed off for 30 seconds, and reported in each `health` result as
+`wake: { configured, state, failures, last_error?, last_stop? }` with state
+`holding`, `idle` or `failed`. They never fail the lease or its input. A hold
+that is running is not proof the display is awake; capture freshness still
+decides.
+
+`display_asleep` is the stable error code for an asleep display. The broker
+never infers sleep from pixel colour. It maps only an explicit executor signal,
+a native error whose `data.reason` is `display_asleep`, to that code on the
+broker error. The native daemon does not emit that signal yet, so an asleep
+display currently surfaces as `stale_screen` or another capture failure.
+
+### Action journal
+
+The broker appends a hash-chained JSONL journal for each client session, one
+file per session UUID under its state directory: `journal/<session>.jsonl` in
+`~/Library/Application Support/fruitctl/state` on macOS, or
+`$XDG_STATE_HOME/fruitctl` (default `~/.local/state/fruitctl`) elsewhere.
+`FRUITCTL_STATE_DIR` overrides the state directory. The directory is private
+`0700` and each file `0600`. Configure it at the top level of the broker
+config:
+
+```json
+"journal": { "dir": "/absolute/path", "enabled": true }
+```
+
+The journal is on by default; `enabled: false` turns it off.
+
+Each requested action becomes one `fruitctl.journal.v1` record: `seq`, `ts`,
+`session`, `target`, `method`, `params`, a bounded `result` summary with its
+`outcome` (`ok`, `error`, `failed`, `not_run`, `refused` or `not_admitted`),
+`frame_sha256` of the decoded returned image, any executor `provenance`, then
+`prev_hash` and `hash`. The hash is SHA-256 of the record's canonical JSON
+(sorted keys) without `hash`; the first record's `prev_hash` is 64 zeros.
+Images are never stored, only their digests. `type_secret` stores its `ref`
+and replaces every other parameter with `[redacted]`. Any parameter whose name
+looks like a credential (password, secret, token, credential, API or private
+key, OTP, PIN code, auth) is redacted for every action. Text is cut to 256
+characters.
+
+Journal writes are queued after the result is known. A write failure is logged
+and counted, and never fails or delays a returned action. A broken existing
+file is never extended. Verify a file with:
+
+```sh
+fruitctl journal verify ~/.local/state/fruitctl/journal/<session>.jsonl
+```
+
+It prints JSON and exits 1 at the first record that breaks the chain, naming
+the line and reason (`record hash mismatch`, `previous hash mismatch`,
+`sequence gap or reorder`, `session mismatch` or `truncated final record`).
+The chain detects edits, insertions, deletions and reordering within a file. It
+cannot detect deleting the whole file or its newest records together with
+their successors; keep copies elsewhere when that matters.
+
 ## Observation contract
 
 A successful capture contains a complete frame with current dimensions,
