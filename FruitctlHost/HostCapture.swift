@@ -14,7 +14,8 @@ struct HostCapturedImage {
     let scaledWidth: Int
     let scaledHeight: Int
     let displayID: CGDirectDisplayID
-    let bounds: CGRect
+    let geometry: HostDisplayGeometry
+    var bounds: CGRect { geometry.bounds }
     let excludedPID: pid_t
     let excludedBundleID: String
     let nativeFrameTiming: HostNativeFrameTiming
@@ -28,6 +29,9 @@ struct HostCapturedImage {
                                     "width": .number(Double(bounds.width)), "height": .number(Double(bounds.height))]),
          "pixels_per_point_x": .number(Double(nativeWidth) / Double(bounds.width)),
          "pixels_per_point_y": .number(Double(nativeHeight) / Double(bounds.height)),
+         "pixel_width": .integer(Int64(geometry.pixelWidth)), "pixel_height": .integer(Int64(geometry.pixelHeight)),
+         "point_width": .number(geometry.pointWidth), "point_height": .number(geometry.pointHeight),
+         "scale": .number(geometry.scale),
          "cursor_included": .boolean(true),
          "capture_filter": .string("excluding_entire_own_application"),
          "native_capture_resolution": .string("best"),
@@ -136,16 +140,21 @@ final class HostCapture {
     private let permission: HostCapturePermission
     private let imageProcessor = HostImageProcessor()
     var enabled: Bool { preferences.isEnabled }
-    let displayID: CGDirectDisplayID
+    /// Changes only through rebind after a display reconfiguration resolves a
+    /// configured display UUID to a new ID. An in-flight capture keeps its own.
+    private(set) var displayID: CGDirectDisplayID
 
     init(preferences: HostCapturePreferences, permission: HostCapturePermission,
          displayID: CGDirectDisplayID) {
         self.preferences = preferences; self.permission = permission; self.displayID = displayID
     }
 
+    func rebind(displayID: CGDirectDisplayID) { self.displayID = displayID }
+
     func snapshot(maximumDimension: Int) async throws -> HostCapturedImage {
         guard maximumDimension > 0 else { throw HostCaptureError.incompleteImage }
         try permission.requireCapture(enabled: enabled)
+        let displayID = self.displayID
         let content: SCShareableContent
         do {
             content = try await permission.withCaptureAuthorization(enabled: { self.enabled }) {
@@ -161,14 +170,13 @@ final class HostCapture {
         guard let ownApp = content.applications.first(where: {
             $0.processID == getpid() && $0.bundleIdentifier == Bundle.main.bundleIdentifier
         }) else { throw HostCaptureError.selfApplicationUnavailable }
-        let width = CGDisplayPixelsWide(displayID), height = CGDisplayPixelsHigh(displayID)
-        let bounds = CGDisplayBounds(displayID)
-        // Bound the source allocation independently of requested output scaling.
-        guard width > 0, height > 0, width <= 16_384, height <= 16_384,
-              width <= 33_554_432 / height,
-              bounds.width > 0, bounds.height > 0, !bounds.isInfinite, !bounds.isNull else {
+        // Pixel sizes come from the display mode: CGDisplayPixelsWide/High
+        // report points on HiDPI. compute(...) bounds the source allocation
+        // independently of requested output scaling.
+        guard let geometry = HostDisplayGeometry.current(displayID) else {
             throw HostCaptureError.incompleteImage
         }
+        let width = geometry.pixelWidth, height = geometry.pixelHeight
         let filter = SCContentFilter(display: display, excludingApplications: [ownApp],
                                      exceptingWindows: [])
         let configuration = SCStreamConfiguration()
@@ -197,24 +205,21 @@ final class HostCapture {
         let captured = try HostCapturedSample.read(sampled.0, width: width, height: height,
             requestHostTime: sampled.1, completionHostTime: sampled.2)
         let image = captured.image
-        guard image.width == width, image.height == height,
-              CGDisplayBounds(displayID) == bounds,
-              CGDisplayPixelsWide(displayID) == width, CGDisplayPixelsHigh(displayID) == height else {
+        guard image.width == width, image.height == height, self.displayID == displayID,
+              HostDisplayGeometry.current(displayID) == geometry else {
             throw HostCaptureError.incompleteImage
         }
         let processed = try await imageProcessor.process(image, maximumDimension: maximumDimension) {
             try self.permission.requireCapture(enabled: self.enabled)
-            guard CGDisplayIsActive(self.displayID) != 0,
-                  CGDisplayBounds(self.displayID) == bounds,
-                  CGDisplayPixelsWide(self.displayID) == width,
-                  CGDisplayPixelsHigh(self.displayID) == height else {
+            guard self.displayID == displayID, CGDisplayIsActive(displayID) != 0,
+                  HostDisplayGeometry.current(displayID) == geometry else {
                 throw HostCaptureError.incompleteImage
             }
         }
         try Task.checkCancellation()
         return HostCapturedImage(png: processed.png, nativeWidth: width, nativeHeight: height,
             scaledWidth: processed.scaledWidth, scaledHeight: processed.scaledHeight,
-            displayID: displayID, bounds: bounds,
+            displayID: displayID, geometry: geometry,
             excludedPID: ownApp.processID, excludedBundleID: ownApp.bundleIdentifier,
             nativeFrameTiming: captured.timing)
     }

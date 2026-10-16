@@ -216,9 +216,12 @@ targets:
       - FruitctlHost/HostCapture.swift
       - FruitctlHost/HostIdleReference.swift
       - FruitctlHost/HostIPC.swift
+      - FruitctlHost/HostDisplay.swift
+      - FruitctlHost/HostAccessibility.swift
       - Tests/FruitctlHostTests.swift
       - Tests/HostIdleReferenceTests.swift
       - Tests/HostSocketTests.swift
+      - Tests/HostDisplayAccessibilityTests.swift
     settings:
       base:
         ARCHS: arm64

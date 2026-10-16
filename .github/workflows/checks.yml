@@ -242,6 +242,7 @@ jobs:
             --build-scheme claude-kvm-daemon \
             --test-scheme VNCReconnectTests \
             --test-scheme NativeBehaviorTests \
+            --test-scheme FruitctlHostTests \
             --source-revision "$GITHUB_SHA"
       - name: Exercise native synthetic loopback RFB
         id: native-rfb
@@ -336,7 +337,7 @@ jobs:
           print(json.dumps(report, sort_keys=True))
           PY
           fi
-          for scheme in VNCReconnectTests NativeBehaviorTests; do
+          for scheme in VNCReconnectTests NativeBehaviorTests FruitctlHostTests; do
             bundle="$FRUITCTL_NATIVE_CI_OUTPUT/$scheme.xcresult"
             if test -d "$bundle"; then
               xcrun xcresulttool get test-results summary --path "$bundle"
