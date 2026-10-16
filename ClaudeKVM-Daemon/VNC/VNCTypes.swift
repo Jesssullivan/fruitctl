@@ -114,7 +114,8 @@ enum VNCConnectionState: Sendable, CustomStringConvertible {
 /// How the daemon asks the server for framebuffer updates.
 enum VNCRequestMode: String, CaseIterable, Codable, Sendable {
     /// Default: incremental polls while idle and LibVNC's re-arm after every
-    /// update; the daemon's own polls pause while a capture is pending.
+    /// update. While a capture is pending the daemon's own polls pause and
+    /// LibVNC's re-arm is held, so nothing is written behind its request.
     case stream
     /// Opt-in: no incremental request is ever written. LibVNC's request gate
     /// stays closed except around this daemon's own whole-screen requests.

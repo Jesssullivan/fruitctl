@@ -56,6 +56,13 @@ private enum FakeServerModel {
     case sessionStartOnly
     /// Nothing is ever answered.
     case silent
+    /// An animating screen (TIN-5509, live on PZM while the search field
+    /// updates): every outstanding request is answered on the next poll, an
+    /// incremental one with a partial update. When a full request arrives
+    /// behind outstanding incremental ones, an update already in flight for
+    /// those is delivered first. The newest request wins: an incremental
+    /// request written after a full one absorbs it into a partial answer.
+    case animatingLatestWins
 }
 
 private final class FakeNative {
@@ -92,6 +99,13 @@ private final class FakeNative {
     var serverModel: FakeServerModel?
     /// The next model answer also carries a SupportedMessages rectangle.
     var reopenGateOnNextUpdate = false
+    /// animatingLatestWins: the next in-flight update ahead of a full answer
+    /// carries a SupportedMessages rectangle.
+    var reopenGateOnInFlightUpdate = false
+    private var inFlightAheadOfFull = false
+    private var partialAnswers = 0
+    /// animatingLatestWins: partial (animation) updates delivered.
+    var partialFrames: Int { lock.lock(); defer { lock.unlock() }; return partialAnswers }
     var allocateBeforeFailure = false
     // Existing lifecycle cases model a complete initial update during init.
     // First-frame cases turn this off and deliver the actual callback later.
@@ -169,13 +183,14 @@ private final class FakeNative {
 
     private func serverStep(_ client: VNCClientOperations.Client) {
         guard let model = serverModel else { return }
+        if model == .animatingLatestWins { animationStep(client); return }
         lock.lock()
         let answer: Bool
         switch model {
         case .latestWins: answer = outstandingRequests.last == false
         case .firstWins: answer = outstandingRequests.first == false
         case .sessionStartOnly: answer = answeredFullRequests == 0 && outstandingRequests.contains(false)
-        case .silent: answer = false
+        case .silent, .animatingLatestWins: answer = false
         }
         if answer { outstandingRequests.removeAll(); answeredFullRequests += 1 }
         let reopen = answer && reopenGateOnNextUpdate
@@ -184,6 +199,32 @@ private final class FakeNative {
         if answer {
             deliverUpdate(client, rects: [(0, 0, client.pointee.width, client.pointee.height)], reopenGate: reopen)
         }
+    }
+    /// One poll of the animating model: answer whatever is newest.
+    private func animationStep(_ client: VNCClientOperations.Client) {
+        let partial: [(Int32, Int32, Int32, Int32)] = [(0, 0, 1, 1)]
+        lock.lock()
+        guard let newest = outstandingRequests.last else { lock.unlock(); return }
+        var rects = partial
+        var reopen = false
+        if !newest, !inFlightAheadOfFull, outstandingRequests.contains(true) {
+            // Answers the incremental requests written before the full one.
+            inFlightAheadOfFull = true
+            outstandingRequests.removeAll { $0 }
+            reopen = reopenGateOnInFlightUpdate
+            reopenGateOnInFlightUpdate = false
+        } else if !newest {
+            inFlightAheadOfFull = false
+            outstandingRequests.removeAll(); answeredFullRequests += 1
+            rects = [(0, 0, client.pointee.width, client.pointee.height)]
+        } else {
+            // Latest wins: an older full request is absorbed, never answered.
+            inFlightAheadOfFull = false
+            outstandingRequests.removeAll()
+        }
+        if rects.count == 1, rects[0] == partial[0] { partialAnswers += 1 }
+        lock.unlock()
+        deliverUpdate(client, rects: rects, reopenGate: reopen)
     }
     var bufferCounts: (allocated: Int, released: Int, live: Int, duplicate: Int) {
         lock.lock(); defer { lock.unlock() }
@@ -1476,9 +1517,9 @@ final class VNCReconnectTests: XCTestCase {
         return (waiting, harness.deadline.take())
     }
 
-    /// Latest-wins: with the daemon's own polls suppressed during a capture,
-    /// its full request is the newest one the server holds, so the current
-    /// stream mode already receives fresh complete pixels.
+    /// Latest-wins: with the daemon's own polls suppressed and LibVNC's
+    /// re-arm held during a capture, its full request is the newest one the
+    /// server holds, so stream mode receives fresh complete pixels.
     func testLatestWinsPassesWithCurrentSuppression() async throws {
         let harness = try await connectModel(.latestWins)
         let idle = harness.native.wire
@@ -1501,22 +1542,33 @@ final class VNCReconnectTests: XCTestCase {
         XCTAssertTrue(frame.withFramebuffer { buffer, width, height in
             width == 2 && height == 2 && buffer.count == 16 && buffer.allSatisfy { $0 == 2 }
         }) // the second server frame, not the cached first one
-        // Stream mode: the answering update's own re-arm is on the wire too.
+        // Stream mode holds the answering update's own re-arm until the
+        // capture resolves, so nothing follows the capture's request.
         // Requests written before this capture's own were outstanding at
         // admission, so stream mode never claims ordering after prior input.
         XCTAssertEqual(frame.provenance, VNCCaptureProvenance(
-            requestMode: .stream, requests: .init(full: 1, incremental: 1),
+            requestMode: .stream, requests: .init(full: 1, incremental: 0),
             priorUnansweredRequests: .init(full: 1, incremental: 5), orderedAfterPriorInput: false,
             elapsedMilliseconds: frame.provenance.elapsedMilliseconds))
         XCTAssertEqual(frame.provenance.elapsedMilliseconds, 10)
-        let diagnostics = harness.bridge.framebufferDiagnostics
+        var diagnostics = harness.bridge.framebufferDiagnostics
         XCTAssertEqual(diagnostics.unansweredFullRequests, 1)
-        XCTAssertEqual(diagnostics.unansweredIncrementalRequests, 1) // the answer's own re-arm
-        XCTAssertEqual(diagnostics.autoRearmObserved, 2)
-        let wire = harness.native.wire
+        XCTAssertEqual(diagnostics.unansweredIncrementalRequests, 0)
+        XCTAssertEqual(diagnostics.autoRearmObserved, 1)
+        var wire = harness.native.wire
         XCTAssertEqual(wire.full, 3) // connect, missing-pixel refresh, capture
-        XCTAssertEqual(wire.autoRearm, 2)
-        XCTAssertEqual(wire.suppressed, 0)
+        XCTAssertEqual(wire.autoRearm, 1)
+        XCTAssertEqual(wire.suppressed, 1) // the held re-arm
+        XCTAssertEqual(wire.outstanding, [])
+        // The hold ended with the capture: the stream resumes.
+        harness.native.beforePoll = { client in XCTAssertTrue(VNCBridge.requestGateOpen(client)) }
+        harness.time.advance(100_000_000); harness.scheduler.runNext()
+        harness.native.beforePoll = nil
+        wire = harness.native.wire
+        XCTAssertEqual(wire.outstanding, [true]) // the stream poll
+        XCTAssertEqual(wire.suppressed, 1)
+        diagnostics = harness.bridge.framebufferDiagnostics
+        XCTAssertEqual(diagnostics.requestGateLeaks, 0)
         harness.bridge.disconnect(); XCTAssertEqual(harness.bridge.framebufferWidth, 0)
         assertSingleClientAndBufferReleased(harness.native)
     }
@@ -1569,6 +1621,116 @@ final class VNCReconnectTests: XCTestCase {
         var configuration = VNCConfiguration()
         configuration.requestMode = .onDemand
         return configuration
+    }
+
+    /// Continuous streaming with an incremental request always outstanding
+    /// (TIN-5509, PZM while the search field animates). An update already in
+    /// flight when the capture's full request is written answers the older
+    /// incremental requests first. Stream mode holds LibVNC's re-arm for that
+    /// update, so the full request stays the newest and is answered whole;
+    /// the in-flight partial still counts, being received after the request.
+    /// The hold ends with the capture and the stream resumes.
+    func testAnimatingStreamHoldsRearmUntilTheFullRequestIsAnswered() async throws {
+        let harness = try await connectModel(.animatingLatestWins)
+        XCTAssertEqual(harness.native.wire.outstanding, [true, true]) // re-arm and stream poll
+        XCTAssertEqual(harness.native.partialFrames, 3)
+        XCTAssertEqual(harness.native.wire.autoRearm, 4)
+        let (waiting, originalDeadline) = await startCapture(harness)
+        XCTAssertEqual(harness.native.wire.outstanding, [true, true, false])
+        harness.native.beforePoll = { XCTAssertFalse(VNCBridge.requestGateOpen($0)) }
+        harness.time.advance(10_000_000); harness.scheduler.runNext() // the in-flight partial
+        XCTAssertEqual(harness.native.partialFrames, 4)
+        var wire = harness.native.wire
+        XCTAssertEqual(wire.outstanding, [false]) // nothing was written behind the full request
+        XCTAssertEqual(wire.autoRearm, 4)
+        XCTAssertEqual(wire.suppressed, 1)
+        XCTAssertFalse(originalDeadline.work.isCancelled)
+        harness.time.advance(10_000_000); harness.scheduler.runNext() // the whole-screen answer
+        harness.native.beforePoll = nil
+        let frame = try await waiting.value
+        XCTAssertTrue(originalDeadline.work.isCancelled)
+        let marker = UInt8(truncatingIfNeeded: harness.native.wire.frames)
+        XCTAssertTrue(frame.withFramebuffer { buffer, width, height in
+            width == 2 && height == 2 && buffer.allSatisfy { $0 == marker }
+        }) // the full answer's pixels, received after the request
+        XCTAssertEqual(frame.provenance, VNCCaptureProvenance(
+            requestMode: .stream, requests: .init(full: 1, incremental: 0),
+            priorUnansweredRequests: .init(full: 1, incremental: 2), orderedAfterPriorInput: false,
+            elapsedMilliseconds: 20))
+        wire = harness.native.wire
+        XCTAssertEqual(wire.outstanding, [])
+        XCTAssertEqual(wire.suppressed, 2)
+        XCTAssertEqual(harness.bridge.framebufferDiagnostics.requestGateLeaks, 0)
+        // Released with the capture: the stream poll and the re-arm resume.
+        harness.native.beforePoll = { XCTAssertTrue(VNCBridge.requestGateOpen($0)) }
+        harness.time.advance(100_000_000); harness.scheduler.runNext()
+        XCTAssertEqual(harness.native.wire.outstanding, [true])
+        harness.time.advance(100_000_000); harness.scheduler.runNext()
+        harness.native.beforePoll = nil
+        wire = harness.native.wire
+        XCTAssertEqual(wire.autoRearm, 5)
+        XCTAssertEqual(wire.suppressed, 2)
+        XCTAssertEqual(harness.native.partialFrames, 5)
+        harness.bridge.disconnect(); XCTAssertEqual(harness.bridge.framebufferWidth, 0)
+        assertSingleClientAndBufferReleased(harness.native)
+    }
+
+    /// The failure the hold prevents, reproduced through a leak: a
+    /// SupportedMessages rectangle in the in-flight update reopens the gate
+    /// and LibVNC's re-arm reaches the wire behind the full request. The
+    /// server's newest request is then incremental, so the full one is never
+    /// answered; only partial pixels arrive. The capture fails typed as
+    /// incomplete_coverage at its deadline, never with mixed or cached
+    /// pixels, and the next capture, with nothing written behind it, passes.
+    func testAnimatingStreamRearmBehindFullRequestStarvesItAndFailsTyped() async throws {
+        let harness = try await connectModel(.animatingLatestWins)
+        harness.native.reopenGateOnInFlightUpdate = true
+        let (starved, starvedDeadline) = await startCapture(harness)
+        harness.time.advance(10_000_000); harness.scheduler.runNext() // in-flight partial; leaked re-arm
+        XCTAssertEqual(harness.native.wire.outstanding, [false, true])
+        XCTAssertEqual(harness.native.wire.autoRearm, 5)
+        XCTAssertEqual(harness.bridge.framebufferDiagnostics.requestGateLeaks, 1)
+        harness.time.advance(10_000_000); harness.scheduler.runNext() // latest wins: a partial
+        XCTAssertEqual(harness.native.wire.outstanding, []) // the full request was absorbed
+        for _ in 0..<3 { harness.time.advance(100_000_000); harness.scheduler.runNext() }
+        XCTAssertEqual(harness.native.wire.outstanding, []) // still held while pending
+        harness.time.advance(5_000_000_000)
+        starvedDeadline.queue.sync { starvedDeadline.work.perform() }
+        do { _ = try await starved.value; XCTFail("a starved full request produced a capture") }
+        catch VNCError.staleScreen(let reason, let data) {
+            XCTAssertEqual(reason, .incompleteCoverage)
+            XCTAssertEqual(data.diagnostics.requestGateLeaks, 1)
+        } catch { XCTFail("unexpected error: \(error)") }
+        // Released after the failure; the next capture is answered whole.
+        harness.time.advance(100_000_000); harness.scheduler.runNext()
+        XCTAssertEqual(harness.native.wire.outstanding, [true])
+        let (next, _) = await startCapture(harness)
+        harness.time.advance(10_000_000); harness.scheduler.runNext()
+        harness.time.advance(10_000_000); harness.scheduler.runNext()
+        let frame = try await next.value
+        let marker = UInt8(truncatingIfNeeded: harness.native.wire.frames)
+        XCTAssertTrue(frame.withFramebuffer { buffer, _, _ in buffer.allSatisfy { $0 == marker } })
+        XCTAssertEqual(frame.provenance.requests, .init(full: 1, incremental: 0))
+        XCTAssertEqual(harness.bridge.framebufferDiagnostics.requestGateLeaks, 1)
+        harness.bridge.disconnect(); XCTAssertEqual(harness.bridge.framebufferWidth, 0)
+        assertSingleClientAndBufferReleased(harness.native)
+    }
+
+    /// On demand an animating server is never asked for incremental updates,
+    /// so the capture's request is the only one and is answered whole.
+    func testAnimatingOnDemandAnswersTheOnlyRequest() async throws {
+        let harness = try await connectModel(.animatingLatestWins, config: Self.onDemandConfiguration)
+        XCTAssertEqual(harness.native.wire.outstanding, [])
+        let (waiting, _) = await startCapture(harness)
+        harness.time.advance(10_000_000); harness.scheduler.runNext()
+        let frame = try await waiting.value
+        XCTAssertEqual(frame.provenance.requests, .init(full: 1, incremental: 0))
+        XCTAssertEqual(frame.provenance.priorUnansweredRequests, .init())
+        XCTAssertTrue(frame.provenance.orderedAfterPriorInput)
+        XCTAssertEqual(harness.native.partialFrames, 0)
+        XCTAssertEqual(harness.native.wire.incremental, 0)
+        harness.bridge.disconnect(); XCTAssertEqual(harness.bridge.framebufferWidth, 0)
+        assertSingleClientAndBufferReleased(harness.native)
     }
 
     /// On demand the bridge never polls, LibVNC's post-update re-arm and its
@@ -1802,8 +1964,8 @@ final class VNCReconnectTests: XCTestCase {
         XCTAssertEqual(stripped(lines), [
             "[RFB-WIRE] dir=c2s type=input incremental=- length=- origin=bridge kinds=4,5,6\n",
             "[RFB-WIRE] dir=c2s type=3 incremental=0 length=10 origin=bridge\n",
-            "[RFB-WIRE] dir=c2s type=3 incremental=1 length=10 origin=libvnc-rearm\n",
-        ])
+        ]) // the answer's re-arm was held: nothing is written behind a capture
+
         // The server's bitmap now excludes FramebufferUpdateRequest and KeyEvent.
         let suppressed = RecordedEvents()
         harness.bridge.ledgerOutput = { suppressed.append($0) }

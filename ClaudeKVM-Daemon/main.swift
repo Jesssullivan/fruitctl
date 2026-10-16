@@ -153,7 +153,10 @@ struct ClaudeKVMDaemon: AsyncParsableCommand {
             REQUEST MODES (--rfb-request-mode):
               stream     Default. Incremental polls while idle; LibVNC re-arms an
                          incremental request after every update, so results
-                         report ordered_after_prior_input false.
+                         usually report ordered_after_prior_input false. From an
+                         observation's whole-screen request until it resolves,
+                         no request is written, so the server cannot answer a
+                         newer incremental request in its place.
               on-demand  No incremental request is written. Each observation
                          sends one whole-screen request; results carry
                          provenance with the request counts and report

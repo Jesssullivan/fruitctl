@@ -193,6 +193,14 @@ final class VNCBridge: @unchecked Sendable {
     /// clipboard length (messageQueue).
     private var ledgerInputWritten: UInt8 = 0
     private var ledgerInputSuppressed: UInt8 = 0
+    /// Stream mode: LibVNC's request gate is held closed from a fresh
+    /// capture's own full request until that capture resolves (messageQueue).
+    /// LibVNC re-arms an incremental request after every update, including an
+    /// update already in flight when the full request was written. On a
+    /// server that keeps only its newest request (Apple, TIN-5509), that
+    /// re-arm supersedes the full request; while the screen animates the
+    /// race repeats every frame and only partial updates ever arrive.
+    private var captureHoldsRequestGate = false
     private static let incompleteFrameRefreshIntervalNs: UInt64 = 1_000_000_000
     private var reconnectCount = 0
     private let stateStreamStorage = OSAllocatedUnfairLock<AsyncStream<VNCConnectionState>.Continuation?>(initialState: nil)
@@ -266,6 +274,7 @@ final class VNCBridge: @unchecked Sendable {
         refuseFreshCapture(VNCError.notConnected)
         flushLedgerInput()
         clientReady = false
+        captureHoldsRequestGate = false
         inputSettle.disconnected()
         frameDiagnostics.withLock {
             $0.snapshot.phase = .disconnected
@@ -643,6 +652,7 @@ final class VNCBridge: @unchecked Sendable {
         }
         client = newClient
         clientReady = false
+        captureHoldsRequestGate = false
         frameDiagnostics.withLock { state in
             let generation = state.snapshot.connectionGeneration &+ 1
             state = FrameDiagnosticsState()
@@ -949,6 +959,15 @@ final class VNCBridge: @unchecked Sendable {
                         finishFreshCapture(waiter, .failure(staleScreen(.requestFailed,
                             "Fresh framebuffer update request failed"))); return
                     }
+                    // Stream mode: nothing more is written until this capture
+                    // resolves, so this full request stays the server's newest.
+                    // No C code runs between the write and the close, so no
+                    // re-arm can follow it on the wire. The poll loop reopens
+                    // the gate once the capture is no longer pending.
+                    if config.requestMode == .stream, !captureHoldsRequestGate {
+                        captureHoldsRequestGate = true
+                        Self.setRequestGate(client, open: false)
+                    }
                     waiter.progress.withLock {
                         $0.requestSent = true
                         $0.fullRequests &+= 1
@@ -1233,12 +1252,30 @@ final class VNCBridge: @unchecked Sendable {
         }
     }
 
+    /// Whether the bridge keeps LibVNC's request gate closed now: always in
+    /// on-demand mode, and in stream mode while a capture holds it.
+    private var requestGateHeld: Bool {
+        config.requestMode == .onDemand || captureHoldsRequestGate
+    }
+
+    /// Stream mode: release a capture's hold once no capture is pending, so
+    /// LibVNC's re-arm and the bridge's polls resume. The gate was open when
+    /// the hold began (the capture's request was writable), so it is restored
+    /// open. A SupportedMessages bitmap received during the hold that clears
+    /// the bit cannot be told apart from the hold itself.
+    private func releaseCaptureRequestGateHold(_ client: UnsafeMutablePointer<rfbClient>) {
+        guard captureHoldsRequestGate,
+              freshFrameWaiter.withLock({ $0 })?.requestStarted != true else { return }
+        captureHoldsRequestGate = false
+        Self.setRequestGate(client, open: true)
+    }
+
     /// The only path for this bridge's non-incremental whole-screen requests,
-    /// and in on-demand mode the only place the request gate is ever open.
-    /// A request LibVNC would report as sent without writing is refused
-    /// here, so it is neither counted as outstanding nor awaited.
+    /// and the only place a held request gate is ever opened. A request
+    /// LibVNC would report as sent without writing is refused here, so it is
+    /// neither counted as outstanding nor awaited.
     private func sendFull(_ client: UnsafeMutablePointer<rfbClient>) -> Bool {
-        let gated = config.requestMode == .onDemand
+        let gated = requestGateHeld
         if gated { Self.setRequestGate(client, open: true) }
         defer { if gated { Self.setRequestGate(client, open: false) } }
         guard Self.requestWritable(client) else {
@@ -1251,13 +1288,13 @@ final class VNCBridge: @unchecked Sendable {
         return true
     }
 
-    /// On-demand only: a server SupportedMessages rectangle replaces the
-    /// whole bitmap and can reopen the gate. LibVNC may then already have
-    /// written its re-arm in the same message, before any callback could
-    /// close it. Count the leak and close the gate again; the caller taints
-    /// a pending capture's ordering.
+    /// While the gate is held (on demand, or a stream-mode capture): a server
+    /// SupportedMessages rectangle replaces the whole bitmap and can reopen
+    /// the gate. LibVNC may then already have written its re-arm in the same
+    /// message, before any callback could close it. Count the leak and close
+    /// the gate again; the caller taints a pending capture's ordering.
     private func closeLeakedRequestGate(_ client: UnsafeMutablePointer<rfbClient>) -> Bool {
-        guard config.requestMode == .onDemand, Self.requestGateOpen(client) else { return false }
+        guard requestGateHeld, Self.requestGateOpen(client) else { return false }
         Self.setRequestGate(client, open: false)
         frameDiagnostics.withLock { $0.snapshot.requestGateLeaks &+= 1 }
         log("Request gate reopened by the server; closed again")
@@ -1289,6 +1326,7 @@ final class VNCBridge: @unchecked Sendable {
                     fresh.progress.withLock { $0.orderingTainted = true }
                 }
             }
+            self.releaseCaptureRequestGateHold(client)
             let now = self.monotonicNanoseconds()
             if !self.framebufferHasUpdate {
                 self.requestMissingFramebufferPixels()
@@ -1297,7 +1335,8 @@ final class VNCBridge: @unchecked Sendable {
             } else if self.freshFrameWaiter.withLock({ $0 })?.requestStarted == true {
                 // Keep the admitted non-incremental request the only one we
                 // add: a server that retains just its latest request must not
-                // see it superseded by our ~20/s incremental requests.
+                // see it superseded by our ~20/s incremental requests (nor by
+                // LibVNC's re-arm, which the capture's gate hold suppresses).
                 // Silence is not evidence that the remote display is unchanged.
                 // Wait for full received coverage or the original deadline.
             } else if now &- self.lastUpdateRequestNs > 50_000_000 {
