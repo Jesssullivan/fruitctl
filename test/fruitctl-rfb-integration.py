@@ -955,7 +955,7 @@ def run_input_settle_scenario(args):
     session = None
     settle = FIXTURE_INPUT_SETTLE_MS / 1000
     report = {"transport": "native", "scenario": "input-settle", "loopbackPort": fixture.port,
-              "status": "failed", "inputSettleMilliseconds": FIXTURE_INPUT_SETTLE_MS,
+              "status": "failed", "captures": [], "inputSettleMilliseconds": FIXTURE_INPUT_SETTLE_MS,
               "claimedScope": "synthetic-loopback-RFB-only; Apple's ~2.5 s input drop is not modeled"}
     try:
         session = NativeSession(args.daemon, fixture.port, ["--input-settle-ms", str(FIXTURE_INPUT_SETTLE_MS)])
