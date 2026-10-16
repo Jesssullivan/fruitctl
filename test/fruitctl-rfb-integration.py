@@ -676,8 +676,10 @@ def run_scenario(kind, mode, count, args):
                 queue_point = (11, 13)
                 queued = session.call_tool("action_queue", {"actions": [{"action": "mouse_move",
                     "x": queue_point[0], "y": queue_point[1]}, {"action": "wait", "ms": 50}]})
-                require(not queued.get("isError") and queued.get("structuredContent") == {"completed": 2},
-                        "MCP action_queue did not acknowledge both actions")
+                # D7: the raw VNC route labels every result, including batches.
+                require(not queued.get("isError") and queued.get("structuredContent")
+                        == {"completed": 2, "route": "raw", "indicator": "absent"},
+                        "MCP action_queue did not acknowledge both actions with raw route labels")
                 inspect_capture(session.action("screenshot"), fixture, sequence, queue_point)
                 summary = "Offline fixture complete"
                 completed = session.call_tool("task_complete", {"summary": summary})
