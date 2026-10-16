@@ -45,6 +45,8 @@ STALE_SCREEN_CODE = -32010
 INPUT_NOT_READY_CODE = -32013
 # Synthetic input settle for the fixture; Apple's default is 3000 ms.
 FIXTURE_INPUT_SETTLE_MS = 800
+FIXTURE_CAPTURE_TIMEOUT_MS = 1500
+FIXTURE_CAPTURE_BUDGET_MS = 600
 INPUT_REFUSED_CODE = -32011
 # Release-only key-up per modifier before a connection's first input (TIN-6597).
 MODIFIER_KEYSYMS = (0xFFE1, 0xFFE2, 0xFFE3, 0xFFE4, 0xFFE9, 0xFFEA, 0xFFE7, 0xFFE8, 0xFFEB, 0xFFEC)
@@ -455,6 +457,62 @@ class JsonProcess:
         for reader in self.readers:
             reader.join(timeout=2)
         return self.process.returncode
+
+
+def run_capture_timeout_scenario(args):
+    """--capture-timeout-ms sets the fresh full-capture deadline, and a
+    request's deadline_ms budget caps it. Both still fail closed."""
+    fixture = RfbFixture()
+    session = None
+    report = {"transport": "native", "scenario": "capture-timeout", "loopbackPort": fixture.port,
+              "status": "failed", "captures": [], "captureTimeoutMilliseconds": FIXTURE_CAPTURE_TIMEOUT_MS,
+              "claimedScope": "synthetic-loopback-RFB-only; Apple's mid-update pause is not modeled"}
+    try:
+        session = NativeSession(args.daemon, fixture.port, ["--capture-timeout-ms", str(FIXTURE_CAPTURE_TIMEOUT_MS)])
+        report["route"] = "native-PC"
+        sequence, _, _ = inspect_capture(session.action("screenshot"), fixture)
+        fixture.set_mode("silent")
+        failures = {}
+        for name, params, limit in (("flag", {}, FIXTURE_CAPTURE_TIMEOUT_MS),
+                                    ("budget", {"deadline_ms": FIXTURE_CAPTURE_BUDGET_MS}, FIXTURE_CAPTURE_BUDGET_MS)):
+            start = time.monotonic()
+            response = session.action("screenshot", **params)
+            elapsed = time.monotonic() - start
+            require(response["error"] and not response["image"], "%s: silent server returned pixels" % name)
+            error = response["error"]
+            require(error.get("code") == STALE_SCREEN_CODE and (error.get("data") or {}).get("reason") == "server_silent",
+                    "%s: silent capture is not typed stale_screen server_silent: %r" % (name, error))
+            # The budget is stamped at request receipt, so the capture's own
+            # remainder may be a few milliseconds shorter than deadline_ms.
+            named = re.match(r"No fresh complete framebuffer update within (\d+) ms;", error.get("message", ""))
+            require(named and limit - 250 <= int(named.group(1)) <= limit,
+                    "%s: deadline message does not name its %d ms deadline: %r" % (name, limit, error.get("message")))
+            require(limit / 1000 <= elapsed < limit / 1000 + 2.5,
+                    "%s: capture took %.3f s, not its %d ms deadline" % (name, elapsed, limit))
+            failures[name] = {"elapsedMilliseconds": round(elapsed * 1000, 3), "deadlineMilliseconds": limit}
+        blocked = session.action("key_tap", key="b")
+        require(blocked["error"], "failed observation authorized subsequent input")
+        require(not [e for e in fixture.snapshot()["events"] if e["kind"] == "key"],
+                "input reached the server after the fresh observation failed")
+        report["silentCaptures"] = failures
+        report["priorCompleteFrameMarker"] = sequence
+        report["status"] = "passed"
+    except Exception as error:
+        report["failure"] = type(error).__name__ + ": " + str(error)
+    finally:
+        if session:
+            report["processExitCode"] = session.close()
+            (args.output_dir / "native-capture-timeout.stderr.txt").write_bytes(session.stderr)
+        fixture.finished.wait(3)
+        fixture.close()
+        report["fixtureErrors"] = fixture.snapshot()["errors"]
+        if report["status"] == "passed" and (report["fixtureErrors"] or report.get("processExitCode") != 0):
+            report["status"] = "failed"
+            report["failure"] = "fixture errors %r or nonzero exit %r" % (report["fixtureErrors"],
+                                                                          report.get("processExitCode"))
+        (args.output_dir / "native-capture-timeout.json").write_text(json.dumps(report, indent=2) + "\n")
+    require(report["status"] == "passed", report.get("failure", "fixture failed"))
+    return report
 
 
 class NativeSession(JsonProcess):
@@ -1214,6 +1272,8 @@ def main():
                 receipt["scenarios"].append(run_scenario(kind, mode, args.captures, args))
         print("Running native input-settle fixture", flush=True)
         receipt["scenarios"].append(run_input_settle_scenario(args))
+        print("Running native capture-timeout fixture", flush=True)
+        receipt["scenarios"].append(run_capture_timeout_scenario(args))
         for request_mode in args.request_modes:
             for model in MODEL_SCENARIOS:
                 print("Running native %s request model in %s mode" % (model, request_mode), flush=True)

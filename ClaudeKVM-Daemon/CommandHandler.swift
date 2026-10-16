@@ -118,7 +118,8 @@ extension ClaudeKVMDaemon {
         let receivedMs = Self.monotonicMilliseconds()
 
         // The private deadline_ms budget (stamped by the Node executor) bounds
-        // only the input settle wait; nothing else in a request waits on it.
+        // the input settle wait and caps each fresh-capture deadline, so both
+        // fail typed before the executor's own tool deadline fires.
         input.requestDeadlineNs = p?.deadlineMs.map {
             input.inputSettle.now() &+ UInt64(max(0, $0)) * 1_000_000
         }
@@ -157,7 +158,7 @@ extension ClaudeKVMDaemon {
                 // Revoke the prior observation before a refresh can fail.
                 input.context = nil
                 // Every capture-path failure leaves as a typed stale_screen.
-                capturedFrame = try await vnc.captureFreshObservation()
+                capturedFrame = try await vnc.captureFreshObservation(deadlineNs: input.requestDeadlineNs)
             default: capturedFrame = nil
             }
             if let frame = capturedFrame { admitFreshFrame(frame, input: input, scaling: scaling) }
@@ -243,7 +244,7 @@ extension ClaudeKVMDaemon {
                     }
                     let remaining = stability.timeoutMilliseconds - stability.elapsed(atMilliseconds: now)
                     try await Task.sleep(nanoseconds: min(poll, remaining) * 1_000_000)
-                    let next = try await vnc.captureFreshObservation()
+                    let next = try await vnc.captureFreshObservation(deadlineNs: input.requestDeadlineNs)
                     admitFreshFrame(next, input: input, scaling: scaling)
                     let diff = FrameRegion.evaluate(baseline: (pixels: frame.pixels, context: frame.inputContext),
                                                     current: next.pixels, context: next.inputContext,
@@ -294,7 +295,7 @@ extension ClaudeKVMDaemon {
                             elapsedMilliseconds: Int(elapsed), captures: captures)
                     }
                     try await Task.sleep(nanoseconds: min(Self.expectChangePollMs, timeout - elapsed) * 1_000_000)
-                    frame = try await vnc.captureFreshObservation()
+                    frame = try await vnc.captureFreshObservation(deadlineNs: input.requestDeadlineNs)
                     admitFreshFrame(frame, input: input, scaling: scaling)
                     captures += 1
                 }

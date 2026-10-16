@@ -173,6 +173,19 @@ observations of one target, not qualifications.
   and drops input for about 2.5 to 2.8 s after authentication. See
   [Apple input settle time](#apple-input-settle-time); the controller's
   `--input-settle-ms` handles it.
+- **Mid-update pause after UI-heavy input.** Right after input that makes the
+  target redraw heavily (typing into System Settings search, for example),
+  `screensharingd` sent the start of its answer to a full framebuffer request
+  at once, then paused for up to about 4.7 s before finishing it. With a fixed
+  5 s capture deadline, about one in three post-input screenshots failed as
+  `-32010` `stale_screen`, and the next capture succeeded. A focused blinking
+  caret alone gave no stale capture in 20 tries. The controller now waits up
+  to 10000 ms for a capture on a server it detects as Apple and 5000 ms on any
+  other server. `--capture-timeout-ms` or the profile's
+  `vnc.captureTimeoutMs` (1000 to 20000) overrides it. The wait is for the
+  same fresh pixels: no cached frame is returned, and a capture that misses the
+  deadline still fails closed. The request's own deadline caps the wait, so the
+  failure stays typed. Agents take one more screenshot on `stale_screen`.
 - **Menu-bar indicator fade-in.** macOS fades in its "Screen Sharing active"
   menu-bar indicator about 1 to 2 s after a viewer connects. A new
   connection's first frame can catch it mid-fade: at 1280x720 scaled, the only

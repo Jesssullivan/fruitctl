@@ -874,6 +874,110 @@ final class VNCReconnectTests: XCTestCase {
         assertSingleClientAndBufferReleased(native)
     }
 
+    /// One fresh capture whose pixels complete `completeAfterNs` after its
+    /// full request (nil: the server stays silent and the deadline fires).
+    /// Returns the scheduled deadline delay and the capture outcome.
+    private func timedFreshCapture(config: VNCConfiguration = .init(), appleServer: Bool,
+                                   budgetNs: UInt64? = nil, completeAfterNs: UInt64?) async throws
+        -> (delay: TimeInterval, result: Result<VNCBridge.FrameCapture, Error>) {
+        let native = FakeNative(polls: [true])
+        let scheduler = ManualScheduler(), deadline = ManualScheduler(), time = ManualTime()
+        let registered = expectation(description: "fresh capture deadline registered")
+        deadline.onSchedule = { registered.fulfill() }
+        let bridge = VNCBridge(config: config, operations: native.operations, schedule: scheduler.schedule,
+                               scheduleFrameDeadline: deadline.schedule, monotonicNanoseconds: time.now)
+        try await bridge.connect()
+        bridge.isMacOS = appleServer
+        let deadlineNs = budgetNs.map { time.now() + $0 }
+        let waiting = Task { try await bridge.captureFreshFramebuffer(deadlineNs: deadlineNs) }
+        await fulfillment(of: [registered], timeout: 3)
+        XCTAssertEqual(bridge.framebufferWidth, 2) // flush the queued admission and send
+        XCTAssertEqual(native.observedFullUpdates, 1)
+        let job = deadline.take()
+        if let completeAfterNs {
+            native.beforePoll = { client in
+                memset(client.pointee.frameBuffer, 0x5a, 16)
+                vncGotFrameBufferUpdate(client, 0, 0, 2, 2)
+                time.advance(completeAfterNs)
+                vncFinishedFrameBufferUpdate(client)
+            }
+            scheduler.runNext()
+        } else {
+            job.queue.sync { job.work.perform() }
+        }
+        let result: Result<VNCBridge.FrameCapture, Error>
+        do { result = .success(try await waiting.value) } catch { result = .failure(error) }
+        job.queue.sync { job.work.perform() } // a retired deadline is a no-op
+        XCTAssertTrue(job.work.isCancelled)
+        XCTAssertEqual(native.observedFullUpdates, 1) // never replayed
+        bridge.disconnect(); XCTAssertEqual(bridge.framebufferWidth, 0)
+        assertSingleClientAndBufferReleased(native)
+        return (job.delay, result)
+    }
+
+    /// Measured on PZM: screensharingd paused ~4.7 s mid-answer after
+    /// UI-heavy input, and one capture completed at 4939 ms. On Apple the
+    /// same fresh pixels now arrive inside the 10 s deadline.
+    func testAppleCaptureDeadlineAdmitsFreshPixelsAfterFiveSeconds() async throws {
+        let (delay, result) = try await timedFreshCapture(appleServer: true, completeAfterNs: 7_000_000_000)
+        XCTAssertEqual(delay, 10)
+        let capture = try result.get()
+        XCTAssertTrue(capture.withFramebuffer { buffer, _, _ in buffer.allSatisfy { $0 == 0x5a } })
+        XCTAssertEqual(capture.provenance.coverage, "complete_received_after_request")
+        // The same arrival on a server not detected as Apple keeps the 5 s cutoff.
+        let (otherDelay, other) = try await timedFreshCapture(appleServer: false, completeAfterNs: 7_000_000_000)
+        XCTAssertEqual(otherDelay, 5)
+        guard case .failure(VNCError.staleScreen(let reason, let data)) = other else {
+            return XCTFail("late pixels admitted on a 5 s deadline")
+        }
+        XCTAssertEqual(reason, .lateComplete)
+        XCTAssertTrue(data.message.hasPrefix("No fresh complete framebuffer update within 5 seconds"))
+    }
+
+    /// The longer deadline is still a deadline: nothing cached is returned.
+    func testAppleCaptureDeadlineStillFailsClosedWithItsOwnDuration() async throws {
+        let (lateDelay, late) = try await timedFreshCapture(appleServer: true, completeAfterNs: 10_000_000_000)
+        XCTAssertEqual(lateDelay, 10)
+        guard case .failure(VNCError.staleScreen(let lateReason, let lateData)) = late else {
+            return XCTFail("pixels at the 10 s cutoff admitted")
+        }
+        XCTAssertEqual(lateReason, .lateComplete)
+        XCTAssertTrue(lateData.message.hasPrefix("No fresh complete framebuffer update within 10 seconds;"))
+        let (_, silent) = try await timedFreshCapture(appleServer: true, completeAfterNs: nil)
+        guard case .failure(VNCError.staleScreen(let silentReason, let silentData)) = silent else {
+            return XCTFail("silent Apple server returned pixels")
+        }
+        XCTAssertEqual(silentReason, .serverSilent)
+        XCTAssertTrue(silentData.message.hasPrefix(VNCError.staleScreenDeadlinePrefix))
+    }
+
+    func testExplicitCaptureTimeoutAndRequestBudgetBoundTheDeadline() async throws {
+        var config = VNCConfiguration(); config.captureTimeoutMilliseconds = 7_500
+        // An explicit flag applies to any server, Apple included.
+        let (configuredDelay, configured) = try await timedFreshCapture(config: config, appleServer: true,
+                                                                        completeAfterNs: nil)
+        XCTAssertEqual(configuredDelay, 7.5)
+        guard case .failure(VNCError.staleScreen(_, let configuredData)) = configured else {
+            return XCTFail("silent capture succeeded")
+        }
+        XCTAssertTrue(configuredData.message.hasPrefix("No fresh complete framebuffer update within 7500 ms;"))
+        // A request budget shorter than the capture deadline caps it, so the
+        // capture fails typed before the executor's tool deadline.
+        let (cappedDelay, capped) = try await timedFreshCapture(appleServer: true, budgetNs: 2_000_000_000,
+                                                                completeAfterNs: 2_000_000_000)
+        XCTAssertEqual(cappedDelay, 2)
+        guard case .failure(VNCError.staleScreen(let cappedReason, let cappedData)) = capped else {
+            return XCTFail("pixels after the request budget admitted")
+        }
+        XCTAssertEqual(cappedReason, .lateComplete)
+        XCTAssertTrue(cappedData.message.hasPrefix("No fresh complete framebuffer update within 2 seconds;"))
+        // A budget longer than the capture deadline never extends it.
+        let (longDelay, long) = try await timedFreshCapture(appleServer: false, budgetNs: 25_000_000_000,
+                                                            completeAfterNs: 1_000_000_000)
+        XCTAssertEqual(longDelay, 5)
+        XCTAssertNoThrow(try long.get())
+    }
+
     func testFreshCompleteResultAtOrAfterCutoffRefusesWithDelayedTimer() async throws {
         for elapsed in [UInt64(5_000_000_000), UInt64(5_000_000_001)] {
             let native = FakeNative(polls: [true])
@@ -1432,7 +1536,7 @@ final class VNCReconnectTests: XCTestCase {
         do { _ = try await waiting.value; XCTFail("first-wins answered behind an outstanding incremental") }
         catch VNCError.staleScreen(let reason, let data) {
             XCTAssertEqual(reason, .serverSilent)
-            XCTAssertTrue(data.message.hasPrefix(VNCError.staleScreenDeadlineMessage))
+            XCTAssertTrue(data.message.hasPrefix(VNCError.staleScreenDeadlineMessage(milliseconds: 5_000)))
             // The capture's own request plus the merged connect-time duplicate.
             XCTAssertEqual(data.diagnostics.unansweredFullRequests, 2)
             XCTAssertEqual(data.diagnostics.unansweredIncrementalRequests, 5)

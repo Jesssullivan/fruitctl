@@ -82,6 +82,8 @@ final class VNCBridge: @unchecked Sendable {
         let session: UUID?
         let registeredNs: UInt64
         let expiresNs: UInt64
+        /// This capture's own deadline, named in its stale_screen message.
+        let deadlineMilliseconds: Int
         var continuation: CheckedContinuation<FrameCapture, Error>?
         var deadline: DispatchWorkItem?
         var cancelled = false
@@ -112,6 +114,7 @@ final class VNCBridge: @unchecked Sendable {
             self.session = session
             self.registeredNs = registeredNs
             self.expiresNs = expiresNs
+            self.deadlineMilliseconds = Int((expiresNs - registeredNs + 999_999) / 1_000_000)
         }
     }
     private enum FreshCaptureAdmission {
@@ -834,21 +837,33 @@ final class VNCBridge: @unchecked Sendable {
     /// The screen-observation entry point: every failure leaves as a typed
     /// stale_screen, including disconnection and cancellation, which keep
     /// their own Swift types inside the bridge.
-    func captureFreshObservation() async throws -> FrameCapture {
-        do { return try await captureFreshFramebuffer() }
+    func captureFreshObservation(deadlineNs: UInt64? = nil) async throws -> FrameCapture {
+        do { return try await captureFreshFramebuffer(deadlineNs: deadlineNs) }
         catch { throw VNCError.classifyStaleScreen(error, diagnostics: framebufferDiagnostics) ?? error }
+    }
+
+    /// The full-capture deadline for the server as detected now: an explicit
+    /// `--capture-timeout-ms`, else 10000 ms on Apple and 5000 ms otherwise.
+    var captureDeadlineMilliseconds: Int {
+        VNCCaptureDeadline.effectiveMilliseconds(configured: config.captureTimeoutMilliseconds,
+                                                 appleServer: isMacOS)
     }
 
     /// Cached completeness is insufficient for a current screenshot. Register
     /// the independent deadline before queueing a full request, then require
     /// newly received pixels and FinishedUpdate on that same allocation.
-    func captureFreshFramebuffer() async throws -> FrameCapture {
+    /// `deadlineNs` (same clock as `monotonicNanoseconds`) is the request's
+    /// own budget: the capture deadline never extends past it, so a capture
+    /// fails as typed stale_screen before the caller's tool deadline fires.
+    func captureFreshFramebuffer(deadlineNs: UInt64? = nil) async throws -> FrameCapture {
         try Task.checkCancellation()
         let registeredNs = monotonicNanoseconds()
-        let (expiresNs, expiryOverflow) = registeredNs.addingReportingOverflow(5_000_000_000)
+        let captureNs = UInt64(captureDeadlineMilliseconds) * 1_000_000
+        var (expiresNs, expiryOverflow) = registeredNs.addingReportingOverflow(captureNs)
         guard !expiryOverflow else {
             throw staleScreen(.requestFailed, "Fresh framebuffer deadline exceeds monotonic clock range")
         }
+        if let deadlineNs { expiresNs = max(registeredNs, min(expiresNs, deadlineNs)) }
         let waiter = FreshFrameWaiter(session: desiredSession.withLock { $0 },
                                      registeredNs: registeredNs, expiresNs: expiresNs)
         return try await withTaskCancellationHandler {
@@ -873,7 +888,8 @@ final class VNCBridge: @unchecked Sendable {
                     return
                 case nil: break
                 }
-                scheduleFrameDeadline(.global(qos: .userInitiated), 5, deadline)
+                scheduleFrameDeadline(.global(qos: .userInitiated),
+                                      TimeInterval(waiter.expiresNs - waiter.registeredNs) / 1_000_000_000, deadline)
                 messageQueue.async { [self] in
                     guard freshFrameWaiter.withLock({ $0 === waiter }) else { return }
                     guard let client = activeClient, waiter.session == clientSession else {
@@ -1005,7 +1021,7 @@ final class VNCBridge: @unchecked Sendable {
         else { reason = .serverSilent }
         let diagnostics = framebufferDiagnostics
         return .staleScreen(reason: reason, data: VNCStaleScreenData(
-            message: "\(VNCError.staleScreenDeadlineMessage); diagnostics=\(diagnostics.encoded)",
+            message: "\(VNCError.staleScreenDeadlineMessage(milliseconds: waiter.deadlineMilliseconds)); diagnostics=\(diagnostics.encoded)",
             diagnostics: diagnostics))
     }
 

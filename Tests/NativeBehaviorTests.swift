@@ -604,7 +604,7 @@ final class NativeBehaviorTests: XCTestCase {
         let encoder = JSONEncoder()
         encoder.outputFormatting = .sortedKeys
         for reason in VNCStaleScreenReason.allCases {
-            let message = "\(VNCError.staleScreenDeadlineMessage); diagnostics=\(diagnostics.encoded)"
+            let message = "\(VNCError.staleScreenDeadlineMessage(milliseconds: 5_000)); diagnostics=\(diagnostics.encoded)"
             XCTAssertTrue(message.hasPrefix("No fresh complete framebuffer update within 5 seconds"))
             let error = VNCError.staleScreen(reason: reason,
                                              data: VNCStaleScreenData(message: message, diagnostics: diagnostics))
@@ -964,6 +964,35 @@ final class NativeBehaviorTests: XCTestCase {
         XCTAssertFalse(idle.status().connected)
         XCTAssertFalse(idle.status().ready)
         XCTAssertFalse(idle.admits(generation: 0))
+    }
+
+    /// Measured on Apple: screensharingd paused ~4.7 s mid-update after
+    /// UI-heavy input, so Apple gets 10 s and every other server keeps 5 s.
+    func testCaptureDeadlineDefaultsAppleOnlyAndClampsTheFlag() {
+        XCTAssertEqual(VNCCaptureDeadline.effectiveMilliseconds(configured: nil, appleServer: true), 10_000)
+        XCTAssertEqual(VNCCaptureDeadline.effectiveMilliseconds(configured: nil, appleServer: false), 5_000)
+        XCTAssertEqual(VNCCaptureDeadline.effectiveMilliseconds(configured: 7_500, appleServer: false), 7_500)
+        XCTAssertEqual(VNCCaptureDeadline.effectiveMilliseconds(configured: 5_000, appleServer: true), 5_000)
+        XCTAssertEqual(VNCCaptureDeadline.effectiveMilliseconds(configured: 10, appleServer: true), 1_000)
+        XCTAssertEqual(VNCCaptureDeadline.effectiveMilliseconds(configured: 60_000, appleServer: false), 20_000)
+        XCTAssertLessThan(VNCCaptureDeadline.maximumMilliseconds, 30_000, "must fit inside the MCP tool deadline")
+        // The bridge reads Apple detection at capture time, after the ARD credential request.
+        var config = VNCConfiguration()
+        let bridge = VNCBridge(config: config)
+        XCTAssertEqual(bridge.captureDeadlineMilliseconds, 5_000)
+        bridge.isMacOS = true
+        XCTAssertEqual(bridge.captureDeadlineMilliseconds, 10_000)
+        config.captureTimeoutMilliseconds = 8_000
+        XCTAssertEqual(VNCBridge(config: config).captureDeadlineMilliseconds, 8_000)
+        // The compatible prefix survives; the rest names the actual deadline.
+        XCTAssertEqual(VNCError.staleScreenDeadlineMessage(milliseconds: 5_000),
+                       "No fresh complete framebuffer update within 5 seconds")
+        XCTAssertEqual(VNCError.staleScreenDeadlineMessage(milliseconds: 10_000),
+                       "No fresh complete framebuffer update within 10 seconds")
+        XCTAssertEqual(VNCError.staleScreenDeadlineMessage(milliseconds: 2_345),
+                       "No fresh complete framebuffer update within 2345 ms")
+        XCTAssertTrue(VNCError.staleScreenDeadlineMessage(milliseconds: 0)
+            .hasPrefix(VNCError.staleScreenDeadlinePrefix))
     }
 
     /// Measured on Apple: keys at +1.3 s were ignored. The first input now

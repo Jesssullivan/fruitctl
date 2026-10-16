@@ -67,6 +67,11 @@ for full-frame identity, completeness, freshness, and mapping checks.
 
 Every observation is a fresh capture. None returns or compares a cached frame;
 a capture that cannot get fresh pixels fails as `-32010` `stale_screen`.
+On `stale_screen`, take one more screenshot before acting. Do not retry in a
+loop: if the second capture also fails, report it. Input after a failed
+capture is refused until a screenshot succeeds, so nothing acts on pixels you
+did not see. The capture deadline is 10 s on Apple Screen Sharing and 5 s on
+other servers; a target profile can set `vnc.captureTimeoutMs`.
 
 - `zoom {x, y, width, height, max_dimension?}` returns the region at native
   resolution, never upscaled. The longer image side is at most `max_dimension`
