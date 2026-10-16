@@ -50,7 +50,7 @@ test('baseline actions are the vnc_command surface older backends shipped', () =
   for (const action of BASELINE_ACTIONS) assert.ok(surface.has(action), `${action} is not a vnc_command action`);
   // Newer methods stay outside the baseline: only advertised metadata enables them.
   assert.deepEqual([...surface].filter(action => !BASELINE_ACTIONS.has(action)).sort(),
-    ['cursor_position', 'hold_key', 'mouse_down', 'mouse_up', 'triple_click']);
+    ['cursor_position', 'hold_key', 'mouse_down', 'mouse_up', 'triple_click', 'wait_for_stable', 'zoom']);
 });
 
 test('Anthropic actions translate to Fruitctl actions with scaled coordinates', () => {
@@ -69,7 +69,7 @@ test('Anthropic actions translate to Fruitctl actions with scaled coordinates', 
   assert.deepEqual(steps({ action: 'scroll', coordinate: [7, 8], scroll_direction: 'left' }),
     [{ action: 'scroll', x: 7, y: 8, direction: 'left', amount: 3 }]);
   assert.deepEqual(steps({ action: 'cursor_position' }), [{ action: 'cursor_position' }]);
-  assert.deepEqual(steps({ action: 'zoom', region: [0, 0, 100, 50] }), [{ action: 'zoom', x: 0, y: 0, toX: 100, toY: 50 }]);
+  assert.deepEqual(steps({ action: 'zoom', region: [0, 0, 100, 50] }), [{ action: 'zoom', x: 0, y: 0, width: 100, height: 50 }]);
   assert.deepEqual(steps({ action: 'wait' }), [{ action: 'wait' }]);
   assert.deepEqual(steps({ action: 'wait', duration: 2 }), [{ action: 'wait', ms: 2000 }]);
   assert.deepEqual(steps({ action: 'hold_key', text: 'shift', duration: 0.5 }),
