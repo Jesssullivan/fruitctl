@@ -41,7 +41,40 @@ struct VNCFramebufferDiagnostics: Codable, Sendable {
     var skippedCopyRectangles = 0
     var complete = false
     var phase = VNCDecoderPhase.disconnected
+    // Connection-scoped request accounting. RFB requests carry no identifier,
+    // so these values are inferred and err high, never low. A full request
+    // stays counted until an update whose rectangles alone cover the whole
+    // allocation retires one; a server that answers several full requests
+    // with one update leaves the count high. Incremental requests (the
+    // bridge's stream polls and LibVNC's re-arms) are retired by the next
+    // update that carries any rectangle. autoRearmObserved counts LibVNC's
+    // own post-update incremental request (rfbclient.c:2564), written while
+    // its request gate was open.
+    var unansweredFullRequests = 0
+    var unansweredIncrementalRequests = 0
+    var autoRearmObserved = 0
+    // On-demand mode: times the closed request gate was found reopened by a
+    // server SupportedMessages rectangle, then closed again.
+    var requestGateLeaks = 0
     var lastCallbackAgeMilliseconds: UInt64?
+
+    // Explicit wire names keep `encoded` and typed error data identical.
+    enum CodingKeys: String, CodingKey {
+        case connectionGeneration = "connection_generation"
+        case allocations, width, height
+        case pixelsRemaining = "pixels_remaining"
+        case rectangles
+        case copyRectangles = "copy_rectangles"
+        case finishedUpdates = "finished_updates"
+        case rejectedRectangles = "rejected_rectangles"
+        case skippedCopyRectangles = "skipped_copy_rectangles"
+        case complete, phase
+        case unansweredFullRequests = "unanswered_full_requests"
+        case unansweredIncrementalRequests = "unanswered_incremental_requests"
+        case autoRearmObserved = "auto_rearm_observed"
+        case requestGateLeaks = "request_gate_leaks"
+        case lastCallbackAgeMilliseconds = "last_callback_age_milliseconds"
+    }
 
     var encoded: String {
         let encoder = JSONEncoder()
@@ -78,6 +111,88 @@ enum VNCConnectionState: Sendable, CustomStringConvertible {
 
 // MARK: - Errors
 
+/// How the daemon asks the server for framebuffer updates.
+enum VNCRequestMode: String, CaseIterable, Codable, Sendable {
+    /// Default: incremental polls while idle and LibVNC's re-arm after every
+    /// update; the daemon's own polls pause while a capture is pending.
+    case stream
+    /// Opt-in: no incremental request is ever written. LibVNC's request gate
+    /// stays closed except around this daemon's own whole-screen requests.
+    case onDemand = "on-demand"
+}
+
+/// How one successful observation was obtained. Every field is control flow;
+/// none carries pixels, coordinates or server text.
+struct VNCCaptureProvenance: Encodable, Equatable, Sendable {
+    struct Requests: Encodable, Equatable, Sendable {
+        var full = 0
+        var incremental = 0
+    }
+    /// Pixels were received over this connection, not a side session.
+    var source = "in_session"
+    /// Every pixel arrived after this capture's own request, then FinishedUpdate.
+    var coverage = "complete_received_after_request"
+    var requestMode: VNCRequestMode
+    /// Requests written while this capture was pending, its own included.
+    var requests = Requests()
+    /// Inferred requests of each kind still unanswered when this capture's
+    /// own request was admitted.
+    var priorUnansweredRequests = Requests()
+    /// True only when no request was believed outstanding at admission and no
+    /// LibVNC request leaked through the on-demand gate while pending: every
+    /// update that completed this capture then answers a request written after
+    /// any earlier input. Stream mode always has LibVNC's re-arm outstanding.
+    var orderedAfterPriorInput = true
+    var elapsedMilliseconds: UInt64 = 0
+
+    enum CodingKeys: String, CodingKey {
+        case source, coverage, requests
+        case requestMode = "request_mode"
+        case priorUnansweredRequests = "prior_unanswered_requests"
+        case orderedAfterPriorInput = "ordered_after_prior_input"
+        case elapsedMilliseconds = "elapsed_ms"
+        case elicitedInput = "elicited_input"
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(source, forKey: .source)
+        try container.encode(coverage, forKey: .coverage)
+        try container.encode(requestMode, forKey: .requestMode)
+        try container.encode(requests, forKey: .requests)
+        try container.encode(priorUnansweredRequests, forKey: .priorUnansweredRequests)
+        try container.encode(orderedAfterPriorInput, forKey: .orderedAfterPriorInput)
+        try container.encode(elapsedMilliseconds, forKey: .elapsedMilliseconds)
+        // Observation never writes input to obtain pixels.
+        try container.encodeNil(forKey: .elicitedInput)
+    }
+}
+
+/// Stable reasons a screen observation produced no fresh complete frame.
+/// The raw values are the public JSON-RPC `data.reason` vocabulary.
+enum VNCStaleScreenReason: String, CaseIterable, Sendable {
+    /// The request was written and no update arrived before the deadline.
+    case serverSilent = "server_silent"
+    /// Updates arrived, but none carried a framebuffer rectangle.
+    case metadataOnly = "metadata_only"
+    /// Rectangles arrived without covering every pixel before the deadline.
+    case incompleteCoverage = "incomplete_coverage"
+    /// Every pixel arrived after the request, but only at or after the deadline.
+    case lateComplete = "late_complete"
+    case allocationChanged = "allocation_changed"
+    case disconnected
+    /// The request could not be written before the deadline.
+    case requestFailed = "request_failed"
+    case captureBusy = "capture_busy"
+    case cancelled
+}
+
+/// Typed failure data: a bounded message plus control-flow diagnostics only.
+struct VNCStaleScreenData: Sendable {
+    let message: String
+    let diagnostics: VNCFramebufferDiagnostics
+}
+
 enum VNCError: LocalizedError {
     case notConnected
     case connectionFailed(String)
@@ -85,6 +200,12 @@ enum VNCError: LocalizedError {
     case messageLoopFailed
     case framebufferAllocationFailed
     case sendFailed(String)
+    case staleScreen(reason: VNCStaleScreenReason, data: VNCStaleScreenData)
+
+    /// JSON-RPC error code for every stale_screen observation failure.
+    static let staleScreenCode = -32010
+    /// Deadline failures keep this compatible message prefix.
+    static let staleScreenDeadlineMessage = "No fresh complete framebuffer update within 5 seconds"
 
     var errorDescription: String? {
         switch self {
@@ -94,7 +215,27 @@ enum VNCError: LocalizedError {
         case .messageLoopFailed: "VNC message loop encountered an error."
         case .framebufferAllocationFailed: "Failed to allocate framebuffer."
         case .sendFailed(let msg): "Failed to send VNC event: \(msg)"
+        case .staleScreen(_, let data): data.message
         }
+    }
+
+    /// Classify a fresh-capture failure. Disconnection and cancellation keep
+    /// their own Swift types inside the bridge; only the wire sees this form.
+    static func classifyStaleScreen(_ error: Error,
+                                    diagnostics: VNCFramebufferDiagnostics) -> VNCError? {
+        if let typed = error as? VNCError {
+            switch typed {
+            case .staleScreen: return typed
+            case .notConnected:
+                return .staleScreen(reason: .disconnected, data: VNCStaleScreenData(
+                    message: typed.errorDescription ?? "Not connected to VNC server.",
+                    diagnostics: diagnostics))
+            default: return nil
+            }
+        }
+        guard error is CancellationError else { return nil }
+        return .staleScreen(reason: .cancelled, data: VNCStaleScreenData(
+            message: "Fresh framebuffer capture cancelled", diagnostics: diagnostics))
     }
 }
 
@@ -113,4 +254,7 @@ struct VNCConfiguration {
     var reconnectDelay: TimeInterval = 2.0
     var maxReconnectAttempts: Int = 10
     var messageLoopInterval: UInt32 = 500
+    /// Write a header-only client-to-server ledger to stderr (no payloads).
+    var wireLedger: Bool = false
+    var requestMode: VNCRequestMode = .stream
 }

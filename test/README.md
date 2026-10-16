@@ -26,3 +26,5 @@ reconnect, behavior, and Host suites are declared in [project.yml](../project.ym
 `just test-observation-gate <daemon> <output_dir>` is the explicit Darwin-only
 synthetic input-admission check. Offline and synthetic results do not establish
 real frontend or desktop qualification.
+[fruitctl-freshness-probe.md](fruitctl-freshness-probe.md) describes the
+attended, observation-only TIN-5509 freshness probe against a real target.

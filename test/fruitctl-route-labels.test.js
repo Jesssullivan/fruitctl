@@ -55,7 +55,7 @@ test('every MCP result carries labels, health shows them, and executor fields ca
   assert.ok(health.content.some(block => block.text === 'route: raw; indicator: absent'));
   const refused = await session.command({ action: 'key_tap', key: 'tab' });
   assert.equal(refused.isError, true);
-  assert.deepEqual(refused.structuredContent, { error: 'refused', ...RAW_PRESENTATION });
+  assert.deepEqual(refused.structuredContent, { error: { code: -1, message: 'refused' }, ...RAW_PRESENTATION });
   const queued = await session.queue({ actions: [{ action: 'wait' }] });
   assert.deepEqual(queued.structuredContent, { completed: 1, ...RAW_PRESENTATION });
 
@@ -119,11 +119,12 @@ test('regression: failures never carry a present indicator into MCP results', as
   };
   const session = new McpSession(executor);
   const thrown = await session.command({ action: 'wait' });
-  assert.deepEqual(thrown.structuredContent, { error: 'transport lost', route: 'host', indicator: 'unknown' });
+  assert.deepEqual(thrown.structuredContent, { error: { message: 'transport lost' }, route: 'host', indicator: 'unknown' });
   const refused = await session.command({ action: 'key_tap', key: 'tab' });
-  assert.deepEqual(refused.structuredContent, { error: 'refused', route: 'host', indicator: 'unknown' });
+  assert.deepEqual(refused.structuredContent, { error: { code: -1, message: 'refused' }, route: 'host', indicator: 'unknown' });
   const queued = await session.queue({ actions: [{ action: 'key_tap', key: 'tab' }] });
-  assert.deepEqual(queued.structuredContent, { completed: 0, failedIndex: 1, route: 'host', indicator: 'unknown' });
+  assert.deepEqual(queued.structuredContent, { completed: 0, failedIndex: 1,
+    error: { code: -1, message: 'refused' }, route: 'host', indicator: 'unknown' });
 
   const { server } = createMcpServer({ executor });
   const client = new Client({ name: 'offline-label-failures', version: '1' });
@@ -133,7 +134,7 @@ test('regression: failures never carry a present indicator into MCP results', as
   await client.connect(clientTransport);
   const failedRelease = await client.callTool({ name: 'task_complete', arguments: { summary: 'done' } });
   assert.equal(failedRelease.isError, true);
-  assert.deepEqual(failedRelease.structuredContent, { error: 'release unconfirmed', route: 'host', indicator: 'unknown' });
+  assert.deepEqual(failedRelease.structuredContent, { error: { message: 'release unconfirmed' }, route: 'host', indicator: 'unknown' });
 });
 
 async function hostBroker(t, executorFor) {

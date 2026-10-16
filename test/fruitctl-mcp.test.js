@@ -10,6 +10,9 @@ import { NdjsonParser, ResponseBudget, responseMetadata, validateResponse,
 const success = (result = {}) => ({ result });
 // Fake executors declare no route; the session labels them unknown.
 const undeclared = { route: 'unknown', indicator: 'unknown' };
+// A failed batch names its first failure in the shared {code?, message, data?} shape.
+const failedAt = (failedIndex, error, completed = failedIndex - 1) =>
+  ({ completed, failedIndex, error, ...undeclared });
 
 test('framing preserves split UTF-8, multiple frames and CRLF without logging payloads', () => {
   const received = [];
@@ -147,7 +150,7 @@ test('queue is one executor operation and first daemon error reports completed a
   ] });
   assert.equal(invocations, 1);
   assert.equal(result.isError, true);
-  assert.deepEqual(result.structuredContent, { completed: 1, failedIndex: 2, ...undeclared });
+  assert.deepEqual(result.structuredContent, failedAt(2, { code: -32000, message: 'key refused' }));
   assert.match(result.content[0].text, /\[1\] mouse_click: clicked\n\[2\] key_tap: ERROR/);
 });
 
@@ -160,7 +163,7 @@ test('queue transport failure retains partial progress and incomplete success is
   } });
   const result = await failed.queue({ actions });
   assert.equal(result.isError, true);
-  assert.deepEqual(result.structuredContent, { completed: 1, failedIndex: 2, ...undeclared });
+  assert.deepEqual(result.structuredContent, failedAt(2, { message: 'transport disconnected' }));
   assert.match(result.content[0].text, /first finished/);
   const incomplete = await new McpSession({ async execute() { return [success()]; } }).queue({ actions });
   assert.equal(incomplete.isError, true);
@@ -180,7 +183,7 @@ test('MCP admits aggregate response bytes and refuses oversized or malformed par
   const result = await session.queue({ actions });
   assert.equal(result.isError, true);
   assert.equal(aborted, true);
-  assert.deepEqual(result.structuredContent, { completed: 1, failedIndex: 2, ...undeclared });
+  assert.deepEqual(result.structuredContent, failedAt(2, { message: 'Batch response exceeds byte limit' }));
   assert.match(result.content[0].text, /Batch response exceeds byte limit/);
   const malformed = new McpSession({ async execute() {
     const error = new Error('lost transport');
@@ -189,7 +192,7 @@ test('MCP admits aggregate response bytes and refuses oversized or malformed par
   } });
   const partial = await malformed.queue({ actions });
   assert.equal(partial.isError, true);
-  assert.deepEqual(partial.structuredContent, { completed: 1, failedIndex: 2, ...undeclared });
+  assert.deepEqual(partial.structuredContent, failedAt(2, { message: 'Invalid daemon response shape' }));
   assert.match(partial.content[0].text, /Invalid daemon response shape/);
 });
 
@@ -204,7 +207,7 @@ test('MCP progress limits cancel the executor before excess metadata can be reta
   const result = await session.queue({ actions: [{ action: 'wait' }, { action: 'wait' }] });
   assert.equal(aborted, true);
   assert.equal(result.isError, true);
-  assert.deepEqual(result.structuredContent, { completed: 1, failedIndex: 2, ...undeclared });
+  assert.deepEqual(result.structuredContent, failedAt(2, { message: 'Batch response exceeds byte limit' }));
 });
 
 test('batch deadline includes every action, aborts executor and keeps completed progress', async () => {
@@ -217,7 +220,7 @@ test('batch deadline includes every action, aborts executor and keeps completed 
   const result = await session.queue({ actions: [{ action: 'wait' }, { action: 'wait' }] });
   assert.equal(aborted, true);
   assert.equal(result.isError, true);
-  assert.deepEqual(result.structuredContent, { completed: 1, failedIndex: 2, ...undeclared });
+  assert.deepEqual(result.structuredContent, failedAt(2, { message: 'Tool request timed out after 20ms' }));
   assert.match(result.content[0].text, /timed out after 20ms/);
 });
 
@@ -279,6 +282,45 @@ test('real MCP image responses retain PNG content and admitted geometry metadata
   assert.equal(result.structuredContent.scaledWidth, 1);
   assert.equal(Object.hasOwn(result.structuredContent, 'image'), false);
   assert.deepEqual(result.structuredContent.capture, { generation: 2, allocation: 3 });
+});
+
+test('real MCP errors keep native stale_screen code and data beside the compatible text and D7 labels', async (t) => {
+  const diagnostics = { connection_generation: 1, allocations: 1, unanswered_full_requests: 1,
+    auto_rearm_observed: 0, finished_updates: 0, rectangles: 0, complete: true, phase: 'idle' };
+  const message = `No fresh complete framebuffer update within 5 seconds; diagnostics=${JSON.stringify(diagnostics)}`;
+  const stale = { code: -32010, message, data: { reason: 'server_silent', diagnostics } };
+  const { server, session } = createMcpServer({ executor: { async execute(actions) {
+    return actions.length === 1 ? [{ error: stale }]
+      : [success({ detail: 'OK' }), { error: stale }];
+  } } });
+  const client = new Client({ name: 'offline-stale-screen-fixture', version: '1' });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  t.after(async () => { await client.close(); await server.close(); });
+  await server.connect(serverTransport);
+  await client.connect(clientTransport);
+  const result = await client.callTool({ name: 'vnc_command', arguments: { action: 'screenshot' } });
+  assert.equal(result.isError, true);
+  assert.deepEqual(result.content, [{ type: 'text', text: `Error: ${message}` }]);
+  assert.deepEqual(result.structuredContent, { error: stale, ...undeclared });
+  const queued = await session.queue({ actions: [{ action: 'wait' }, { action: 'screenshot' }] });
+  assert.equal(queued.isError, true);
+  assert.deepEqual(queued.structuredContent, failedAt(2, stale));
+  // Untyped native errors keep their code; transport failures carry their message only.
+  const plain = await new McpSession({ async execute() {
+    return [{ error: { code: -32000, message: 'key refused' } }];
+  } }).command({ action: 'wait' });
+  assert.deepEqual(plain.structuredContent, { error: { code: -32000, message: 'key refused' }, ...undeclared });
+  const thrown = await new McpSession({ async execute() { throw new Error('transport disconnected'); } })
+    .command({ action: 'wait' });
+  assert.deepEqual(thrown, { content: [{ type: 'text', text: 'Error: transport disconnected' }], isError: true,
+    structuredContent: { error: { message: 'transport disconnected' }, ...undeclared } });
+  // A typed error at the failing index outranks a transport failure reported with it.
+  const both = await new McpSession({ async execute() {
+    const error = new Error('transport disconnected');
+    error.responses = [success({ detail: 'OK' }), { error: stale }];
+    throw error;
+  } }).queue({ actions: [{ action: 'wait' }, { action: 'screenshot' }] });
+  assert.deepEqual(both.structuredContent, failedAt(2, stale));
 });
 
 test('real MCP task outcomes await ownership release and refuse completion when release fails', async (t) => {

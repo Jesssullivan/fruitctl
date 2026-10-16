@@ -44,6 +44,20 @@ private final class ManualScheduler {
     }
 }
 
+/// Static-screen request handling hypotheses for Apple's server (TIN-5509).
+/// None is a qualified Apple model; each pins one predicted behavior.
+private enum FakeServerModel {
+    /// Only the newest outstanding request counts; a full one is answered.
+    case latestWins
+    /// The oldest outstanding request absorbs later ones; a static screen
+    /// never answers an outstanding incremental, so a full one behind it waits.
+    case firstWins
+    /// Only the first full request on the connection is ever answered.
+    case sessionStartOnly
+    /// Nothing is ever answered.
+    case silent
+}
+
 private final class FakeNative {
     private let lock = NSLock()
     private var outcomes: [Bool]
@@ -63,6 +77,21 @@ private final class FakeNative {
     private var allocationRequests: [Int] = []
     private var fullUpdateRequests = 0
     private var incrementalUpdateRequests = 0
+    // Modeled wire state, per connection. LibVNC returns success without
+    // writing while its FramebufferUpdateRequest gate is closed.
+    private var outstandingRequests: [Bool] = [] // true = incremental
+    private var writtenFullRequests = 0
+    private var writtenIncrementalRequests = 0
+    private var autoRearmWrites = 0
+    private var suppressedRequests = 0
+    private var answeredFullRequests = 0
+    private var serverFrames = 0
+    private var inputWrites: [String] = []
+    /// When set, every poll lets this server model answer outstanding
+    /// requests with a complete frame (after beforePoll runs).
+    var serverModel: FakeServerModel?
+    /// The next model answer also carries a SupportedMessages rectangle.
+    var reopenGateOnNextUpdate = false
     var allocateBeforeFailure = false
     // Existing lifecycle cases model a complete initial update during init.
     // First-frame cases turn this off and deliver the actual callback later.
@@ -86,6 +115,76 @@ private final class FakeNative {
     var observedAllocationRequests: [Int] { lock.lock(); defer { lock.unlock() }; return allocationRequests }
     var observedFullUpdates: Int { lock.lock(); defer { lock.unlock() }; return fullUpdateRequests }
     var observedIncrementalUpdates: Int { lock.lock(); defer { lock.unlock() }; return incrementalUpdateRequests }
+    /// Requests that reached the modeled wire, including LibVNC's own.
+    var wire: (full: Int, incremental: Int, autoRearm: Int, suppressed: Int, outstanding: [Bool], frames: Int) {
+        lock.lock(); defer { lock.unlock() }
+        return (writtenFullRequests, writtenIncrementalRequests, autoRearmWrites, suppressedRequests,
+                outstandingRequests, serverFrames)
+    }
+    /// Every pointer, key and clipboard write, in order.
+    var observedInputWrites: [String] { lock.lock(); defer { lock.unlock() }; return inputWrites }
+
+    /// rfbclient.c:1497-1502: no bytes while the gate is closed or a client
+    /// resize is pending, yet the call still reports success.
+    private func requestGateOpen(_ client: VNCClientOperations.Client) -> Bool {
+        SupportsClient2Server(client, VNCBridge.framebufferUpdateRequestType) != 0
+            && client.pointee.requestedResize == 0
+    }
+
+    /// Also models LibVNC's own resize request (rfbclient.c:2143, :2699).
+    func writeRequest(_ client: VNCClientOperations.Client, incremental: Bool, autoRearm: Bool = false) {
+        let open = requestGateOpen(client)
+        lock.lock(); defer { lock.unlock() }
+        guard open else { suppressedRequests += 1; return }
+        outstandingRequests.append(incremental)
+        if incremental { writtenIncrementalRequests += 1 } else { writtenFullRequests += 1 }
+        if autoRearm { autoRearmWrites += 1 }
+    }
+
+    /// One server FramebufferUpdate as HandleRFBServerMessage processes it:
+    /// rectangle callbacks, then LibVNC's own incremental re-arm
+    /// (rfbclient.c:2564) unless the gate is closed, then FinishedUpdate.
+    /// An empty list is a metadata-only update. `reopenGate` models a
+    /// SupportedMessages pseudo-rectangle rewriting the request bitmap in
+    /// the same message (rfbclient.c:2184-2186), before the re-arm.
+    func deliverUpdate(_ client: VNCClientOperations.Client, rects: [(Int32, Int32, Int32, Int32)],
+                       reopenGate: Bool = false) {
+        lock.lock(); serverFrames += 1; let marker = UInt8(truncatingIfNeeded: serverFrames); lock.unlock()
+        if let pixels = client.pointee.frameBuffer, !rects.isEmpty {
+            memset(pixels, Int32(marker), Int(client.pointee.width) * Int(client.pointee.height) * 4)
+        }
+        for (x, y, width, height) in rects { vncGotFrameBufferUpdate(client, x, y, width, height) }
+        if reopenGate { Self.setDefaultSupportedMessages(client) }
+        writeRequest(client, incremental: true, autoRearm: true)
+        vncFinishedFrameBufferUpdate(client)
+    }
+
+    /// DefaultSupportedMessages (rfbclient.c:226-238), run during the real
+    /// protocol handshake; rfbGetClient alone leaves the bitmap zeroed.
+    static func setDefaultSupportedMessages(_ client: VNCClientOperations.Client) {
+        // SetPixelFormat 0, SetEncodings 2, FramebufferUpdateRequest 3,
+        // KeyEvent 4, PointerEvent 5, ClientCutText 6.
+        client.pointee.supportedMessages.client2server.0 |= 0b0111_1101
+    }
+
+    private func serverStep(_ client: VNCClientOperations.Client) {
+        guard let model = serverModel else { return }
+        lock.lock()
+        let answer: Bool
+        switch model {
+        case .latestWins: answer = outstandingRequests.last == false
+        case .firstWins: answer = outstandingRequests.first == false
+        case .sessionStartOnly: answer = answeredFullRequests == 0 && outstandingRequests.contains(false)
+        case .silent: answer = false
+        }
+        if answer { outstandingRequests.removeAll(); answeredFullRequests += 1 }
+        let reopen = answer && reopenGateOnNextUpdate
+        if reopen { reopenGateOnNextUpdate = false }
+        lock.unlock()
+        if answer {
+            deliverUpdate(client, rects: [(0, 0, client.pointee.width, client.pointee.height)], reopenGate: reopen)
+        }
+    }
     var bufferCounts: (allocated: Int, released: Int, live: Int, duplicate: Int) {
         lock.lock(); defer { lock.unlock() }
         return (buffersAllocated, buffersReleased, buffers.count, duplicateBufferReleases)
@@ -107,6 +206,7 @@ private final class FakeNative {
             guard let client = rfbGetClient(config.bitsPerSample, config.samplesPerPixel, config.bytesPerPixel) else { return nil }
             lock.lock()
             allocations += 1; live.insert(UInt(bitPattern: client)); peakLive = max(peakLive, live.count)
+            outstandingRequests = []; answeredFullRequests = 0 // a new server connection
             lock.unlock()
             return client
         }, initialize: { [self] client in
@@ -116,12 +216,15 @@ private final class FakeNative {
             let success = outcomes.isEmpty ? true : outcomes.removeFirst()
             lock.unlock()
             if success || allocateBeforeFailure {
+                Self.setDefaultSupportedMessages(client)
                 client.pointee.width = 2; client.pointee.height = 2
                 client.pointee.format.bitsPerPixel = 32
                 if vncMallocFrameBuffer(client) == 0 {
                     release(client, failed: true)
                     return false
                 }
+                // rfbInitConnection's own whole-screen request (vncviewer.c:423).
+                writeRequest(client, incremental: false)
                 afterFramebufferAllocation?()
                 if completeDuringInitialize { completePixelUpdate(client) }
             }
@@ -134,15 +237,20 @@ private final class FakeNative {
         poll: { [self] client, interval, phase in
             phase(.handlingServerMessage)
             beforePoll?(client)
+            serverStep(client)
             phase(.idle)
             lock.lock(); defer { lock.unlock() }
             pollIntervals.append(interval)
             return polls.isEmpty ? true : polls.removeFirst()
-        }, incrementalUpdate: { [self] _ in
+        }, incrementalUpdate: { [self] client in
             lock.lock(); incrementalUpdateRequests += 1; lock.unlock()
+            writeRequest(client, incremental: true)
+            return true
         }, fullUpdate: { [self] client in
             lock.lock(); fullUpdateRequests += 1; lock.unlock()
-            return beforeFullUpdate?(client) ?? true
+            let sent = beforeFullUpdate?(client) ?? true
+            if sent { writeRequest(client, incremental: false) }
+            return sent
         }, allocateFramebuffer: { [self] size in
             lock.lock(); allocationRequests.append(size); lock.unlock()
             // The owned fixture never allocates a server-sized large buffer,
@@ -158,7 +266,14 @@ private final class FakeNative {
             lock.unlock()
             if owned { free(buffer) }
         }, sendKey: { [self] _, key, down in
+            lock.lock(); inputWrites.append("key"); lock.unlock()
             onKey?(key, down)
+            return true
+        }, sendPointer: { [self] _, _, _, _ in
+            lock.lock(); inputWrites.append("pointer"); lock.unlock()
+            return true
+        }, sendClientCutText: { [self] _, _ in
+            lock.lock(); inputWrites.append("clipboard"); lock.unlock()
             return true
         })
     }
@@ -306,8 +421,9 @@ final class VNCReconnectTests: XCTestCase {
         XCTAssertEqual(deadline.delays, [5])
         deadline.runNext()
         do { _ = try await waiting.value; XCTFail("historical pixels admitted as fresh") }
-        catch VNCError.sendFailed(let reason) {
-            XCTAssertTrue(reason.hasPrefix("No fresh complete framebuffer update within 5 seconds"))
+        catch VNCError.staleScreen(let staleReason, let data) {
+            XCTAssertTrue(data.message.hasPrefix("No fresh complete framebuffer update within 5 seconds"))
+            XCTAssertEqual(staleReason, .metadataOnly)
         } catch { XCTFail("unexpected error") }
         // Existing cached consumers retain their original semantics.
         try await bridge.waitForFramebuffer()
@@ -384,7 +500,10 @@ final class VNCReconnectTests: XCTestCase {
         await fulfillment(of: [registered], timeout: 3)
         XCTAssertEqual(bridge.framebufferWidth, 2)
         do { _ = try await bridge.captureFreshFramebuffer(); XCTFail("overlapping capture admitted") }
-        catch VNCError.sendFailed(let reason) { XCTAssertEqual(reason, "Fresh framebuffer capture already in progress") }
+        catch VNCError.staleScreen(let reason, let data) {
+            XCTAssertEqual(reason, .captureBusy)
+            XCTAssertEqual(data.message, "Fresh framebuffer capture already in progress")
+        }
         catch { XCTFail("unexpected error") }
         waiting.cancel()
         do { _ = try await waiting.value; XCTFail("cancelled capture admitted") }
@@ -392,7 +511,10 @@ final class VNCReconnectTests: XCTestCase {
         deadline.onSchedule = nil
         native.beforeFullUpdate = { _ in false }
         do { _ = try await bridge.captureFreshFramebuffer(); XCTFail("failed send admitted") }
-        catch VNCError.sendFailed(let reason) { XCTAssertEqual(reason, "fresh framebuffer update request") }
+        catch VNCError.staleScreen(let reason, let data) {
+            XCTAssertEqual(reason, .requestFailed)
+            XCTAssertEqual(data.message, "Fresh framebuffer update request failed")
+        }
         catch { XCTFail("unexpected error") }
         bridge.disconnect(); XCTAssertEqual(bridge.framebufferWidth, 0)
     }
@@ -418,9 +540,10 @@ final class VNCReconnectTests: XCTestCase {
                 scheduler.runNext()
             } else { bridge.disconnect(); XCTAssertEqual(bridge.framebufferWidth, 0) }
             do { _ = try await waiting.value; XCTFail("capture rebound to another allocation") }
-            catch VNCError.sendFailed(let reason) {
+            catch VNCError.staleScreen(let reason, let data) {
                 XCTAssertTrue(resize)
-                XCTAssertEqual(reason, "Framebuffer allocation changed during fresh capture")
+                XCTAssertEqual(reason, .allocationChanged)
+                XCTAssertEqual(data.message, "Framebuffer allocation changed during fresh capture")
             } catch VNCError.notConnected { XCTAssertFalse(resize) }
             catch { XCTFail("unexpected error") }
             bridge.disconnect(); XCTAssertEqual(bridge.framebufferWidth, 0)
@@ -444,7 +567,7 @@ final class VNCReconnectTests: XCTestCase {
         await fulfillment(of: [registered], timeout: 3)
         deadline.runNext()
         do { _ = try await waiting.value; XCTFail("occupied queue admitted stale pixels") }
-        catch VNCError.sendFailed(let reason) { XCTAssertTrue(reason.hasPrefix("No fresh complete framebuffer update within 5 seconds")) }
+        catch VNCError.staleScreen(let staleReason, let data) { XCTAssertTrue(data.message.hasPrefix("No fresh complete framebuffer update within 5 seconds")); XCTAssertEqual(staleReason, .requestFailed) }
         catch { XCTFail("unexpected error") }
         release.signal(); await polling.value
         XCTAssertEqual(bridge.framebufferWidth, 2)
@@ -505,8 +628,9 @@ final class VNCReconnectTests: XCTestCase {
         let outcome = Task {
             defer { finished.fulfill() }
             do { _ = try await waiting.value; XCTFail("expired fresh capture succeeded") }
-            catch VNCError.sendFailed(let reason) {
-                XCTAssertTrue(reason.hasPrefix("No fresh complete framebuffer update within 5 seconds"))
+            catch VNCError.staleScreen(let staleReason, let data) {
+                XCTAssertTrue(data.message.hasPrefix("No fresh complete framebuffer update within 5 seconds"))
+                XCTAssertEqual(staleReason, .requestFailed)
             } catch { XCTFail("unexpected error: \(error)") }
         }
         await fulfillment(of: [entered], timeout: 3)
@@ -582,8 +706,9 @@ final class VNCReconnectTests: XCTestCase {
         let outcome = Task {
             defer { finished.fulfill() }
             do { _ = try await waiting.value; XCTFail("exact-cutoff request admitted") }
-            catch VNCError.sendFailed(let reason) {
-                XCTAssertTrue(reason.hasPrefix("No fresh complete framebuffer update within 5 seconds"))
+            catch VNCError.staleScreen(let staleReason, let data) {
+                XCTAssertTrue(data.message.hasPrefix("No fresh complete framebuffer update within 5 seconds"))
+                XCTAssertEqual(staleReason, .requestFailed)
             } catch { XCTFail("unexpected error: \(error)") }
         }
         await fulfillment(of: [registered, entered], timeout: 3)
@@ -764,8 +889,9 @@ final class VNCReconnectTests: XCTestCase {
             let outcome = Task {
                 defer { finished.fulfill() }
                 do { _ = try await waiting.value; events.append("success") }
-                catch VNCError.sendFailed(let reason) {
-                    XCTAssertTrue(reason.hasPrefix("No fresh complete framebuffer update within 5 seconds"))
+                catch VNCError.staleScreen(let staleReason, let data) {
+                    XCTAssertTrue(data.message.hasPrefix("No fresh complete framebuffer update within 5 seconds"))
+                    XCTAssertEqual(staleReason, .lateComplete) // fully covered, only late
                     events.append("timeout")
                 } catch { XCTFail("unexpected late result error: \(error)"); events.append("unexpected error") }
             }
@@ -808,8 +934,9 @@ final class VNCReconnectTests: XCTestCase {
         let firstOutcome = Task {
             defer { refused.fulfill() }
             do { _ = try await first.value; XCTFail("expired first capture succeeded") }
-            catch VNCError.sendFailed(let reason) {
-                XCTAssertTrue(reason.hasPrefix("No fresh complete framebuffer update within 5 seconds"))
+            catch VNCError.staleScreen(let staleReason, let data) {
+                XCTAssertTrue(data.message.hasPrefix("No fresh complete framebuffer update within 5 seconds"))
+                XCTAssertEqual(staleReason, .lateComplete)
             } catch { XCTFail("unexpected first result error: \(error)") }
         }
         await fulfillment(of: [registered], timeout: 3)
@@ -914,7 +1041,10 @@ final class VNCReconnectTests: XCTestCase {
         let outcome = Task {
             defer { finished.fulfill() }
             do { _ = try await waiting.value; XCTFail("failed send supplied a capture") }
-            catch VNCError.sendFailed(let reason) { XCTAssertEqual(reason, "fresh framebuffer update request") }
+            catch VNCError.staleScreen(let reason, let data) {
+                XCTAssertEqual(reason, .requestFailed)
+                XCTAssertEqual(data.message, "Fresh framebuffer update request failed")
+            }
             catch { XCTFail("unexpected failed-send error: \(error)") }
         }
         await fulfillment(of: [registered, finished], timeout: 3)
@@ -946,8 +1076,9 @@ final class VNCReconnectTests: XCTestCase {
             }
             scheduler.runNext()
             do { _ = try await bridge.captureFreshFramebuffer(); XCTFail("invalid allocation admitted") }
-            catch VNCError.sendFailed(let reason) {
-                XCTAssertEqual(reason, "Fresh framebuffer allocation is unavailable or invalid")
+            catch VNCError.staleScreen(let reason, let data) {
+                XCTAssertEqual(reason, .allocationChanged)
+                XCTAssertEqual(data.message, "Fresh framebuffer allocation is unavailable or invalid")
             } catch { XCTFail("unexpected error") }
             XCTAssertEqual(native.observedFullUpdates, 0)
             XCTAssertEqual(native.observedAllocationRequests, failedAllocation ? [16, 1156] : [16])
@@ -1034,7 +1165,9 @@ final class VNCReconnectTests: XCTestCase {
         let required: Set<String> = [
             "connection_generation", "allocations", "width", "height", "pixels_remaining",
             "rectangles", "copy_rectangles", "finished_updates", "rejected_rectangles",
-            "skipped_copy_rectangles", "complete", "phase"
+            "skipped_copy_rectangles", "complete", "phase",
+            "unanswered_full_requests", "unanswered_incremental_requests", "auto_rearm_observed",
+            "request_gate_leaks"
         ]
         let keys = Set(object.keys)
         XCTAssertTrue(required.isSubset(of: keys), file: file, line: line)
@@ -1094,8 +1227,9 @@ final class VNCReconnectTests: XCTestCase {
         time.advance(1) // the immutable five-second cutoff, not a renewed window
         originalDeadline.queue.sync { originalDeadline.work.perform() }
         do { _ = try await waiting.value; XCTFail("silent server returned historical pixels") }
-        catch VNCError.sendFailed(let reason) {
-            XCTAssertTrue(reason.hasPrefix("No fresh complete framebuffer update within 5 seconds"))
+        catch VNCError.staleScreen(let staleReason, let data) {
+            XCTAssertTrue(data.message.hasPrefix("No fresh complete framebuffer update within 5 seconds"))
+            XCTAssertEqual(staleReason, .serverSilent)
         } catch { XCTFail("unexpected error: \(error)") }
         XCTAssertTrue(originalDeadline.work.isCancelled)
         XCTAssertEqual(native.observedFullUpdates, 1)
@@ -1131,8 +1265,9 @@ final class VNCReconnectTests: XCTestCase {
             XCTAssertFalse(originalDeadline.work.isCancelled)
             originalDeadline.queue.sync { originalDeadline.work.perform() }
             do { _ = try await waiting.value; XCTFail("\(reply) reply completed a fresh capture") }
-            catch VNCError.sendFailed(let reason) {
-                XCTAssertTrue(reason.hasPrefix("No fresh complete framebuffer update within 5 seconds"))
+            catch VNCError.staleScreen(let staleReason, let data) {
+                XCTAssertTrue(data.message.hasPrefix("No fresh complete framebuffer update within 5 seconds"))
+                XCTAssertEqual(staleReason, reply == "partial" ? VNCStaleScreenReason.incompleteCoverage : VNCStaleScreenReason.metadataOnly)
             } catch { XCTFail("unexpected error: \(error)") }
             XCTAssertEqual(native.observedFullUpdates, 1)
             bridge.disconnect(); XCTAssertEqual(bridge.framebufferWidth, 0)
@@ -1196,6 +1331,457 @@ final class VNCReconnectTests: XCTestCase {
         }
         bridge.disconnect(); XCTAssertEqual(bridge.framebufferWidth, 0)
         assertSingleClientAndBufferReleased(native)
+    }
+
+    // MARK: - Apple static-screen request models (TIN-5509)
+
+    private struct ModelHarness {
+        let native: FakeNative
+        let scheduler: ManualScheduler
+        let deadline: ManualScheduler
+        let time: ManualTime
+        let bridge: VNCBridge
+    }
+
+    /// Connect under one server model, take the initial frame from that
+    /// model, then idle so the stream loop stacks its incremental polls.
+    private func connectModel(_ model: FakeServerModel, config: VNCConfiguration = .init(),
+                              idlePolls: Int = 3) async throws -> ModelHarness {
+        let native = FakeNative(polls: []); native.completeDuringInitialize = false
+        native.serverModel = model
+        let scheduler = ManualScheduler(), deadline = ManualScheduler(), time = ManualTime()
+        let bridge = VNCBridge(config: config, operations: native.operations, schedule: scheduler.schedule,
+                               scheduleFrameDeadline: deadline.schedule, monotonicNanoseconds: time.now)
+        try await bridge.connect()
+        time.advance(100_000_000); scheduler.runNext() // the model answers the connect requests
+        try await bridge.waitForFramebuffer()
+        for _ in 0..<idlePolls { time.advance(100_000_000); scheduler.runNext() }
+        return ModelHarness(native: native, scheduler: scheduler, deadline: deadline, time: time, bridge: bridge)
+    }
+
+    /// Start one fresh capture and flush its admission and request.
+    private func startCapture(_ harness: ModelHarness) async
+        -> (Task<VNCBridge.FrameCapture, Error>, ManualScheduler.Job) {
+        let registered = expectation(description: "fresh deadline registered")
+        harness.deadline.onSchedule = { registered.fulfill() }
+        let waiting = Task { try await harness.bridge.captureFreshFramebuffer() }
+        await fulfillment(of: [registered], timeout: 3)
+        harness.deadline.onSchedule = nil
+        XCTAssertEqual(harness.bridge.framebufferWidth, 2) // flush the queued admission and send
+        return (waiting, harness.deadline.take())
+    }
+
+    /// Latest-wins: with the daemon's own polls suppressed during a capture,
+    /// its full request is the newest one the server holds, so the current
+    /// stream mode already receives fresh complete pixels.
+    func testLatestWinsPassesWithCurrentSuppression() async throws {
+        let harness = try await connectModel(.latestWins)
+        let idle = harness.native.wire
+        // LibVNC's re-arm plus four stream polls are outstanding while idle.
+        XCTAssertEqual(idle.outstanding, Array(repeating: true, count: 5))
+        XCTAssertEqual(idle.autoRearm, 1)
+        XCTAssertEqual(harness.bridge.framebufferDiagnostics.autoRearmObserved, 1)
+        // The connect-time request and its missing-pixel duplicate were both
+        // answered by one update; only one is retired, so the count errs high.
+        XCTAssertEqual(harness.bridge.framebufferDiagnostics.unansweredFullRequests, 1)
+        XCTAssertEqual(harness.bridge.framebufferDiagnostics.unansweredIncrementalRequests, 5)
+        let (waiting, originalDeadline) = await startCapture(harness)
+        XCTAssertEqual(harness.native.wire.outstanding.last, false)
+        XCTAssertEqual(harness.bridge.framebufferDiagnostics.unansweredFullRequests, 2)
+        let incrementalBefore = harness.native.observedIncrementalUpdates
+        harness.time.advance(10_000_000); harness.scheduler.runNext()
+        let frame = try await waiting.value
+        XCTAssertTrue(originalDeadline.work.isCancelled)
+        XCTAssertEqual(harness.native.observedIncrementalUpdates, incrementalBefore)
+        XCTAssertTrue(frame.withFramebuffer { buffer, width, height in
+            width == 2 && height == 2 && buffer.count == 16 && buffer.allSatisfy { $0 == 2 }
+        }) // the second server frame, not the cached first one
+        // Stream mode: the answering update's own re-arm is on the wire too.
+        // Requests written before this capture's own were outstanding at
+        // admission, so stream mode never claims ordering after prior input.
+        XCTAssertEqual(frame.provenance, VNCCaptureProvenance(
+            requestMode: .stream, requests: .init(full: 1, incremental: 1),
+            priorUnansweredRequests: .init(full: 1, incremental: 5), orderedAfterPriorInput: false,
+            elapsedMilliseconds: frame.provenance.elapsedMilliseconds))
+        XCTAssertEqual(frame.provenance.elapsedMilliseconds, 10)
+        let diagnostics = harness.bridge.framebufferDiagnostics
+        XCTAssertEqual(diagnostics.unansweredFullRequests, 1)
+        XCTAssertEqual(diagnostics.unansweredIncrementalRequests, 1) // the answer's own re-arm
+        XCTAssertEqual(diagnostics.autoRearmObserved, 2)
+        let wire = harness.native.wire
+        XCTAssertEqual(wire.full, 3) // connect, missing-pixel refresh, capture
+        XCTAssertEqual(wire.autoRearm, 2)
+        XCTAssertEqual(wire.suppressed, 0)
+        harness.bridge.disconnect(); XCTAssertEqual(harness.bridge.framebufferWidth, 0)
+        assertSingleClientAndBufferReleased(harness.native)
+    }
+
+    /// First-wins: LibVNC's own re-arm is outstanding before any capture,
+    /// so stream mode's full request is absorbed and the static server
+    /// stays silent. The failure is typed, never a cached mirror.
+    func testFirstWinsFailsStreamPassesOnDemand() async throws {
+        let harness = try await connectModel(.firstWins)
+        let (waiting, originalDeadline) = await startCapture(harness)
+        XCTAssertEqual(harness.native.wire.outstanding.first, true)
+        XCTAssertEqual(harness.native.wire.outstanding.last, false)
+        harness.time.advance(1_000_000_000); harness.scheduler.runNext()
+        XCTAssertFalse(originalDeadline.work.isCancelled)
+        harness.time.advance(4_000_000_000)
+        originalDeadline.queue.sync { originalDeadline.work.perform() }
+        do { _ = try await waiting.value; XCTFail("first-wins answered behind an outstanding incremental") }
+        catch VNCError.staleScreen(let reason, let data) {
+            XCTAssertEqual(reason, .serverSilent)
+            XCTAssertTrue(data.message.hasPrefix(VNCError.staleScreenDeadlineMessage))
+            // The capture's own request plus the merged connect-time duplicate.
+            XCTAssertEqual(data.diagnostics.unansweredFullRequests, 2)
+            XCTAssertEqual(data.diagnostics.unansweredIncrementalRequests, 5)
+            XCTAssertEqual(data.diagnostics.autoRearmObserved, 1)
+        } catch { XCTFail("unexpected error: \(error)") }
+        XCTAssertEqual(harness.native.wire.frames, 1)
+        harness.bridge.disconnect(); XCTAssertEqual(harness.bridge.framebufferWidth, 0)
+        assertSingleClientAndBufferReleased(harness.native)
+
+        // On demand nothing is outstanding before the capture's own request.
+        let onDemand = try await connectModel(.firstWins, config: Self.onDemandConfiguration)
+        XCTAssertEqual(onDemand.native.wire.outstanding, [])
+        let (succeeding, onDemandDeadline) = await startCapture(onDemand)
+        XCTAssertEqual(onDemand.native.wire.outstanding, [false])
+        onDemand.time.advance(10_000_000); onDemand.scheduler.runNext()
+        let frame = try await succeeding.value
+        XCTAssertTrue(onDemandDeadline.work.isCancelled)
+        XCTAssertTrue(frame.withFramebuffer { buffer, _, _ in buffer.allSatisfy { $0 == 2 } })
+        XCTAssertEqual(frame.provenance.requestMode, .onDemand)
+        XCTAssertEqual(frame.provenance.requests, .init(full: 1, incremental: 0))
+        XCTAssertEqual(frame.provenance.priorUnansweredRequests, .init())
+        XCTAssertTrue(frame.provenance.orderedAfterPriorInput)
+        XCTAssertEqual(onDemand.native.observedIncrementalUpdates, 0)
+        XCTAssertEqual(onDemand.native.wire.incremental, 0)
+        onDemand.bridge.disconnect(); XCTAssertEqual(onDemand.bridge.framebufferWidth, 0)
+        assertSingleClientAndBufferReleased(onDemand.native)
+    }
+
+    private static var onDemandConfiguration: VNCConfiguration {
+        var configuration = VNCConfiguration()
+        configuration.requestMode = .onDemand
+        return configuration
+    }
+
+    /// On demand the bridge never polls, LibVNC's post-update re-arm and its
+    /// own resize request are both suppressed, and the bridge's missing-pixel
+    /// request takes over after a resize.
+    func testOnDemandSendsZeroIncrementalAndSuppressesAutoRearmAndResizeRequests() async throws {
+        let harness = try await connectModel(.latestWins, config: Self.onDemandConfiguration)
+        var wire = harness.native.wire
+        // rfbInitConnection's only: the missing-pixel refresh waits behind it.
+        XCTAssertEqual(wire.full, 1)
+        XCTAssertEqual(wire.suppressed, 1) // the first update's re-arm
+        XCTAssertEqual(wire.outstanding, [])
+        let (waiting, _) = await startCapture(harness)
+        harness.time.advance(10_000_000); harness.scheduler.runNext()
+        let frame = try await waiting.value
+        XCTAssertEqual(frame.provenance.requests, .init(full: 1, incremental: 0))
+        XCTAssertEqual(frame.provenance.priorUnansweredRequests, .init())
+        XCTAssertTrue(frame.provenance.orderedAfterPriorInput)
+        // The server resizes; LibVNC's own full request finds the gate closed.
+        harness.native.beforePoll = { client in
+            client.pointee.width = 3; client.pointee.height = 3
+            XCTAssertNotEqual(vncMallocFrameBuffer(client), 0)
+            harness.native.writeRequest(client, incremental: false)
+        }
+        harness.time.advance(100_000_000); harness.scheduler.runNext()
+        harness.native.beforePoll = nil
+        wire = harness.native.wire
+        XCTAssertEqual(wire.suppressed, 3) // two re-arms and the resize request
+        XCTAssertEqual(wire.outstanding, [false]) // the bridge's own missing-pixel request
+        harness.time.advance(100_000_000); harness.scheduler.runNext()
+        try await harness.bridge.waitForFramebuffer()
+        XCTAssertEqual(harness.bridge.framebufferWidth, 3)
+        for _ in 0..<5 { harness.time.advance(100_000_000); harness.scheduler.runNext() }
+        wire = harness.native.wire
+        XCTAssertEqual(harness.native.observedIncrementalUpdates, 0)
+        XCTAssertEqual(wire.incremental, 0)
+        XCTAssertEqual(wire.autoRearm, 0)
+        XCTAssertEqual(wire.suppressed, 4)
+        XCTAssertEqual(wire.full, 3)
+        let diagnostics = harness.bridge.framebufferDiagnostics
+        XCTAssertEqual(diagnostics.autoRearmObserved, 0)
+        XCTAssertEqual(diagnostics.requestGateLeaks, 0)
+        harness.bridge.disconnect(); XCTAssertEqual(harness.bridge.framebufferWidth, 0)
+        let clients = harness.native.counts
+        XCTAssertEqual(clients.releases, 1); XCTAssertEqual(clients.live, 0)
+    }
+
+    /// A SupportedMessages rectangle reopens the gate inside the update that
+    /// answers a capture; LibVNC re-arms before any callback. The leak is
+    /// counted, the gate closed again and that capture's ordering tainted.
+    /// The leaked re-arm stays outstanding, so the next capture is admitted
+    /// behind it and is tainted too, until an update answers it. The leak
+    /// count is connection-scoped and survives a framebuffer reallocation.
+    func testGateLeakFromSupportedMessagesCountedReclosedTaintsOrdering() async throws {
+        let harness = try await connectModel(.latestWins, config: Self.onDemandConfiguration)
+        let (leaking, _) = await startCapture(harness)
+        harness.native.reopenGateOnNextUpdate = true
+        harness.time.advance(10_000_000); harness.scheduler.runNext()
+        let tainted = try await leaking.value
+        XCTAssertFalse(tainted.provenance.orderedAfterPriorInput)
+        XCTAssertEqual(tainted.provenance.requests, .init(full: 1, incremental: 1))
+        XCTAssertEqual(tainted.provenance.priorUnansweredRequests, .init())
+        var diagnostics = harness.bridge.framebufferDiagnostics
+        XCTAssertEqual(diagnostics.requestGateLeaks, 1)
+        XCTAssertEqual(diagnostics.autoRearmObserved, 1)
+        XCTAssertEqual(diagnostics.unansweredIncrementalRequests, 1)
+        XCTAssertEqual(harness.native.wire.autoRearm, 1)
+        XCTAssertEqual(harness.native.wire.outstanding, [true]) // the leaked re-arm
+        // Closed again: idle polls write nothing and are not counted twice.
+        for _ in 0..<3 { harness.time.advance(100_000_000); harness.scheduler.runNext() }
+        XCTAssertEqual(harness.bridge.framebufferDiagnostics.requestGateLeaks, 1)
+        XCTAssertEqual(harness.bridge.framebufferDiagnostics.unansweredIncrementalRequests, 1)
+        let (behind, _) = await startCapture(harness)
+        harness.time.advance(10_000_000); harness.scheduler.runNext()
+        let admittedBehindLeak = try await behind.value
+        XCTAssertEqual(admittedBehindLeak.provenance.priorUnansweredRequests, .init(full: 0, incremental: 1))
+        XCTAssertFalse(admittedBehindLeak.provenance.orderedAfterPriorInput)
+        XCTAssertEqual(admittedBehindLeak.provenance.requests, .init(full: 1, incremental: 0))
+        XCTAssertEqual(harness.bridge.framebufferDiagnostics.unansweredIncrementalRequests, 0)
+        // That update answered the leaked request; nothing is outstanding now.
+        let (next, _) = await startCapture(harness)
+        harness.time.advance(10_000_000); harness.scheduler.runNext()
+        let clean = try await next.value
+        XCTAssertTrue(clean.provenance.orderedAfterPriorInput)
+        XCTAssertEqual(clean.provenance.priorUnansweredRequests, .init())
+        XCTAssertEqual(clean.provenance.requests, .init(full: 1, incremental: 0))
+        diagnostics = harness.bridge.framebufferDiagnostics
+        XCTAssertEqual(diagnostics.requestGateLeaks, 1)
+        XCTAssertEqual(diagnostics.autoRearmObserved, 1)
+        XCTAssertEqual(harness.native.wire.autoRearm, 1)
+        XCTAssertEqual(harness.native.observedIncrementalUpdates, 0)
+        // A server resize rebuilds the allocation snapshot; the leak count stays.
+        let allocations = diagnostics.allocations
+        harness.native.beforePoll = { client in
+            client.pointee.width = 3; client.pointee.height = 3
+            XCTAssertNotEqual(vncMallocFrameBuffer(client), 0)
+        }
+        harness.time.advance(100_000_000); harness.scheduler.runNext()
+        harness.native.beforePoll = nil
+        diagnostics = harness.bridge.framebufferDiagnostics
+        XCTAssertEqual(diagnostics.allocations, allocations + 1)
+        XCTAssertEqual(diagnostics.requestGateLeaks, 1)
+        XCTAssertEqual(diagnostics.unansweredFullRequests, 1) // the missing-pixel request
+        harness.bridge.disconnect(); XCTAssertEqual(harness.bridge.framebufferWidth, 0)
+        let clients = harness.native.counts
+        XCTAssertEqual(clients.releases, 1); XCTAssertEqual(clients.live, 0)
+    }
+
+    /// The poll-time backstop: the gate is found reopened after a poll that
+    /// delivered no update, so no completion callback closed it. The leak is
+    /// counted, the gate closed before the next poll, the pending capture's
+    /// ordering tainted, and a possible unobserved re-arm assumed outstanding.
+    func testPollTimeGateLeakCountedReclosedTaintsPendingCapture() async throws {
+        let harness = try await connectModel(.latestWins, config: Self.onDemandConfiguration)
+        harness.native.serverModel = .silent // hold the answer for one poll
+        let (waiting, _) = await startCapture(harness)
+        harness.native.beforePoll = { FakeNative.setDefaultSupportedMessages($0) }
+        harness.time.advance(10_000_000); harness.scheduler.runNext()
+        var diagnostics = harness.bridge.framebufferDiagnostics
+        XCTAssertEqual(diagnostics.requestGateLeaks, 1)
+        XCTAssertEqual(diagnostics.unansweredIncrementalRequests, 1)
+        XCTAssertEqual(harness.native.wire.outstanding, [false]) // nothing written while open
+        harness.native.beforePoll = { client in XCTAssertFalse(VNCBridge.requestGateOpen(client)) }
+        harness.native.serverModel = .latestWins
+        harness.time.advance(10_000_000); harness.scheduler.runNext()
+        harness.native.beforePoll = nil
+        let frame = try await waiting.value
+        XCTAssertFalse(frame.provenance.orderedAfterPriorInput)
+        XCTAssertEqual(frame.provenance.priorUnansweredRequests, .init())
+        XCTAssertEqual(frame.provenance.requests, .init(full: 1, incremental: 0))
+        diagnostics = harness.bridge.framebufferDiagnostics
+        XCTAssertEqual(diagnostics.requestGateLeaks, 1)
+        XCTAssertEqual(diagnostics.unansweredIncrementalRequests, 0)
+        XCTAssertEqual(diagnostics.unansweredFullRequests, 0)
+        XCTAssertEqual(harness.native.wire.incremental, 0)
+        harness.bridge.disconnect(); XCTAssertEqual(harness.bridge.framebufferWidth, 0)
+        assertSingleClientAndBufferReleased(harness.native)
+    }
+
+    /// RFB requests carry no identifier. A full request is retired one at a
+    /// time and only by an update covering the whole allocation: two full
+    /// requests answered in order must not read as none, and a partial update
+    /// cannot answer one.
+    func testFullRequestsRetireOneAtATimeOnlyOnWholeAllocationUpdates() async throws {
+        let harness = try await connectModel(.latestWins, config: Self.onDemandConfiguration)
+        harness.native.serverModel = .silent
+        let (silent, silentDeadline) = await startCapture(harness)
+        harness.time.advance(5_000_000_000)
+        silentDeadline.queue.sync { silentDeadline.work.perform() }
+        do { _ = try await silent.value; XCTFail("silent model produced a capture") }
+        catch VNCError.staleScreen(let reason, _) { XCTAssertEqual(reason, .serverSilent) }
+        catch { XCTFail("unexpected error: \(error)") }
+        XCTAssertEqual(harness.bridge.framebufferDiagnostics.unansweredFullRequests, 1)
+        // A second request is written while the first is still unanswered.
+        let (second, _) = await startCapture(harness)
+        XCTAssertEqual(harness.native.wire.outstanding, [false, false])
+        XCTAssertEqual(harness.bridge.framebufferDiagnostics.unansweredFullRequests, 2)
+        harness.native.beforePoll = { harness.native.deliverUpdate($0, rects: [(0, 0, 2, 1)]) }
+        harness.time.advance(10_000_000); harness.scheduler.runNext()
+        XCTAssertEqual(harness.bridge.framebufferDiagnostics.unansweredFullRequests, 2) // partial
+        // An in-order server answers the first request; the second stays counted.
+        harness.native.beforePoll = { harness.native.deliverUpdate($0, rects: [(0, 0, 2, 2)]) }
+        harness.time.advance(10_000_000); harness.scheduler.runNext()
+        harness.native.beforePoll = nil
+        let behind = try await second.value
+        XCTAssertEqual(behind.provenance.priorUnansweredRequests, .init(full: 1, incremental: 0))
+        XCTAssertFalse(behind.provenance.orderedAfterPriorInput)
+        XCTAssertEqual(harness.bridge.framebufferDiagnostics.unansweredFullRequests, 1)
+        // The next capture is admitted behind that still-counted request.
+        let (third, _) = await startCapture(harness)
+        harness.native.beforePoll = { harness.native.deliverUpdate($0, rects: [(0, 0, 2, 2)]) }
+        harness.time.advance(10_000_000); harness.scheduler.runNext()
+        harness.native.beforePoll = nil
+        let next = try await third.value
+        XCTAssertEqual(next.provenance.priorUnansweredRequests, .init(full: 1, incremental: 0))
+        XCTAssertFalse(next.provenance.orderedAfterPriorInput)
+        XCTAssertEqual(harness.native.wire.incremental, 0)
+        harness.bridge.disconnect(); XCTAssertEqual(harness.bridge.framebufferWidth, 0)
+        assertSingleClientAndBufferReleased(harness.native)
+    }
+
+    /// The observation entry point classifies every failure at the bridge:
+    /// a connection dropped under a pending capture and a cancelled capture
+    /// leave as typed stale_screen, never a bare notConnected/cancellation.
+    func testCaptureFreshObservationClassifiesDisconnectAndCancellation() async throws {
+        for cancelTask in [false, true] {
+            let harness = try await connectModel(.latestWins)
+            harness.native.serverModel = .silent
+            let registered = expectation(description: "observation deadline registered")
+            harness.deadline.onSchedule = { registered.fulfill() }
+            let waiting = Task { try await harness.bridge.captureFreshObservation() }
+            await fulfillment(of: [registered], timeout: 3)
+            XCTAssertEqual(harness.bridge.framebufferWidth, 2) // flush the admission
+            let originalDeadline = harness.deadline.take()
+            if cancelTask { waiting.cancel() } else { harness.bridge.disconnect() }
+            do { _ = try await waiting.value; XCTFail("observation succeeded without an answer") }
+            catch VNCError.staleScreen(let reason, let data) {
+                XCTAssertEqual(reason, cancelTask ? .cancelled : .disconnected)
+                XCTAssertFalse(data.message.isEmpty)
+            } catch { XCTFail("unclassified observation failure: \(error)") }
+            XCTAssertTrue(originalDeadline.work.isCancelled)
+            harness.bridge.disconnect(); XCTAssertEqual(harness.bridge.framebufferWidth, 0)
+            assertSingleClientAndBufferReleased(harness.native)
+        }
+    }
+
+    /// The ledger never reveals input counts, timing or clipboard length: a
+    /// run of input is one coalesced line before the next request line. A
+    /// send LibVNC would report as successful without writing, because the
+    /// server's SupportedMessages bitmap excludes it, is marked suppressed;
+    /// a suppressed capture request is refused instead of being awaited.
+    func testWireLedgerCoalescesInputAndMarksSuppressedWrites() async throws {
+        var configuration = VNCConfiguration()
+        configuration.wireLedger = true
+        let harness = try await connectModel(.latestWins, config: configuration)
+        func stripped(_ lines: RecordedEvents) -> [String] {
+            lines.values.map { $0.replacingOccurrences(of: #"ms=\d+ "#, with: "", options: .regularExpression) }
+        }
+        let lines = RecordedEvents()
+        harness.bridge.ledgerOutput = { lines.append($0) }
+        for _ in 0..<3 {
+            try await harness.bridge.sendKeyEvent(key: 0x61, down: true)
+            try await harness.bridge.sendKeyEvent(key: 0x61, down: false)
+        }
+        try await harness.bridge.sendMouseEvent(x: 1, y: 1)
+        try await harness.bridge.sendClipboardText("owned fixture text")
+        XCTAssertEqual(lines.values, []) // held until the next request line
+        let (waiting, _) = await startCapture(harness)
+        harness.time.advance(10_000_000); harness.scheduler.runNext()
+        _ = try await waiting.value
+        XCTAssertEqual(stripped(lines), [
+            "[RFB-WIRE] dir=c2s type=input incremental=- length=- origin=bridge kinds=4,5,6\n",
+            "[RFB-WIRE] dir=c2s type=3 incremental=0 length=10 origin=bridge\n",
+            "[RFB-WIRE] dir=c2s type=3 incremental=1 length=10 origin=libvnc-rearm\n",
+        ])
+        // The server's bitmap now excludes FramebufferUpdateRequest and KeyEvent.
+        let suppressed = RecordedEvents()
+        harness.bridge.ledgerOutput = { suppressed.append($0) }
+        harness.native.beforePoll = { client in
+            client.pointee.supportedMessages.client2server.0 &= ~(VNCBridge.requestGateMask | (1 << 4))
+        }
+        harness.time.advance(100_000_000); harness.scheduler.runNext() // a stream poll
+        harness.native.beforePoll = nil
+        let before = harness.bridge.framebufferDiagnostics
+        let fullSends = harness.native.observedFullUpdates
+        try await harness.bridge.sendKeyEvent(key: 0x61, down: true)
+        try await harness.bridge.sendKeyEvent(key: 0x61, down: false)
+        let (refused, refusedDeadline) = await startCapture(harness)
+        do { _ = try await refused.value; XCTFail("a suppressed request was awaited as sent") }
+        catch VNCError.staleScreen(let reason, _) { XCTAssertEqual(reason, .requestFailed) }
+        catch { XCTFail("unexpected error: \(error)") }
+        XCTAssertTrue(refusedDeadline.work.isCancelled)
+        XCTAssertEqual(harness.native.observedFullUpdates, fullSends)
+        let after = harness.bridge.framebufferDiagnostics
+        XCTAssertEqual(after.unansweredFullRequests, before.unansweredFullRequests)
+        XCTAssertEqual(after.unansweredIncrementalRequests, before.unansweredIncrementalRequests)
+        XCTAssertEqual(stripped(suppressed), [
+            "[RFB-WIRE] dir=c2s type=3 incremental=1 length=10 origin=suppressed\n",
+            "[RFB-WIRE] dir=c2s type=input incremental=- length=- origin=suppressed kinds=4\n",
+            "[RFB-WIRE] dir=c2s type=3 incremental=0 length=10 origin=suppressed\n",
+        ])
+        harness.bridge.disconnect(); XCTAssertEqual(harness.bridge.framebufferWidth, 0)
+        assertSingleClientAndBufferReleased(harness.native)
+    }
+
+    /// The gate is one bit in the vendored LibVNC 0.9.15 header. Pin the
+    /// version, the message number, the bitmap shape and the bit that the
+    /// library's own SupportsClient2Server reads, so a LibVNC bump fails here
+    /// before rfbclient.c:1497 and :2564 are reviewed again.
+    func testGateHeaderOffsetPinned() throws {
+        XCTAssertEqual(LIBVNCSERVER_VERSION, "0.9.15")
+        XCTAssertEqual(rfbFramebufferUpdateRequest, 3)
+        XCTAssertEqual(VNCBridge.framebufferUpdateRequestType, 3)
+        XCTAssertEqual(VNCBridge.requestGateMask, 0x08)
+        XCTAssertEqual(sz_rfbSupportedMessages, 64)
+        XCTAssertEqual(MemoryLayout<rfbSupportedMessages>.size, 64)
+        let offset = try XCTUnwrap(MemoryLayout<rfbClient>.offset(of: \rfbClient.supportedMessages))
+        let client = try XCTUnwrap(rfbGetClient(8, 3, 4))
+        defer { VNCClientOperations.release(client) }
+        // Write byte 0 through the raw header offset; the compiled library must
+        // read the same byte and bit.
+        let raw = UnsafeMutableRawPointer(client)
+        raw.storeBytes(of: UInt8(0xFF), toByteOffset: offset, as: UInt8.self)
+        XCTAssertNotEqual(SupportsClient2Server(client, 3), 0)
+        XCTAssertTrue(VNCBridge.requestGateOpen(client))
+        VNCBridge.setRequestGate(client, open: false)
+        XCTAssertEqual(raw.load(fromByteOffset: offset, as: UInt8.self), 0xF7)
+        XCTAssertEqual(SupportsClient2Server(client, 3), 0)
+        XCTAssertFalse(VNCBridge.requestGateOpen(client))
+        for others: Int32 in [0, 1, 2, 4, 5, 6, 7] {
+            XCTAssertNotEqual(SupportsClient2Server(client, others), 0, "message type \(others)")
+        }
+        VNCBridge.setRequestGate(client, open: true)
+        XCTAssertNotEqual(SupportsClient2Server(client, 3), 0)
+        XCTAssertEqual(raw.load(fromByteOffset: offset, as: UInt8.self), 0xFF)
+    }
+
+    /// Observation writes requests only. Neither a successful capture, a
+    /// typed stale_screen failure nor LibVNC's re-arms write any input.
+    func testCapturePathEmitsZeroInput() async throws {
+        let harness = try await connectModel(.latestWins)
+        let (succeeding, _) = await startCapture(harness)
+        harness.time.advance(10_000_000); harness.scheduler.runNext()
+        _ = try await succeeding.value
+        harness.native.serverModel = .silent
+        let (failing, originalDeadline) = await startCapture(harness)
+        harness.time.advance(5_000_000_000); harness.scheduler.runNext()
+        originalDeadline.queue.sync { originalDeadline.work.perform() }
+        do { _ = try await failing.value; XCTFail("silent model produced a capture") }
+        catch VNCError.staleScreen(let reason, _) { XCTAssertEqual(reason, .serverSilent) }
+        catch { XCTFail("unexpected error: \(error)") }
+        XCTAssertEqual(harness.native.observedInputWrites, [])
+        XCTAssertGreaterThan(harness.native.wire.full, 0)
+        // The seam is live: one explicit pointer write is recorded.
+        try await harness.bridge.sendMouseEvent(x: 1, y: 1)
+        XCTAssertEqual(harness.native.observedInputWrites, ["pointer"])
+        harness.bridge.disconnect(); XCTAssertEqual(harness.bridge.framebufferWidth, 0)
+        assertSingleClientAndBufferReleased(harness.native)
     }
 
     func testWireKeysymMapsAppleCommandAndOptionOnly() {

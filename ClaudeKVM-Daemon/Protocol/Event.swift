@@ -50,11 +50,21 @@ struct PCResponse: Encodable {
         var maximum_round_trip_ms: Int?
         var native_permit_remaining_ms: Int?
         var capabilities: [String]?
+        /// How an observation's pixels were obtained (screen observations only).
+        var provenance: VNCCaptureProvenance?
     }
 
     struct ErrorPayload: Encodable {
         var code: Int
         var message: String
+        var data: StaleScreenData?
+    }
+
+    /// `error.data` for code -32010: a stable reason plus bounded control-flow
+    /// diagnostics. Never pixels, clipboard, credentials or server text.
+    struct StaleScreenData: Encodable {
+        var reason: String
+        var diagnostics: VNCFramebufferDiagnostics
     }
 
     static func success(
@@ -68,7 +78,8 @@ struct PCResponse: Encodable {
         timing: [String: Double]? = nil,
         elements: [TextElement]? = nil,
         frameContext: VNCInputContext? = nil,
-        capabilities: [String]? = nil
+        capabilities: [String]? = nil,
+        provenance: VNCCaptureProvenance? = nil
     ) -> PCResponse {
         PCResponse(
             result: ResultPayload(
@@ -77,7 +88,8 @@ struct PCResponse: Encodable {
                 timing: timing, elements: elements,
                 nativeWidth: frameContext?.width, nativeHeight: frameContext?.height,
                 connectionGeneration: frameContext?.connectionGeneration,
-                allocation: frameContext?.allocation, capabilities: capabilities
+                allocation: frameContext?.allocation, capabilities: capabilities,
+                provenance: provenance
             ),
             error: nil, id: id
         )
@@ -85,6 +97,14 @@ struct PCResponse: Encodable {
 
     static func error(id: PCId?, code: Int = -32000, message: String) -> PCResponse {
         PCResponse(result: nil, error: ErrorPayload(code: code, message: message), id: id)
+    }
+
+    /// The typed observation failure, or nil for any other error.
+    static func staleScreen(id: PCId?, error: Error) -> PCResponse? {
+        guard let typed = error as? VNCError, case let .staleScreen(reason, data) = typed else { return nil }
+        return PCResponse(result: nil, error: ErrorPayload(
+            code: VNCError.staleScreenCode, message: data.message,
+            data: StaleScreenData(reason: reason.rawValue, diagnostics: data.diagnostics)), id: id)
     }
 
     static func inputPermit(id: PCId?, receipt: NativeInputPermit.Receipt) -> PCResponse {

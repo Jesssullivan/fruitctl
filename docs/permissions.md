@@ -232,6 +232,14 @@ also prints them as text:
   the overlay. Otherwise it reports `unknown`.
 - A broker that predates these labels reports both values as `unknown`.
 
+A failed result also carries `error` as one object, `{code, message, data}`,
+beside the same labels. A native typed failure keeps its JSON-RPC `code` and
+`data` (for example `-32010` `stale_screen` with `data.reason`); a transport or
+local failure carries `message` only. A failed `action_queue` adds `completed`
+and `failedIndex` and puts its first failure in the same `error` object. A
+failure never attests the overlay, so the Host route reports `indicator:
+unknown` on every error.
+
 ## Persistent Content Capture: operator request checklist
 
 Apple's [Persistent Content Capture entitlement](https://developer.apple.com/documentation/bundleresources/entitlements/com.apple.developer.persistent-content-capture)

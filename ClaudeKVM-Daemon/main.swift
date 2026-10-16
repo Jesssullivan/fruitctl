@@ -140,9 +140,29 @@ struct ClaudeKVMDaemon: AsyncParsableCommand {
               Descriptor 3 carries a bounded credential frame; stdin remains PC NDJSON.
               Plaintext password arguments and environment fallbacks are unsupported.
 
+            REQUEST MODES (--rfb-request-mode):
+              stream     Default. Incremental polls while idle; LibVNC re-arms an
+                         incremental request after every update, so results
+                         report ordered_after_prior_input false.
+              on-demand  No incremental request is written. Each observation
+                         sends one whole-screen request; results carry
+                         provenance with the request counts and report
+                         ordered_after_prior_input true only when no earlier
+                         request was outstanding.
+
+            ERRORS:
+              Screen observations that obtain no fresh complete frame return
+              code -32010 with data.reason (server_silent, metadata_only,
+              incomplete_coverage, late_complete, allocation_changed,
+              disconnected, request_failed, capture_busy, cancelled) and
+              data.diagnostics.
+
             OUTPUT:
               stdout  PC responses and notifications (NDJSON).
-              stderr  Verbose logs (-v) and errors ([ERROR] prefix).
+              stderr  Verbose logs (-v), errors ([ERROR] prefix) and, with
+                      --rfb-wire-ledger, [RFB-WIRE] header-only lines. Input
+                      is coalesced into one line per run (no counts, timing
+                      or lengths).
               exit 0  Clean shutdown.
               exit 1  Connection failure.
             """
@@ -184,6 +204,16 @@ struct ClaudeKVMDaemon: AsyncParsableCommand {
     @Flag(name: .long, help: "Disable auto-reconnect on connection loss.")
     var noReconnect: Bool = false
 
+    // MARK: - RFB Diagnostics
+
+    @Flag(name: .customLong("rfb-wire-ledger"),
+          help: "Write a header-only client-to-server RFB ledger to stderr (request type, incremental flag, length, monotonic ms; input coalesced without counts, timing or lengths; never payloads).")
+    var rfbWireLedger: Bool = false
+
+    @Option(name: .customLong("rfb-request-mode"),
+            help: "Framebuffer request mode: stream (default) or on-demand (no incremental requests; LibVNC's own requests are gated off).")
+    var rfbRequestMode: String = VNCRequestMode.stream.rawValue
+
     // MARK: - General
 
     @Flag(name: [.short, .long], help: "Enable verbose logging to stderr.")
@@ -203,6 +233,9 @@ struct ClaudeKVMDaemon: AsyncParsableCommand {
         }
         if let attempts = maxReconnectAttempts, !(0...100).contains(attempts) {
             throw ValidationError("--max-reconnect-attempts must be 0...100")
+        }
+        guard VNCRequestMode(rawValue: rfbRequestMode) != nil else {
+            throw ValidationError("--rfb-request-mode must be stream or on-demand")
         }
     }
 
@@ -228,6 +261,8 @@ struct ClaudeKVMDaemon: AsyncParsableCommand {
         if let delay = reconnectDelay { vncConfig.reconnectDelay = delay }
         if let max = maxReconnectAttempts { vncConfig.maxReconnectAttempts = max }
         if noReconnect { vncConfig.autoReconnect = false }
+        vncConfig.wireLedger = rfbWireLedger
+        vncConfig.requestMode = VNCRequestMode(rawValue: rfbRequestMode) ?? .stream
 
         let vnc = VNCBridge(config: vncConfig)
         vnc.verbose = verbose

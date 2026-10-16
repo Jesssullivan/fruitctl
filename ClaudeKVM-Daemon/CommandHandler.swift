@@ -137,7 +137,8 @@ extension ClaudeKVMDaemon {
             case "screenshot", "cursor_crop", "diff_check", "set_baseline", "detect_elements":
                 // Revoke the prior observation before a refresh can fail.
                 input.context = nil
-                capturedFrame = try await vnc.captureFreshFramebuffer()
+                // Every capture-path failure leaves as a typed stale_screen.
+                capturedFrame = try await vnc.captureFreshObservation()
             default: capturedFrame = nil
             }
             if let frame = capturedFrame {
@@ -160,7 +161,7 @@ extension ClaudeKVMDaemon {
                 input.context = capturedFrame?.inputContext
                 respond(.success(id: id, image: imageData.base64EncodedString(),
                                   scaledWidth: scaling.scaledWidth, scaledHeight: scaling.scaledHeight,
-                                  frameContext: capturedFrame?.inputContext))
+                                  frameContext: capturedFrame?.inputContext, provenance: capturedFrame?.provenance))
 
             case "cursor_crop":
                 let pos = input.cursorPosition
@@ -174,7 +175,7 @@ extension ClaudeKVMDaemon {
                 input.context = capturedFrame?.inputContext
                 respond(.success(id: id, image: imageData.base64EncodedString(),
                                   x: scaledPos.x, y: scaledPos.y,
-                                  frameContext: capturedFrame?.inputContext))
+                                  frameContext: capturedFrame?.inputContext, provenance: capturedFrame?.provenance))
 
             case "diff_check":
                 guard let frame = capturedFrame else { throw VNCError.sendFailed("No framebuffer") }
@@ -182,13 +183,14 @@ extension ClaudeKVMDaemon {
                     diffCheck(buffer: buf, context: frame.inputContext)
                 }
                 input.context = frame.inputContext
-                respond(.success(id: id, detail: "changeDetected: \(changed)", frameContext: frame.inputContext))
+                respond(.success(id: id, detail: "changeDetected: \(changed)", frameContext: frame.inputContext,
+                                  provenance: frame.provenance))
 
             case "set_baseline":
                 guard let frame = capturedFrame else { throw VNCError.sendFailed("No framebuffer") }
                 Self.framebufferBaseline.set(frame.pixels, context: frame.inputContext)
                 input.context = frame.inputContext
-                respond(.success(id: id, detail: "OK", frameContext: frame.inputContext))
+                respond(.success(id: id, detail: "OK", frameContext: frame.inputContext, provenance: frame.provenance))
 
             // ── Mouse ─────────────────────────────────────────
 
@@ -298,7 +300,8 @@ extension ClaudeKVMDaemon {
                 input.context = capturedFrame?.inputContext
                 respond(.success(id: id, detail: "\(elements.count) elements",
                                   scaledWidth: scaling.scaledWidth, scaledHeight: scaling.scaledHeight,
-                                  elements: elements, frameContext: capturedFrame?.inputContext))
+                                  elements: elements, frameContext: capturedFrame?.inputContext,
+                                  provenance: capturedFrame?.provenance))
 
             // ── Configuration ─────────────────────────────────
 
@@ -348,7 +351,8 @@ extension ClaudeKVMDaemon {
         } catch {
             input.inputPermit.invalidateIfRequired()
             await input.releaseHeldInput()
-            respond(.error(id: id, message: error.localizedDescription))
+            respond(PCResponse.staleScreen(id: id, error: error)
+                    ?? .error(id: id, message: error.localizedDescription))
         }
     }
 

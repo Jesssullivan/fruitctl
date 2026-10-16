@@ -31,7 +31,9 @@ read-only checks of the target over SSH.
 
 Observe with `vnc_command` action `health`, then `screenshot`. Every result's
 `route` and `indicator` say which route answered. The raw route always reports
-`indicator: absent`. Inspect the current
+`indicator: absent`. A failed result adds an `error` object with `message` and,
+for typed failures, `code` and `data`; code `-32010` (`stale_screen`) means no
+fresh pixels were captured, so take a new screenshot before any input. Inspect the current
 image and its scaled coordinates, perform authorized bounded input, and obtain
 a new screenshot to verify the result. OCR, a process health response, or an
 input acknowledgement alone does not prove that the requested desktop change

@@ -103,13 +103,83 @@ to qualify action-to-observation behavior. A static screenshot cannot prove a
 fresh frame, and a partial update cannot be reported as complete pixels.
 
 The raw-VNC daemon asks for each observation with a non-incremental
-FramebufferUpdateRequest (RFC 6143 section 7.5.3) and adds no incremental
-request while that capture is pending. Every screen observation still requires
-new full pixel coverage and a completed update on the same allocation within
-the original five-second deadline. A complete cached mirror, server silence,
-partial pixels or a metadata-only update cannot establish current pixels or
-authorize further input. Static-screen behavior on macOS Screen Sharing still
-requires native and attended qualification.
+FramebufferUpdateRequest (RFC 6143 section 7.5.3). While that capture is
+pending, the daemon's own message loop adds no incremental request. LibVNC
+0.9.15 still writes its own incremental request after every
+FramebufferUpdate it processes (`rfbclient.c:2564`), before the completion
+callback. Any update that arrives during a pending capture therefore leaves
+an incremental request outstanding at the server. Every screen observation
+still requires new full pixel coverage and a completed update on the same
+allocation within the original five-second deadline. A complete cached mirror,
+server silence, partial pixels or a metadata-only update cannot establish
+current pixels or authorize further input. Static-screen behavior on macOS
+Screen Sharing still requires native and attended qualification.
+
+A failed observation returns JSON-RPC code `-32010` (`stale_screen`). Its
+message keeps the prefix `No fresh complete framebuffer update within 5
+seconds` for deadline failures, and `data.reason` is one of `server_silent`,
+`metadata_only`, `incomplete_coverage`, `late_complete` (every pixel arrived,
+but only at or after the deadline), `allocation_changed`, `disconnected`,
+`request_failed`, `capture_busy` or `cancelled`. `data.diagnostics` carries
+only control-flow counters, including the inferred
+`unanswered_full_requests`, `unanswered_incremental_requests`,
+`auto_rearm_observed` and `request_gate_leaks`. RFB requests carry no
+identifier, so the unanswered counts err high, never low: a full request is
+retired one at a time, only by an update whose own rectangles cover the whole
+allocation, and an update carrying any rectangle retires every outstanding
+incremental request. A server that answers several full requests with one
+update leaves the full count high for the rest of the connection. The MCP
+server keeps this code and data in the tool result's structured `error` object
+(`{code, message, data}`, the shape every failed result uses) beside the
+compatible error text and the D7 `route` and `indicator` labels; a failed
+`action_queue` reports its first failure in the same object.
+
+`--rfb-wire-ledger` writes one stderr line per framebuffer request: message
+type, incremental flag, length and monotonic milliseconds, never payloads.
+The daemon's own requests are listed after LibVNC reports them sent. LibVNC
+also reports success without writing when the server's SupportedMessages
+bitmap or a pending resize excludes a message; such a request is listed with
+origin `suppressed`, and a suppressed observation request fails as
+`request_failed` instead of being awaited. LibVNC's initial request and
+post-update re-arm are inferred; its SetPixelFormat, SetEncodings and resize
+requests are not listed, so a header-only packet capture remains the wire
+authority. Input is coalesced: each run of key, pointer and clipboard
+messages becomes one `type=input` line, written just before the next request
+line or at disconnect, naming only the message types. The ledger never
+records how many input messages were sent, when each was sent or how long
+clipboard text was.
+
+`--rfb-request-mode on-demand` is opt-in; `stream` stays the default. After
+the connection initializes, the daemon clears LibVNC's FramebufferUpdateRequest
+bit in the client-to-server capability bitmap (`client2server[0] & 0x08`).
+While that bit is clear, LibVNC reports success without writing its own
+post-update re-arm or resize request (`rfbclient.c:1497`). The daemon opens
+the bit only around its own whole-screen request, for an observation or for
+missing pixels after a resize, and never writes an incremental request. Its
+first missing-pixel refresh after connecting waits one second behind
+`rfbInitConnection`'s own request, so the two are never outstanding together.
+A server SupportedMessages rectangle can rewrite the bitmap and leak one
+re-arm before any callback runs. The daemon counts that as
+`request_gate_leaks` (kept across framebuffer reallocations), closes the bit
+again, marks the pending observation `ordered_after_prior_input: false` and
+counts the leaked re-arm as outstanding until an update answers it. A target
+profile selects the mode with
+`"vnc": { "requestMode": "on-demand" }`. Whether Apple's server needs this
+mode, or keeps an idle connection without an outstanding request responsive,
+remains unqualified until an attended probe records it.
+
+Each successful observation result carries `provenance`: `source`
+(`in_session`), `coverage` (`complete_received_after_request`),
+`request_mode`, the full and incremental `requests` written while it was
+pending, `prior_unanswered_requests` (the full and incremental requests
+believed outstanding when its own request was admitted),
+`ordered_after_prior_input`, `elapsed_ms` and `elicited_input`, which is
+always `null` because no input is written to obtain an observation.
+`ordered_after_prior_input` is `true` only when no request was believed
+outstanding at admission and no request leaked through the on-demand gate
+while the observation was pending. Only then must every update that completed
+it answer a request written after any earlier input. Stream mode always has
+LibVNC's re-arm outstanding, so it always reports `false`.
 
 On Apple's server the daemon writes Command as `Super_L`/`Super_R` and Option
 as `Meta_L`/`Meta_R`; the `cmd` and `alt`/`option` key names are unchanged.

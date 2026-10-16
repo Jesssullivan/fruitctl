@@ -38,7 +38,8 @@ the native daemon on descriptor 3. The fixture removes its synthetic provider
 after stopping its owned children. `--mcp-route legacy-direct` selects the
 compatible `index.js` entrypoint instead.
 
-The native run has four scenarios. The MCP run adds four more:
+The native run has four content scenarios plus four request-model scenarios
+per request mode. The MCP run adds four more:
 
 - For 100 captures per transport, decode the actual PNG, verify its CRCs,
   dimensions, allocation metadata and every RGB pixel, and require an increasing
@@ -57,6 +58,28 @@ The native run has four scenarios. The MCP run adds four more:
   capture, and refusal of subsequent input until a new complete observation.
   This synthetic silence is not qualification of macOS static-screen behavior
   or Apple's Option interpretation.
+- Native only, per `--request-modes` (`stream`, `on-demand` or both; default
+  `stream`): four request-model
+  scenarios pin synthetic hypotheses for an idle Apple screen (TIN-5509). Each
+  connection keeps its own outstanding requests; a static screen never
+  answers an incremental request. `latest-wins` answers when the newest
+  outstanding request is full; `first-wins` lets the oldest outstanding
+  request absorb later ones; `session-start-only` answers only the first full
+  request of a connection; `silent` answers nothing. `latest-wins` must return
+  three fresh captures, as must `first-wins` in `on-demand` mode; their
+  screenshot, `cursor_crop`, `diff_check`, `set_baseline` and
+  `detect_elements` results must each carry capture provenance. On demand,
+  each must report no request outstanding at admission and
+  `ordered_after_prior_input: true`; in stream mode, LibVNC's re-arm is
+  outstanding, so each must report `false`. Every other
+  combination must return JSON-RPC `-32010` with `data.reason`
+  `server_silent` within the original five-second deadline and no image. Each
+  scenario runs the daemon with `--rfb-wire-ledger` and requires the ledger's
+  written (not `suppressed`) request counts to equal the requests the server
+  received, one shared
+  ClientInit, no Key/Pointer/Cut message inside any capture window and, in
+  `on-demand` mode, zero incremental requests. These models are not Apple's
+  server.
 - Through MCP, invoke all four compatible tools. Verify a two-action queue and
   its coordinate effect, active ownership release through `task_complete`, and
   active ownership release through `task_failed` in a separate scenario. The
@@ -67,6 +90,9 @@ optional runtime archive hashes. It retains 100 synthetic PNGs per transport,
 input events, refusal details and owned process exit codes. The optional archive
 hash records the supplied archive; extraction integrity remains the caller's
 responsibility. Latencies describe this small loopback fixture only.
+
+`test/fruitctl-rfb-request-models.test.js` drives the same request models
+offline with a LibVNC-shaped loopback client, without a native daemon.
 
 On 2026-10-06, seven scenarios passed with 100 native and 100 shared-broker MCP
 captures using Node `v24.21.0`, compiled daemon SHA-256
