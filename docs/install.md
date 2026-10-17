@@ -285,9 +285,9 @@ Keep your real `HOME`.
 These are current configuration instructions. The real Linux-to-Darwin SSH
 journey and actual frontend use of the bridge remain unqualified.
 
-**Darwin controller.** Use Apple Silicon macOS 15+ and the unchanged bundled
-signed controller. The target owner enables Screen Sharing and handles any
-normal Apple approval. Declare where the broker reads the target's existing
+**Darwin controller.** Use Apple Silicon macOS 15+ and the bundled controller,
+signed and notarized from the release revision. The target owner enables
+Screen Sharing and handles any normal Apple approval. Declare where the broker reads the target's existing
 credential: a controller-local file owned by the broker account with mode
 `0600` or `0400` (`credentialFile`, as below), or a `credential` provider that
 runs your vault CLI or reads the keychain. The credential must be nonempty
