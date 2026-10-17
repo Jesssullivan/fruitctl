@@ -9,7 +9,7 @@ import { boundClipboard } from '../lib/mcp/clipboard.js';
 import { nativeFactory } from '../lib/broker/server.mjs';
 import { loadConfig, usCompatibleInputSource } from '../lib/broker/paths.mjs';
 import { summarizeResponse } from '../lib/broker/journal.mjs';
-import { isPreAdmissionRefusal } from '../lib/mcp/capabilities.js';
+import { isPreAdmissionRefusal, CLIPBOARD_UNAVAILABLE_CODE, DESKTOP_REFUSAL_CODES } from '../lib/mcp/capabilities.js';
 
 // Owned fake controller: answers health with its argv, key_type/paste with
 // the params it received, and clipboard_read with FRUITCTL_FIXTURE_CLIPBOARD.
@@ -199,5 +199,18 @@ test('the broker lane withholds clipboard text holding an allowlisted secret and
     assert.ok(isPreAdmissionRefusal(error));
     return true;
   });
+  // A disabled read is refused before any allowlisted provider runs: the same
+  // unresolvable ref does not turn it into secret_unavailable.
+  const disabled = new TargetLane({ secrets: { gone: { provider: 'file',
+    path: path.join(directory, 'never-materialized') } } }, async () => executor);
+  t.after(() => disabled.close());
+  await assert.rejects(disabled.execute([{ action: 'clipboard_read' }]), error => {
+    assert.equal(error.code, 'clipboard_read_disabled');
+    assert.ok(isPreAdmissionRefusal(error));
+    return true;
+  });
   assert.equal(executed, 2);
+  // The controller's clipboard_read code never reads as a desktop-state
+  // refusal, which tells the agent to ask a human about a dialog.
+  assert.equal(DESKTOP_REFUSAL_CODES.includes(CLIPBOARD_UNAVAILABLE_CODE), false);
 });
