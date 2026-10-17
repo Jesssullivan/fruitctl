@@ -39,12 +39,18 @@ enum HostIPC {
         return result >= 0 && item.revents & Int16(POLLHUP | POLLERR | POLLNVAL) == 0
     }
 
-    static func write(_ data: Data, to fd: Int32, timeoutMilliseconds: Int32 = 2_000) throws {
-        let deadline = ContinuousClock.now.advanced(by: .milliseconds(Int64(timeoutMilliseconds)))
+    /// A peer that stops reading for `stallMilliseconds` fails the write. Time
+    /// spent writing a large reply to a slow but draining pipe does not, up to
+    /// `capMilliseconds`, so a slow enterprise link is not a lease failure.
+    static func write(_ data: Data, to fd: Int32, stallMilliseconds: Int64 = 2_000,
+                      capMilliseconds: Int64 = 30_000) throws {
+        let started = ContinuousClock.now
+        let cap = started.advanced(by: .milliseconds(capMilliseconds))
+        var deadline = started.advanced(by: .milliseconds(stallMilliseconds))
         try data.withUnsafeBytes { bytes in
             var offset = 0
             while offset < bytes.count {
-                guard ContinuousClock.now < deadline else { throw HostIPCError.requestTimeout }
+                guard ContinuousClock.now < min(deadline, cap) else { throw HostIPCError.requestTimeout }
                 var item = pollfd(fd: fd, events: Int16(POLLOUT), revents: 0)
                 let result = poll(&item, 1, 100)
                 if result < 0 && errno == EINTR { continue }
@@ -60,6 +66,7 @@ enum HostIPC {
                 if count < 0 && (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK) { continue }
                 guard count > 0 else { throw HostIPCError.ioFailure }
                 offset += count
+                deadline = ContinuousClock.now.advanced(by: .milliseconds(stallMilliseconds))
             }
         }
     }
@@ -349,7 +356,8 @@ final class HostSocketServer {
                     DispatchQueue.global(qos: .utility).async { [weak self] in
                         defer { slots.signal(); responders.leave() }
                         guard let self else { connection.abandon(); return }
-                        self.respond(waiter, connectionID: connectionID, connection: connection)
+                        self.respond(waiter, partBytes: HostResponse.requestedPartBytes(request),
+                                     connectionID: connectionID, connection: connection)
                     }
                 }
             }
@@ -360,15 +368,18 @@ final class HostSocketServer {
         }
     }
 
-    private func respond(_ waiter: HostReplyWaiter, connectionID: UUID, connection: HostConnectionWriter) {
+    private func respond(_ waiter: HostReplyWaiter, partBytes: Int?, connectionID: UUID,
+                         connection: HostConnectionWriter) {
         let deadline = ContinuousClock.now.advanced(by: .milliseconds(2_500))
         while waiter.completed.wait(timeout: .now() + .milliseconds(20)) != .success {
             guard !connection.failed, connectionIsLive(connectionID),
                   ContinuousClock.now < deadline else { connection.abandon(); return }
         }
         guard !connection.failed, connectionIsLive(connectionID), let response = waiter.value(),
-              let line = try? response.line() else { connection.abandon(); return }
-        do { try connection.write(line) } catch { connection.abandon() }
+              let lines = try? response.lines(partBytes: partBytes) else { connection.abandon(); return }
+        // Each part is its own line, so another request's reply can be
+        // written between the parts of a large image.
+        do { for line in lines { try connection.write(line) } } catch { connection.abandon() }
     }
 
     deinit { stop() }

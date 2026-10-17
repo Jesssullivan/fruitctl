@@ -7,8 +7,18 @@ import Darwin
 import ImageIO
 import UniformTypeIdentifiers
 
+/// D38: model-facing frames are JPEG; PNG stays available for lossless
+/// evidence. Both encode the same owned, complete pixels.
+enum HostImageFormat: String, Sendable {
+    case png, jpeg
+    static let jpegQuality = 0.85
+    var mimeType: String { self == .png ? "image/png" : "image/jpeg" }
+    var typeIdentifier: CFString { (self == .png ? UTType.png : UTType.jpeg).identifier as CFString }
+}
+
 struct HostCapturedImage {
-    let png: Data
+    let encoded: Data
+    let format: HostImageFormat
     let nativeWidth: Int
     let nativeHeight: Int
     let scaledWidth: Int
@@ -20,11 +30,12 @@ struct HostCapturedImage {
     let excludedBundleID: String
     let nativeFrameTiming: HostNativeFrameTiming
     /// Host-side milliseconds per stage, to place capture latency: window
-    /// enumeration, ScreenCaptureKit, the owned copy, and scale plus PNG encode.
+    /// enumeration, ScreenCaptureKit, the owned copy, and scale plus encode;
+    /// `encoded_bytes` is the delivered image size.
     var stageMilliseconds: [String: Int64] = [:]
 
     var geometryMetadata: [String: HostValue] {
-        ["mimeType": .string("image/png"),
+        ["mimeType": .string(format.mimeType),
          "nativeWidth": .integer(Int64(nativeWidth)), "nativeHeight": .integer(Int64(nativeHeight)),
          "scaledWidth": .integer(Int64(scaledWidth)), "scaledHeight": .integer(Int64(scaledHeight)),
          "display_id": .integer(Int64(displayID)),
@@ -46,26 +57,28 @@ struct HostCapturedImage {
     }
 
     var metadata: [String: HostValue] {
-        geometryMetadata.merging(["image": .string(png.base64EncodedString())]) { _, value in value }
+        geometryMetadata.merging(["image": .string(encoded.base64EncodedString())]) { _, value in value }
     }
 }
 
 /// Only value data leaves the image-processing worker. Its mutable graphics
-/// context, destination and PNG buffer are private to that one operation.
+/// context, destination and encoded buffer are private to that one operation.
 struct HostProcessedImage: Sendable {
-    let png: Data
+    let encoded: Data
     let scaledWidth: Int
     let scaledHeight: Int
 }
 
 enum HostImageEncoder {
-    static func encode(_ image: CGImage, maximumDimension: Int) throws -> HostProcessedImage {
+    static func encode(_ image: CGImage, maximumDimension: Int,
+                       format: HostImageFormat = .png) throws -> HostProcessedImage {
         // A detached worker thread has no run loop to drain ImageIO and
         // CoreGraphics temporaries; drain them with each frame.
-        try autoreleasepool { try encodeFrame(image, maximumDimension: maximumDimension) }
+        try autoreleasepool { try encodeFrame(image, maximumDimension: maximumDimension, format: format) }
     }
 
-    private static func encodeFrame(_ image: CGImage, maximumDimension: Int) throws -> HostProcessedImage {
+    private static func encodeFrame(_ image: CGImage, maximumDimension: Int,
+                                    format: HostImageFormat) throws -> HostProcessedImage {
         try Task.checkCancellation()
         let width = image.width, height = image.height
         guard maximumDimension > 0, width > 0, height > 0,
@@ -89,14 +102,16 @@ enum HostImageEncoder {
             output = resized
         }
         try Task.checkCancellation()
-        let png = NSMutableData()
-        guard let encoder = CGImageDestinationCreateWithData(png, UTType.png.identifier as CFString, 1, nil)
+        let encoded = NSMutableData()
+        guard let encoder = CGImageDestinationCreateWithData(encoded, format.typeIdentifier, 1, nil)
         else { throw HostCaptureError.imageEncodingFailed }
-        CGImageDestinationAddImage(encoder, output, nil)
+        let properties = format == .jpeg
+            ? [kCGImageDestinationLossyCompressionQuality as String: HostImageFormat.jpegQuality] as CFDictionary : nil
+        CGImageDestinationAddImage(encoder, output, properties)
         try Task.checkCancellation()
         guard CGImageDestinationFinalize(encoder) else { throw HostCaptureError.imageEncodingFailed }
         try Task.checkCancellation()
-        return HostProcessedImage(png: png as Data, scaledWidth: scaledWidth, scaledHeight: scaledHeight)
+        return HostProcessedImage(encoded: encoded as Data, scaledWidth: scaledWidth, scaledHeight: scaledHeight)
     }
 }
 
@@ -104,25 +119,25 @@ enum HostImageEncoder {
 /// copied sample crosses this boundary, never the ScreenCaptureKit surface.
 @MainActor
 final class HostImageProcessor {
-    typealias Operation = @Sendable (CGImage, Int) async throws -> HostProcessedImage
+    typealias Operation = @Sendable (CGImage, Int, HostImageFormat) async throws -> HostProcessedImage
     private let operation: Operation
     private var worker: Task<HostProcessedImage, Error>?
     var isProcessing: Bool { worker != nil }
 
-    init(operation: @escaping Operation = { image, maximumDimension in
-        try HostImageEncoder.encode(image, maximumDimension: maximumDimension)
+    init(operation: @escaping Operation = { image, maximumDimension, format in
+        try HostImageEncoder.encode(image, maximumDimension: maximumDimension, format: format)
     }) {
         self.operation = operation
     }
 
-    func process(_ image: CGImage, maximumDimension: Int,
+    func process(_ image: CGImage, maximumDimension: Int, format: HostImageFormat = .png,
                  validate: @MainActor () throws -> Void = {}) async throws -> HostProcessedImage {
         try Task.checkCancellation()
         guard worker == nil else { throw HostLeaseError.busy }
         guard maximumDimension > 0 else { throw HostCaptureError.incompleteImage }
         let task = Task.detached(priority: Task.currentPriority) { [operation] in
             try Task.checkCancellation()
-            let result = try await operation(image, maximumDimension)
+            let result = try await operation(image, maximumDimension, format)
             try Task.checkCancellation()
             return result
         }
@@ -161,7 +176,7 @@ final class HostCapture {
 
     func rebind(displayID: CGDirectDisplayID) { self.displayID = displayID }
 
-    func snapshot(maximumDimension: Int) async throws -> HostCapturedImage {
+    func snapshot(maximumDimension: Int, format: HostImageFormat = .png) async throws -> HostCapturedImage {
         guard maximumDimension > 0 else { throw HostCaptureError.incompleteImage }
         try permission.requireCapture(enabled: enabled)
         let displayID = self.displayID
@@ -231,7 +246,8 @@ final class HostCapture {
               HostDisplayGeometry.current(displayID) == geometry else {
             throw HostCaptureError.incompleteImage
         }
-        let processed = try await imageProcessor.process(image, maximumDimension: maximumDimension) {
+        let processed = try await imageProcessor.process(image, maximumDimension: maximumDimension,
+                                                         format: format) {
             try self.permission.requireCapture(enabled: self.enabled)
             guard self.displayID == displayID, CGDisplayIsActive(displayID) != 0,
                   HostDisplayGeometry.current(displayID) == geometry else {
@@ -240,7 +256,8 @@ final class HostCapture {
         }
         try Task.checkCancellation()
         stage("encode")
-        return HostCapturedImage(png: processed.png, nativeWidth: width, nativeHeight: height,
+        stages["encoded_bytes"] = Int64(processed.encoded.count)
+        return HostCapturedImage(encoded: processed.encoded, format: format, nativeWidth: width, nativeHeight: height,
             scaledWidth: processed.scaledWidth, scaledHeight: processed.scaledHeight,
             displayID: displayID, geometry: geometry,
             excludedPID: ownApp.processID, excludedBundleID: ownApp.bundleIdentifier,
