@@ -255,10 +255,25 @@ observer registration. No private screen-lock notifications or TCC bypasses are
 used; lock-screen behavior remains an attended qualification case.
 
 The helper-backed broker challenges every 500 ms during activity and rejects
-lease acknowledgements whose challenge round trip exceeds 500 ms. Two requests
-have longer deadlines: the first `health`, which also pays SSH connection setup
-(5 s), and `capture`/`ax_snapshot`, which carry an encoded image or tree (3 s,
-just above this app's own 2.5 s per-request limit). The native writer
+renewal and release acknowledgements whose round trip exceeds 500 ms. Three
+requests have other deadlines:
+
+- The first `health` also pays SSH connection setup: 5 s.
+- `begin_activity` takes an excluded-app snapshot and shows the indicator
+  before it answers: 2 s.
+- `capture` and `ax_snapshot` carry an encoded image or tree. The reply must
+  start within 3 s and keep arriving with no gap over 3 s, up to 20 s. Only
+  that reply's own bytes count, so a stalled reply cannot be kept alive by
+  renewals.
+
+A Host whose health reports `reply_parts: true` is asked for
+`reply_part_bytes` (64 KiB). It sends the image as consecutive
+`{"id","part":{"index","data"}}` lines, then the reply with `image_parts`, so a
+renewal reply can pass between parts on a slow link. The broker rejoins the
+parts and validates the image exactly as before. Parts change framing, not the
+image encoding.
+
+The native writer
 starts its own monotonic challenge deadline before helper renewal, validates
 session and VNC/display bindings, and admits no new input event more than
 1,000 ms after that native challenge. No remote timestamp extends this deadline;

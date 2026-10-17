@@ -40,6 +40,20 @@ function image(width = 256, height = 128, rawPixels) {
     chunk('IHDR', header), chunk('IDAT', deflateSync(pixels)), chunk('IEND', Buffer.alloc(0))]).toString('base64');
 }
 
+// A structurally complete baseline JPEG header and scan for the given size.
+function jpegImage(width = 256, height = 128) {
+  const segment = (marker, body) => {
+    const length = Buffer.alloc(2); length.writeUInt16BE(body.length + 2);
+    return Buffer.concat([Buffer.from([0xff, marker]), length, body]);
+  };
+  const size = Buffer.alloc(4); size.writeUInt16BE(height, 0); size.writeUInt16BE(width, 2);
+  return Buffer.concat([Buffer.from([0xff, 0xd8]),
+    segment(0xdb, Buffer.alloc(65)),
+    segment(0xc0, Buffer.concat([Buffer.from([8]), size, Buffer.from([3, 1, 0x11, 0, 2, 0x11, 1, 3, 0x11, 1])])),
+    segment(0xda, Buffer.from([3, 1, 0, 2, 0x11, 3, 0x11, 0, 63, 0])),
+    Buffer.alloc(64, 0x55), Buffer.from([0xff, 0xd9])]).toString('base64');
+}
+
 const bounds = { x: 0, y: 0, width: 256, height: 128 };
 const mapping = { qualificationReceipt: 'test-fixture:explicit-geometry-proof', displayId: 42,
   nativeWidth: 512, nativeHeight: 256, scaledWidth: 256, scaledHeight: 128, displayBounds: bounds };
@@ -83,7 +97,9 @@ function native({ health = {}, run, releaseError, releaseRun, adopt, capabilitie
 
 // latency(request) delays each reply as a real SSH-attached Host would; a
 // serial Host answers one request at a time in arrival order.
-function helper({ alter, ignoreTerm = false, ignoreKill = false, latency, serial = false, pipelining } = {}) {
+// partGapsMs splits a requested capture reply into parts sent at those gaps.
+function helper({ alter, ignoreTerm = false, ignoreKill = false, latency, serial = false, pipelining,
+  partGapsMs, imageFormats } = {}) {
   const child = new EventEmitter();
   child.stdout = new PassThrough(); child.stderr = new PassThrough();
   child.exitCode = null; child.signalCode = null; child.kills = [];
@@ -102,6 +118,8 @@ function helper({ alter, ignoreTerm = false, ignoreKill = false, latency, serial
     display_id: 42, displayGeneration: 7, renewal_interval_ms: 500,
     input_permit_ms: 1000, maximum_round_trip_ms: 500,
     ...(pipelining === undefined ? {} : { request_pipelining: pipelining }),
+    ...(partGapsMs === undefined ? {} : { reply_parts: true }),
+    ...(imageFormats === undefined ? {} : { image_formats: imageFormats }),
     capture_ready: Boolean(owner), overlay_ready: Boolean(owner), ready: Boolean(owner),
     ui_heartbeat_age_ms: owner ? 0 : null, lease_remaining_ms: owner ? 3000 : 0,
     ...(owner || {}) });
@@ -127,12 +145,29 @@ function helper({ alter, ignoreTerm = false, ignoreKill = false, latency, serial
         challenge: request.params.challenge };
     } else if (request.action === 'release_activity') owner = undefined;
     let result = state();
-    if (request.action === 'capture') result = { ...result, image: image(), mimeType: 'image/png',
+    if (request.action === 'capture') result = { ...result,
+      ...(request.params.format === 'jpeg' ? { image: jpegImage(), mimeType: 'image/jpeg' } :
+        { image: image(), mimeType: 'image/png' }),
       nativeWidth: 512, nativeHeight: 256, scaledWidth: 256, scaledHeight: 128,
       display_bounds: bounds, pixels_per_point_x: 2, pixels_per_point_y: 2, cursor_included: true };
     let response = { id: request.id, success: true, result };
     if (alter) response = alter(request, response);
     if (response === null) return;
+    if (partGapsMs && request.params.reply_part_bytes && response.result?.image) {
+      const { image, ...rest } = response.result;
+      const size = Math.ceil(image.length / partGapsMs.length);
+      let at = 0;
+      partGapsMs.forEach((gap, index) => {
+        at += gap;
+        setTimeout(() => child.stdout.write(JSON.stringify({ id: request.id,
+          part: { index, data: image.slice(index * size, (index + 1) * size) } }) + '\n'), at);
+      });
+      setTimeout(() => {
+        request.answeredAt = performance.now();
+        child.stdout.write(JSON.stringify({ ...response, result: { ...rest, image_parts: partGapsMs.length } }) + '\n');
+      }, at);
+      return;
+    }
     if (deferred) queueMicrotask(() => child.stdout.write(JSON.stringify(response) + '\n'));
     else child.stdout.write(JSON.stringify(response) + '\n');
   }
@@ -651,6 +686,37 @@ for (const field of ['challenge', 'session_id', 'sequence', 'displayGeneration',
   });
 }
 
+test('D38: Host-route screenshots are JPEG by default, PNG on request, and the codec is bound', async () => {
+  const { executor, host } = await fixture({ helperOptions: { imageFormats: ['png', 'jpeg'] } });
+  try {
+    const [jpeg] = await executor.execute([{ action: 'screenshot' }]);
+    assert.equal(jpeg.result.mimeType, 'image/jpeg');
+    const [png] = await executor.execute([{ action: 'screenshot', format: 'png' }]);
+    assert.equal(png.result.mimeType, 'image/png');
+    assert.deepEqual(host.requests.filter(request => request.action === 'capture').map(request => request.params.format),
+      ['jpeg', 'png']);
+    const result = await new McpSession(executor).command({ action: 'screenshot' });
+    assert.deepEqual(result.content.filter(item => item.type === 'image').map(item => item.mimeType), ['image/jpeg']);
+  } finally { await executor.close(); }
+  // A Host without image_formats is asked for nothing new and must send PNG.
+  const legacy = await fixture();
+  try {
+    const [frame] = await legacy.executor.execute([{ action: 'screenshot' }]);
+    assert.equal(frame.result.mimeType, 'image/png');
+    assert.equal(legacy.host.requests.find(request => request.action === 'capture').params.format, undefined);
+  } finally { await legacy.executor.close(); }
+  for (const alter of [
+    (request, response) => request.action === 'capture' ? { ...response, result: { ...response.result,
+      image: image(), mimeType: 'image/png' } } : response,
+    (request, response) => request.action === 'capture' ? { ...response, result: { ...response.result,
+      image: Buffer.from(jpegImage(), 'base64').subarray(0, 60).toString('base64') } } : response,
+  ]) {
+    const wrong = await fixture({ helperOptions: { imageFormats: ['png', 'jpeg'], alter } });
+    try { await assert.rejects(wrong.executor.execute([{ action: 'screenshot' }])); }
+    finally { await wrong.executor.close(); }
+  }
+});
+
 test('a partial or corrupt helper PNG is rejected without raw capture fallback', async () => {
   const { executor, vnc } = await fixture({ helperOptions: { alter(request, response) {
     if (request.action === 'capture') response.result.image =
@@ -998,6 +1064,32 @@ test('measured SSH latency: a slow connect and 1.6 s captures complete with inpu
       } finally { await executor.close(); }
     });
   }
+});
+
+test('slow link: a split capture keeps arriving past 3 s while renewals pass between its parts', async t => {
+  // 147 ms ping and ~2 MB/s SSH: begin ~0.5 s at the Host, a 1.6 MB capture
+  // reply arriving over several seconds. Progress, not a flat deadline, bounds it.
+  const latency = request => request.action === 'begin_activity' ? 650 : request.action === 'capture' ? 900 : 150;
+  await t.test('progressing reply completes', async () => {
+    const { executor, host } = await fixture({ helperOptions: { latency, pipelining: true,
+      partGapsMs: [100, 900, 900, 900, 900, 900] } });
+    try {
+      const [response] = await executor.execute([{ action: 'screenshot' }]);
+      assert.ok(response.result.image);
+      const capture = host.requests.find(request => request.action === 'capture');
+      assert.equal(capture.params.reply_part_bytes, 65536);
+      assert.ok(capture.answeredAt - capture.sentAt > 4500);
+      assert.ok(host.requests.filter(request => request.action === 'renew_activity' &&
+        request.sentAt > capture.sentAt && request.sentAt < capture.answeredAt).length >= 6);
+    } finally { await executor.close(); }
+  });
+  await t.test('a stalled reply fails closed', async () => {
+    const { executor } = await fixture({ helperOptions: { latency, pipelining: true, partGapsMs: [100, 3400] } });
+    try {
+      await assert.rejects(executor.execute([{ action: 'screenshot' }]), /receipt deadline exceeded/);
+      await assert.rejects(executor.execute([{ action: 'screenshot' }]));
+    } finally { await executor.close(); }
+  });
 });
 
 test('500ms renewal deadline cancels an in-flight native command on helper stall', async () => {
