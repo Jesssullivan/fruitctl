@@ -166,6 +166,26 @@ private final class HostReplyWaiter {
     func value() -> HostResponse? { lock.lock(); defer { lock.unlock() }; return response }
 }
 
+/// One connection's whole-line writer. A failure shuts the socket down, which
+/// ends the reader; the descriptor itself is closed only by serve().
+private final class HostConnectionWriter {
+    private let fd: Int32
+    private let writeLock = NSLock()
+    private let stateLock = NSLock()
+    private var isFailed = false
+    init(fd: Int32) { self.fd = fd }
+    var failed: Bool { stateLock.lock(); defer { stateLock.unlock() }; return isFailed }
+    func write(_ line: Data) throws {
+        writeLock.lock(); defer { writeLock.unlock() }
+        guard !failed else { throw HostIPCError.unavailable }
+        try HostIPC.write(line, to: fd)
+    }
+    func abandon() {
+        stateLock.lock(); let first = !isFailed; isFailed = true; stateLock.unlock()
+        if first { _ = shutdown(fd, SHUT_RDWR) }
+    }
+}
+
 final class HostSocketServer {
     typealias Handler = (HostRequest, UUID, @escaping (HostResponse) -> Void) -> Void
     private let path: String
@@ -281,10 +301,23 @@ final class HostSocketServer {
         }
     }
 
+    /// Outstanding requests one connection may have. A full set pauses reading.
+    static let maximumConcurrentRequests = 4
+
+    /// Requests on one connection are answered as each completes, so a lease
+    /// renewal is not queued behind a capture's encode. Every request keeps
+    /// its own 2.5 s deadline, and a missed one still ends the connection.
+    /// The lease stays bound to this connection. Its descriptor closes only
+    /// after every responder has finished, so no reply reaches a reused fd.
     private func serve(_ fd: Int32) {
         let connectionID = UUID()
         lock.lock(); connections[connectionID] = fd; lock.unlock()
+        let slots = DispatchSemaphore(value: Self.maximumConcurrentRequests)
+        let responders = DispatchGroup()
+        let connection = HostConnectionWriter(fd: fd)
         defer {
+            // Each responder is bounded by its deadline and the liveness probe.
+            responders.wait()
             lock.lock(); connections.removeValue(forKey: connectionID); clients.remove(fd); lock.unlock()
             disconnected(connectionID)
             close(fd)
@@ -292,35 +325,50 @@ final class HostSocketServer {
         var framer = HostLineFramer()
         var buffer = [UInt8](repeating: 0, count: 8_192)
         do {
-            while true {
+            while !connection.failed {
                 let count = recv(fd, &buffer, buffer.count, 0)
                 if count < 0 && errno == EINTR { continue }
+                // EOF may be a half-close: outstanding replies are still sent.
                 guard count > 0 else { return }
                 for line in try framer.append(Data(buffer.prefix(count))) {
                     let request: HostRequest
                     do { request = try JSONDecoder().decode(HostRequest.self, from: line) }
                     catch {
-                        try HostIPC.write(try HostResponse.failure(id: nil, code: -32600,
-                                                                  message: "invalid_request").line(), to: fd)
+                        try connection.write(try HostResponse.failure(id: nil, code: -32600,
+                                                                      message: "invalid_request").line())
                         continue
                     }
+                    while slots.wait(timeout: .now() + .milliseconds(20)) != .success {
+                        guard !connection.failed, connectionIsLive(connectionID) else {
+                            throw HostIPCError.unavailable
+                        }
+                    }
                     let waiter = HostReplyWaiter()
+                    responders.enter()
                     handler(request, connectionID, waiter.finish)
-                    let deadline = ContinuousClock.now.advanced(by: .milliseconds(2_500))
-                    while waiter.completed.wait(timeout: .now() + .milliseconds(20)) != .success {
-                        guard connectionIsLive(connectionID) else { throw HostIPCError.unavailable }
-                        guard ContinuousClock.now < deadline else { throw HostIPCError.requestTimeout }
+                    DispatchQueue.global(qos: .utility).async { [weak self] in
+                        defer { slots.signal(); responders.leave() }
+                        guard let self else { connection.abandon(); return }
+                        self.respond(waiter, connectionID: connectionID, connection: connection)
                     }
-                    guard connectionIsLive(connectionID), let response = waiter.value() else {
-                        throw HostIPCError.unavailable
-                    }
-                    try HostIPC.write(try response.line(), to: fd)
                 }
             }
         } catch {
             // EOF/error revokes this connection's lease through disconnected.
             // Neither raw request contents nor local exception details are logged.
+            connection.abandon()
         }
+    }
+
+    private func respond(_ waiter: HostReplyWaiter, connectionID: UUID, connection: HostConnectionWriter) {
+        let deadline = ContinuousClock.now.advanced(by: .milliseconds(2_500))
+        while waiter.completed.wait(timeout: .now() + .milliseconds(20)) != .success {
+            guard !connection.failed, connectionIsLive(connectionID),
+                  ContinuousClock.now < deadline else { connection.abandon(); return }
+        }
+        guard !connection.failed, connectionIsLive(connectionID), let response = waiter.value(),
+              let line = try? response.line() else { connection.abandon(); return }
+        do { try connection.write(line) } catch { connection.abandon() }
     }
 
     deinit { stop() }

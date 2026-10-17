@@ -208,6 +208,49 @@ final class HostSocketTests: XCTestCase {
         XCTAssertEqual(fixture.persisted, 1)
     }
 
+    func testRenewalIsAnsweredWhileACaptureOnTheSameConnectionIsPending() async throws {
+        // A slow capture (PNG encode) must not queue the lease renewal behind it.
+        let root = FileManager.default.homeDirectoryForCurrentUser.resolvingSymlinksInPath()
+            .appendingPathComponent(".local/state/fctl-sock-" + String(UUID().uuidString.prefix(8)))
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true,
+                                               attributes: [.posixPermissions: 0o700])
+        defer { try? FileManager.default.removeItem(at: root) }
+        let held = NSLock()
+        var heldReply: ((HostResponse) -> Void)?
+        var heldRequest: HostRequest?
+        let server = HostSocketServer(path: root.appendingPathComponent("s").path,
+            handler: { request, _, reply in
+                if request.action == "capture" {
+                    held.lock(); heldRequest = request; heldReply = reply; held.unlock()
+                } else { reply(.ok(request, ["answered": .string(request.action)])) }
+            }, disconnected: { _ in })
+        try server.start()
+        defer { server.stop() }
+        let fd = socket(AF_UNIX, SOCK_STREAM, 0)
+        XCTAssertGreaterThanOrEqual(fd, 0)
+        defer { close(fd) }
+        HostIPC.configure(fd)
+        var address = try HostIPC.address(root.appendingPathComponent("s").path)
+        let connected = withUnsafePointer(to: &address) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                connect(fd, $0, socklen_t(MemoryLayout<sockaddr_un>.size))
+            }
+        }
+        XCTAssertEqual(connected, 0)
+        for (id, action) in [("capture", "capture"), ("renew", "renew_activity")] {
+            let body: [String: Any] = ["action": action, "id": id, "params": [String: String]()]
+            let data = try JSONSerialization.data(withJSONObject: body)
+            try HostIPC.write(data + Data([10]), to: fd)
+        }
+        let first = try response(fd)
+        XCTAssertEqual(first["id"] as? String, "renew")
+        held.lock(); let reply = heldReply, request = heldRequest; held.unlock()
+        let pending = try XCTUnwrap(request)
+        reply?(.ok(pending, ["answered": .string("capture")]))
+        let second = try response(fd)
+        XCTAssertEqual(second["id"] as? String, "capture")
+    }
+
     func testWriteDirectionProbeDistinguishesHalfCloseFromFullClose() throws {
         var descriptors: [Int32] = [-1, -1]
         XCTAssertEqual(socketpair(AF_UNIX, SOCK_STREAM, 0, &descriptors), 0)

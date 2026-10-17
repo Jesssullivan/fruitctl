@@ -534,6 +534,8 @@ final class HostApplicationController: NSObject, NSApplicationDelegate, NSMenuDe
                                                  "release_activity", "export_idle_reference",
                                                  "ax_snapshot", "ax_action"].map { .string($0) })
                 status["input_service"] = .boolean(false)
+                // Requests on one connection are answered as each completes.
+                status["request_pipelining"] = .boolean(true)
                 return .ok(request, status)
             case "begin_activity":
                 try validateDisplay(request)

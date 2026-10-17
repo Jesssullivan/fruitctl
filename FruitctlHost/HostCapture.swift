@@ -19,6 +19,9 @@ struct HostCapturedImage {
     let excludedPID: pid_t
     let excludedBundleID: String
     let nativeFrameTiming: HostNativeFrameTiming
+    /// Host-side milliseconds per stage, to place capture latency: window
+    /// enumeration, ScreenCaptureKit, the owned copy, and scale plus PNG encode.
+    var stageMilliseconds: [String: Int64] = [:]
 
     var geometryMetadata: [String: HostValue] {
         ["mimeType": .string("image/png"),
@@ -38,7 +41,8 @@ struct HostCapturedImage {
          "native_pixel_format": .string("BGRA32"),
          "excluded_application_pid": .integer(Int64(excludedPID)),
          "excluded_application_bundle_id": .string(excludedBundleID),
-         "native_frame_timing": nativeFrameTiming.metadata]
+         "native_frame_timing": nativeFrameTiming.metadata,
+         "host_stage_ms": .object(stageMilliseconds.mapValues { .integer($0) })]
     }
 
     var metadata: [String: HostValue] {
@@ -56,6 +60,12 @@ struct HostProcessedImage: Sendable {
 
 enum HostImageEncoder {
     static func encode(_ image: CGImage, maximumDimension: Int) throws -> HostProcessedImage {
+        // A detached worker thread has no run loop to drain ImageIO and
+        // CoreGraphics temporaries; drain them with each frame.
+        try autoreleasepool { try encodeFrame(image, maximumDimension: maximumDimension) }
+    }
+
+    private static func encodeFrame(_ image: CGImage, maximumDimension: Int) throws -> HostProcessedImage {
         try Task.checkCancellation()
         let width = image.width, height = image.height
         guard maximumDimension > 0, width > 0, height > 0,
@@ -155,6 +165,15 @@ final class HostCapture {
         guard maximumDimension > 0 else { throw HostCaptureError.incompleteImage }
         try permission.requireCapture(enabled: enabled)
         let displayID = self.displayID
+        let clock = ContinuousClock()
+        var stageStart = clock.now
+        var stages: [String: Int64] = [:]
+        func stage(_ name: String) {
+            let now = clock.now
+            let elapsed = stageStart.duration(to: now).components
+            stages[name] = elapsed.seconds * 1_000 + elapsed.attoseconds / 1_000_000_000_000_000
+            stageStart = now
+        }
         let content: SCShareableContent
         do {
             content = try await permission.withCaptureAuthorization(enabled: { self.enabled }) {
@@ -165,6 +184,7 @@ final class HostCapture {
             throw HostCaptureFailure.preserving(error, phase: .shareableContent,
                                               screenCaptureErrorDomain: SCStreamErrorDomain)
         }
+        stage("shareable_content")
         guard let display = content.displays.first(where: { $0.displayID == displayID }),
               CGDisplayIsActive(displayID) != 0 else { throw HostCaptureError.displayUnavailable }
         guard let ownApp = content.applications.first(where: {
@@ -202,8 +222,10 @@ final class HostCapture {
             throw HostCaptureFailure.preserving(error, phase: .captureImage,
                                               screenCaptureErrorDomain: SCStreamErrorDomain)
         }
+        stage("capture")
         let captured = try HostCapturedSample.read(sampled.0, width: width, height: height,
             requestHostTime: sampled.1, completionHostTime: sampled.2)
+        stage("copy")
         let image = captured.image
         guard image.width == width, image.height == height, self.displayID == displayID,
               HostDisplayGeometry.current(displayID) == geometry else {
@@ -217,11 +239,12 @@ final class HostCapture {
             }
         }
         try Task.checkCancellation()
+        stage("encode")
         return HostCapturedImage(png: processed.png, nativeWidth: width, nativeHeight: height,
             scaledWidth: processed.scaledWidth, scaledHeight: processed.scaledHeight,
             displayID: displayID, geometry: geometry,
             excludedPID: ownApp.processID, excludedBundleID: ownApp.bundleIdentifier,
-            nativeFrameTiming: captured.timing)
+            nativeFrameTiming: captured.timing, stageMilliseconds: stages)
     }
 }
 

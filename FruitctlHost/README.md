@@ -109,7 +109,11 @@ also accepts the legacy action field. IDs are strings or integers. Responses
 are `{"id":"request-id","success":true,"result":{...}}`, or
 `{"id":"request-id","success":false,"error":{"code":-32000,"message":"..."}}`.
 Each request is one newline-terminated UTF-8 JSON record, at most 65,536 bytes.
-Each connection is serialized, and at most eight same-user connections attach.
+At most eight same-user connections attach. Each connection may have four
+requests outstanding, answered as each completes, so `renew_activity` is not
+queued behind a capture's encode; `health` reports `request_pipelining: true`.
+Each request must complete within 2.5 s or its connection, and with it the
+connection's lease, ends.
 
 | Action | Parameters and behavior |
 | --- | --- |
