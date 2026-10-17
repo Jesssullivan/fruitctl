@@ -16,7 +16,9 @@ reviewable installation. xoxd-ai owns the public product and its releases.
 
 Fruitctl is efficient, business-level agent control of Macs over VNC. An
 agent sees a Mac's screen and drives its keyboard and mouse through Apple
-Screen Sharing, under one operator-configured target profile per Mac.
+Screen Sharing, under one operator-configured target profile per Mac. This
+section is the shape that work is measured against, not a release claim; the
+[release inventory](site/versions.json) records what each release verified.
 
 - **Controllers from enterprise environments.** Agents run on Linux seats,
   especially Rocky Linux, or on macOS. A Linux seat reaches the Darwin broker
@@ -39,8 +41,14 @@ Screen Sharing, under one operator-configured target profile per Mac.
   `doctor` checks for a Fruitctl-ready target.
 
 Accessibility and Screen Recording grants for the optional Host are the
-expected adoption posture. Claude Code and Codex are the qualified agent
-frontends; other adapters are best effort and labelled unqualified.
+expected adoption posture. Claude Code and Codex are the first frontends to
+qualify; until a release carries their receipts they, like every other adapter,
+stay runtime experimental (see the evidence labels below).
+
+As of alpha.11 the broker reads the target credential from a private file only.
+Vault CLI and keychain providers with `type_secret` (TIN-6599), and refusing
+input while a system dialog, lock screen or sleep covers the desktop, are in
+review and not yet in a release.
 
 ### Non-goals
 
