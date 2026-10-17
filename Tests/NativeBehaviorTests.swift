@@ -227,6 +227,54 @@ final class NativeBehaviorTests: XCTestCase {
         }
     }
 
+    // D16: the focus click and every keystroke of a secret use the ordinary
+    // input path; nothing else is written (no clipboard, no extra key).
+    func testSecretFocusClickThenTypesOnlyItsKeystrokes() async throws {
+        let trace = WireTrace()
+        let input = tracedInput(trace)
+        try await input.typeSecret("s3c", focusAt: (x: 4, y: 5))
+        let values = trace.values
+        XCTAssertEqual(Array(values.prefix(3)), ["pointer 4,5 mask=1", "pause 50000", "pointer 4,5 mask=0"])
+        XCTAssertEqual(values.dropFirst(3).filter { !$0.hasPrefix("pause") },
+                       ["down 0x73", "up 0x73", "down 0x33", "up 0x33", "down 0x63", "up 0x63"])
+        XCTAssertTrue(input.heldKeys.isEmpty)
+        XCTAssertFalse(input.heldButtons)
+    }
+
+    // An untypable character is refused before the focus click, and the
+    // error names neither the character nor its code point.
+    func testUntypableSecretSendsNothingAndNamesNoCharacter() async throws {
+        let trace = WireTrace()
+        let input = tracedInput(trace)
+        do {
+            try await input.typeSecret("pw\u{07}", focusAt: (x: 4, y: 5))
+            XCTFail("untypable secret succeeded")
+        } catch SecretTypingError.untypable {
+            let message = SecretTypingError.untypable.localizedDescription
+            XCTAssertFalse(message.contains("U+"))
+            XCTAssertFalse(message.contains("7"))
+        } catch { XCTFail("unexpected error: \(error)") }
+        do {
+            try await input.typeSecret(String(repeating: "a", count: SecretTypingError.maximumUTF8Bytes + 1), focusAt: nil)
+            XCTFail("oversize secret succeeded")
+        } catch SecretTypingError.invalidLength {} catch { XCTFail("unexpected error: \(error)") }
+        XCTAssertTrue(trace.values.isEmpty)
+    }
+
+    func testTypeSecretTakesOnlyThePrivateSecretFieldWithPairedCoordinates() throws {
+        let scaling = DisplayScaling(nativeWidth: 1920, nativeHeight: 1080)
+        XCTAssertTrue(PCRequest.inputMethods.contains("type_secret"))
+        XCTAssertTrue(PCRequest.supportedMethods.contains("type_secret"))
+        XCTAssertNoThrow(try request("type_secret", "{\"secret\":\"s\"}").validate(scaling: scaling))
+        XCTAssertNoThrow(try request("type_secret", "{\"secret\":\"s\",\"x\":1,\"y\":2}").validate(scaling: scaling))
+        for params in ["{}", "{\"secret\":\"\"}", "{\"secret\":\"s\",\"text\":\"s\"}",
+                       "{\"text\":\"s\"}", "{\"secret\":\"s\",\"x\":1}", "{\"secret\":\"s\",\"x\":1,\"y\":720}"] {
+            XCTAssertThrowsError(try request("type_secret", params).validate(scaling: scaling), params)
+        }
+        // No other method accepts the private field.
+        XCTAssertThrowsError(try request("key_type", "{\"text\":\"a\",\"secret\":\"s\"}").validate(scaling: scaling))
+    }
+
     func testInvalidPlanDoesNotReleaseOrAlterAlreadyHeldInput() async throws {
         var events: [String] = []
         let input = InputController(vnc: VNCBridge(config: .init()), keySender: { key, down, _, release in

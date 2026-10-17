@@ -15,10 +15,10 @@ if (process.argv.slice(2).some((arg) => arg !== '--check')) {
 const output = path.join(root, 'build-docs');
 const origin = 'https://fruitctl.clients.xoxd.ai';
 const repository = 'https://github.com/xoxd-ai/fruitctl';
-const pageNames = ['index', 'install', 'host-installer', 'agents', 'operation', 'junie', 'permissions', 'target-profile', 'architecture', 'compatibility', 'home-manager', 'licensing', 'product', 'slo'];
+const pageNames = ['index', 'install', 'host-installer', 'agents', 'operation', 'junie', 'permissions', 'secrets', 'target-profile', 'architecture', 'compatibility', 'home-manager', 'licensing', 'product', 'slo'];
 const labels = {
   index: 'Fruitctl', install: 'Install', agents: 'Agent adapters', junie: 'Junie and IntelliJ', architecture: 'Architecture',
-  operation: 'Desktop operation', permissions: 'macOS permissions', 'target-profile': 'Target profile', compatibility: 'Compatibility', product: 'Product', slo: 'Service objectives',
+  operation: 'Desktop operation', permissions: 'macOS permissions', secrets: 'Secret providers', 'target-profile': 'Target profile', compatibility: 'Compatibility', product: 'Product', slo: 'Service objectives',
   'home-manager': 'Home Manager', 'host-installer': 'Developer Host installer', licensing: 'Licensing',
 };
 const sha256 = (value) => createHash('sha256').update(value).digest('hex');
@@ -252,7 +252,7 @@ const fallbackSources = [
   ['Repository instructions', 'AGENTS.md'], ['Install guide', 'docs/install.md'],
   ['Agent adapters', 'docs/agents.md'], ['Junie and IntelliJ', 'docs/junie.md'],
   ['Desktop operation reference', 'skills/fruitctl/references/operation.md'],
-  ['macOS permissions', 'docs/permissions.md'],
+  ['macOS permissions', 'docs/permissions.md'], ['Secret providers', 'docs/secrets.md'],
   ['Managed standard-user policy template', 'docs/permissions/fruitctl-standard-user.mobileconfig.example'],
   ['Compatibility', 'docs/compatibility.md'], ['Authored install prompt template', 'docs/site/install-prompt.md'],
   ['Curated release inventory', 'docs/site/versions.json'], ['Canonical adoption contract', 'integrations/adoption.json'],

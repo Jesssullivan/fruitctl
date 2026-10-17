@@ -149,8 +149,9 @@ Each requested action becomes one `fruitctl.journal.v1` record: `seq`, `ts`,
 `frame_sha256` of the decoded returned image, any executor `provenance`, then
 `prev_hash` and `hash`. The hash is SHA-256 of the record's canonical JSON
 (sorted keys) without `hash`; the first record's `prev_hash` is 64 zeros.
-Images are never stored, only their digests. `type_secret` stores its `ref`
-and replaces every other parameter with `[redacted]`. Any parameter whose name
+Images are never stored, only their digests. `type_secret` stores its `ref`,
+`x`, `y`, the provider kind and a `length_class`, and replaces every other
+parameter with `[redacted]` ([secret providers](secrets.md)). Any parameter whose name
 looks like a credential (password, secret, token, credential, API or private
 key, OTP, PIN code, auth) is redacted for every action. Text is cut to 256
 characters.

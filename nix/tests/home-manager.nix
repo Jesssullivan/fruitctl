@@ -214,6 +214,32 @@ let
     targets.desktop.credentialFile = "/Users/fruitctl-test/private/password";
   };
   skillRoots = builtins.filter (path: pkgs.lib.hasSuffix "skills/fruitctl" path) (builtins.attrNames linux.home.file);
+  # D16/D36: provider declarations, e.g. a sops-nix materialized path.
+  providerTarget = extra: {
+    enable = true;
+    targets.desktop = {
+      daemonPath = "/Users/fruitctl-test/Applications/qualified-native/claude-kvm-daemon";
+      credential = { provider = "file"; path = "/Users/fruitctl-test/.config/sops-nix/secrets/fruitctl/desktop-vnc"; };
+      secrets = {
+        login-password = { provider = "file"; path = "/Users/fruitctl-test/.config/sops-nix/secrets/fruitctl/login"; allowSymlink = true; };
+        vault-pin = { provider = "command"; argv = [ "/nix/store/example-vault/bin/vault" "kv" "get" "-field=pin" "secret/desktop" ]; timeoutMs = 3000; };
+        keychain-pass = { provider = "keychain"; service = "fruitctl-desktop"; account = "fixture-user"; };
+      };
+    } // extra;
+  };
+  providerDocument = (builtins.fromJSON (evaluate "aarch64-darwin" (providerTarget { })).home.file."Library/Application Support/fruitctl/config.json".text).targets.desktop;
+  providerRejected = builtins.all (extra: rejected "aarch64-darwin" (providerTarget extra)) [
+    { credentialFile = "/Users/fruitctl-test/private/password"; }
+    { credential = { provider = "file"; path = "relative/password"; }; }
+    { credential = { provider = "command"; argv = [ "vault" "read" ]; }; }
+    { credential = { provider = "env"; name = "1BAD"; }; }
+    { secrets.bad = { provider = "keychain"; service = "only-service"; }; }
+    { secrets."bad ref" = { provider = "env"; name = "FRUITCTL_SECRET"; }; }
+  ] && rejected "x86_64-linux" {
+    enable = true;
+    bridgeHost = "darwin-bridge";
+    targets.desktop.secrets.login = { provider = "env"; name = "FRUITCTL_SECRET"; };
+  };
 in
 assert builtins.attrNames fruitctlFlake.packages.aarch64-darwin == [ "default" "fruitctl" "legacy-native" "native-controller" "proxy" "runtime" ];
 assert builtins.all (system: !(builtins.hasAttr "native-controller" fruitctlFlake.packages.${system})) [ "x86_64-darwin" "aarch64-linux" "x86_64-linux" ];
@@ -272,6 +298,13 @@ assert uuidDocument.targets.desktop.hostHelper.mapping.scale == 2;
 assert uuidRejected && !(rejected "aarch64-darwin" (uuidHelper uuidMapping)) && !(rejected "aarch64-darwin" (uuidHelper null));
 assert darwinBroker.ProgramArguments == [ "${darwin.programs.fruitctl.package}/bin/fruitctl" "broker" "--socket" "/Users/fruitctl-test/Library/Application Support/fruitctl/run/broker.sock" "--config" "/Users/fruitctl-test/Library/Application Support/fruitctl/config.json" ];
 assert builtins.elem ".agents/skills/fruitctl" skillRoots && builtins.elem ".claude/skills/fruitctl" skillRoots && builtins.elem ".junie/skills/fruitctl" skillRoots;
+assert providerDocument.credential == { provider = "file"; path = "/Users/fruitctl-test/.config/sops-nix/secrets/fruitctl/desktop-vnc"; };
+assert !(providerDocument ? credentialFile);
+assert providerDocument.secrets.login-password == { provider = "file"; path = "/Users/fruitctl-test/.config/sops-nix/secrets/fruitctl/login"; allowSymlink = true; };
+assert providerDocument.secrets.vault-pin == { provider = "command"; argv = [ "/nix/store/example-vault/bin/vault" "kv" "get" "-field=pin" "secret/desktop" ]; timeoutMs = 3000; };
+assert providerDocument.secrets.keychain-pass == { provider = "keychain"; service = "fruitctl-desktop"; account = "fixture-user"; };
+assert !(darwinDocument.targets.desktop ? credential) && !(darwinDocument.targets.desktop ? secrets);
+assert providerRejected;
 assert credentialRejected && missingBridgeRejected && noProfilesRejected && missingDarwinCredentialRejected && missingDarwinNativeRejected;
 pkgs.runCommand "fruitctl-home-manager-contract" { } ''
   # Configuration assertions above run at evaluation, without native builds,

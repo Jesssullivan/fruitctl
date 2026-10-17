@@ -287,12 +287,13 @@ journey and actual frontend use of the bridge remain unqualified.
 
 **Darwin controller.** Use Apple Silicon macOS 15+ and the unchanged bundled
 signed controller. The target owner enables Screen Sharing and handles any
-normal Apple approval. Provision the target's existing credential through your
-secret manager into a controller-local regular file, readable by the broker
-account, with mode `0600` or `0400`. The credential must be nonempty UTF-8,
-without NUL, at most 4,096 bytes; the provider file may be at most 4,097 bytes
-and one final newline is removed. Keep its contents out of commands, agent
-configuration and the Linux seat.
+normal Apple approval. Declare where the broker reads the target's existing
+credential: a controller-local file owned by the broker account with mode
+`0600` or `0400` (`credentialFile`, as below), or a `credential` provider that
+runs your vault CLI or reads the keychain. The credential must be nonempty
+UTF-8, without NUL, at most 4,096 bytes; one final newline is removed. Keep its
+contents out of commands, agent configuration and the Linux seat. See
+[secret providers](secrets.md), and check with `fruitctl doctor --secrets`.
 
 Save this operator-owned JSON as
 `/Users/alex/.config/fruitctl/controller.json` (mode `0600`):

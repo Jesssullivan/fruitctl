@@ -81,7 +81,10 @@ If target identity, pixels, geometry, or an input outcome is uncertain, pause
 input and report what remains unverified. Never replay uncertain input
 automatically. A target change belongs to operator configuration, not tool
 arguments. Credentials belong to the controller's configured provider; never
-put them in prompts, MCP arguments, generated config, logs, or receipts.
+put them in prompts, MCP arguments, generated config, logs, or receipts. To
+fill a password field, use `type_secret {ref}` with a ref the operator
+allowlisted for the target; ask the operator for the ref name, not the value.
+Do not use it for macOS privacy (TCC), administrator or keychain prompts.
 
 The purple human indicator is optional and available only on qualified modes.
 Do not claim it is running or excluded from captures without evidence. Finish

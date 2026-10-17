@@ -5,6 +5,7 @@ contract: instructions_only
 wire: MCP_JSON
 target: operator_configured_profile
 credentials: controller_provider
+secrets: type_secret_ref_allowlisted_per_target_value_never_in_request_result_or_journal
 tools[5]{name,purpose}:
   vnc_command,observe_or_input
   action_queue,bounded_confident_sequence

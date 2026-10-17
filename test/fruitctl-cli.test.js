@@ -159,8 +159,10 @@ test('CLI forwards selected root and registration paths to all four lifecycle AP
   await fs.mkdir(path.join(directory, 'lib/broker'), { recursive: true });
   await fs.mkdir(path.join(directory, 'lib/install'), { recursive: true });
   await fs.copyFile(cliPath, fixtureCli);
-  await fs.copyFile(fileURLToPath(new URL('../lib/broker/paths.mjs', import.meta.url)),
-    path.join(directory, 'lib/broker/paths.mjs'));
+  for (const module of ['paths.mjs', 'secrets.mjs']) {
+    await fs.copyFile(fileURLToPath(new URL(`../lib/broker/${module}`, import.meta.url)),
+      path.join(directory, 'lib/broker', module));
+  }
   await fs.writeFile(path.join(directory, 'package.json'), JSON.stringify({ version: '9.8.7-fixture' }));
   await fs.writeFile(path.join(directory, 'lib/install/index.mjs'),
     `export async function install(options){return {command:'install',options};}\n` +
@@ -310,8 +312,10 @@ async function lifecycleCliFixture(t, installerSource) {
   await Promise.all(['bin', 'lib/broker', 'lib/install'].map(relative =>
     fs.mkdir(path.join(directory, relative), { recursive: true })));
   await fs.copyFile(cliPath, fixtureCli);
-  await fs.copyFile(fileURLToPath(new URL('../lib/broker/paths.mjs', import.meta.url)),
-    path.join(directory, 'lib/broker/paths.mjs'));
+  for (const module of ['paths.mjs', 'secrets.mjs']) {
+    await fs.copyFile(fileURLToPath(new URL(`../lib/broker/${module}`, import.meta.url)),
+      path.join(directory, 'lib/broker', module));
+  }
   await fs.writeFile(path.join(directory, 'package.json'), JSON.stringify({ version: '9.8.7-fixture' }));
   await fs.writeFile(path.join(directory, 'lib/install/index.mjs'), installerSource);
   return { directory, fixtureCli };

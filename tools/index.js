@@ -44,19 +44,27 @@ const regions = () => z.array(rect()).min(1).max(MAX_REGIONS)
 const ignore = () => z.array(rect()).max(MAX_REGIONS)
   .describe('Scaled-space rectangles excluded from comparison (clocks, cursors, spinners)');
 const stableMs = () => z.number().int().min(50).max(10000);
+// D16: the name of a secret the operator allowlisted for this target.
+const secretRef = () => z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$/).optional()
+  .describe('type_secret: operator-allowlisted secret name (never the secret itself)');
 
 export function validateActionParameters(input) {
   const required = {
     mouse_click: ['x', 'y'], mouse_double_click: ['x', 'y'], triple_click: ['x', 'y'],
     mouse_move: ['x', 'y'], hover: ['x', 'y'],
     mouse_drag: ['x', 'y', 'toX', 'toY'], scroll: ['x', 'y', 'direction'],
-    nudge: ['dx', 'dy'], key_tap: ['key'], key_type: ['text'], paste: ['text'],
+    nudge: ['dx', 'dy'], key_tap: ['key'], key_type: ['text'], paste: ['text'], type_secret: ['ref'],
     hold_key: ['key', 'duration_ms'], mouse_down: ['x', 'y'],
     zoom: ['x', 'y', 'width', 'height'], wait_for_stable: ['stable_ms', 'timeout_ms'],
     expect_change: ['x', 'y', 'width', 'height'],
   }[input.action] || [];
   for (const field of required) {
     if (input[field] === undefined) throw new Error(`Missing ${field} for ${input.action}`);
+  }
+  // D16: a secret is named, never sent. The broker resolves the ref.
+  if (input.action === 'type_secret') {
+    if (input.text !== undefined) throw new Error('type_secret takes a ref, never text');
+    if ((input.x === undefined) !== (input.y === undefined)) throw new Error('type_secret takes both x and y or neither');
   }
   if (input.action === 'wait_for_stable' && input.stable_ms > input.timeout_ms) {
     throw new Error('stable_ms must not exceed timeout_ms for wait_for_stable');
@@ -127,6 +135,8 @@ export function vncCommandTool() {
       '  hold_key       {key, duration_ms}       → hold one key, released before the call returns',
       '  key_type       {text}                   → type text character by character',
       '  paste          {text}                   → paste text via clipboard',
+      '  type_secret    {ref, x?, y?}            → type an operator-allowlisted secret by name',
+      '                                            (clicks x,y first); the value is never returned',
       '  detect_elements                         → OCR text detection with bounding boxes',
       '  ax_snapshot    {depth?, focused_app?}   → Host route only: live Accessibility tree with',
       '                                            role/label/value/frame and structural refs',
@@ -145,7 +155,7 @@ export function vncCommandTool() {
         'screenshot', 'cursor_crop', 'diff_check', 'set_baseline', 'zoom', 'wait_for_stable',
         'mouse_click', 'mouse_double_click', 'mouse_move', 'hover', 'nudge',
         'mouse_drag', 'scroll',
-        'key_tap', 'key_combo', 'key_type', 'paste',
+        'key_tap', 'key_combo', 'key_type', 'paste', 'type_secret',
         'detect_elements', 'ax_snapshot',
         'configure', 'get_timing',
         'wait', 'health', 'shutdown',
@@ -163,6 +173,7 @@ export function vncCommandTool() {
       key: z.string().optional().describe('Key name or combo string (e.g. "cmd+c")'),
       keys: z.array(z.string()).optional().describe('Array of key names for combo (e.g. ["cmd","shift","3"])'),
       text: z.string().optional().describe('Text to type or paste'),
+      ref: secretRef(),
       direction: z.enum(['up', 'down', 'left', 'right']).optional().describe('Scroll direction'),
       amount: z.number().int().min(1).max(20).optional().describe('Scroll amount (default 3)'),
       ms: z.number().int().min(50).max(10000).optional().describe('Wait duration in ms (default 500)'),
@@ -215,7 +226,7 @@ export function actionQueueTool() {
     action: z.enum([
       'mouse_click', 'mouse_double_click', 'mouse_move', 'hover', 'nudge',
       'mouse_drag', 'scroll',
-      'key_tap', 'key_combo', 'key_type', 'paste',
+      'key_tap', 'key_combo', 'key_type', 'paste', 'type_secret',
       'set_baseline', 'diff_check', 'wait_for_stable',
       'wait',
       'triple_click', 'cursor_position', 'hold_key', 'mouse_down', 'mouse_up',
@@ -232,6 +243,7 @@ export function actionQueueTool() {
     key: z.string().optional().describe('Key name or combo string (e.g. "ctrl+c")'),
     keys: z.array(z.string()).optional().describe('Array of key names for combo'),
     text: z.string().optional().describe('Text to type or paste'),
+    ref: secretRef(),
     direction: z.enum(['up', 'down', 'left', 'right']).optional().describe('Scroll direction'),
     amount: z.number().int().min(1).max(20).optional().describe('Scroll amount (default 3)'),
     ms: z.number().int().min(50).max(10000).optional().describe('Wait duration in ms (default 500)'),

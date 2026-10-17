@@ -435,6 +435,13 @@ extension ClaudeKVMDaemon {
                 try input.checkInputAdmission()
                 respond(.success(id: id, detail: "OK"))
 
+            case "type_secret":
+                guard let secret = p?.secret else { throw SecretTypingError.invalidLength }
+                let focus: (x: Int, y: Int)? = p?.x != nil && p?.y != nil ? nativeXY(p, scaling: scaling) : nil
+                try await input.typeSecret(secret, focusAt: focus)
+                try input.checkInputAdmission()
+                respond(.success(id: id, detail: "OK"))
+
             // ── Cursor ────────────────────────────────────────
 
             case "cursor_position":

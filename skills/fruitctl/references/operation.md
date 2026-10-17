@@ -34,10 +34,19 @@ An example click, once its location has been observed, is:
 
 Other input actions include `mouse_double_click`, `triple_click`,
 `mouse_move`, `hover`, `nudge`, `mouse_drag`, `scroll`, `key_tap`,
-`key_combo`, `hold_key`, `key_type`, and `paste`. Use the schema's actual
-fields and bounds. `paste` uses clipboard behavior; choose `key_type` when
-modifying the clipboard is inappropriate. Do not send secrets through either
-action.
+`key_combo`, `hold_key`, `key_type`, `paste`, and `type_secret`. Use the
+schema's actual fields and bounds. `paste` uses clipboard behavior; choose
+`key_type` when modifying the clipboard is inappropriate. Do not send secrets
+through either action.
+
+- `type_secret {ref, x?, y?}` types a secret the operator allowlisted for this
+  target, by name. With `x`/`y` it clicks there first. The broker resolves the
+  value; it is never in your request, the result or the journal, and it is
+  never pasted. Refusals before any input are `secret_ref_not_allowed`,
+  `secret_unavailable`, `invalid_secret_request` and, on the Host route,
+  `human_stop_latched`. A failure after typing began may leave part of the
+  secret in the field: take a screenshot and clear the field before retrying.
+  Never use it to answer a macOS privacy, administrator or keychain prompt.
 
 - `mouse_click` accepts `modifiers` (for example `["shift"]` or `["cmd"]`),
   pressed before the click and released after it in the same call.

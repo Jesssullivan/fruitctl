@@ -10,7 +10,7 @@ enum CommandValidationError: LocalizedError {
 extension PCRequest {
     static let inputMethods: Set<String> = [
         "mouse_move", "hover", "nudge", "mouse_click", "mouse_double_click", "mouse_drag", "scroll",
-        "key_tap", "key_combo", "key_type", "paste",
+        "key_tap", "key_combo", "key_type", "paste", "type_secret",
         "triple_click", "hold_key", "mouse_down", "mouse_up",
     ]
 
@@ -93,6 +93,19 @@ extension PCRequest {
         }
         if method == "key_type" || method == "paste" {
             guard let text = p?.text, text.utf8.count <= 1_048_576 else { throw CommandValidationError.invalid("text") }
+        }
+        if method == "type_secret" {
+            // The secret travels only in `secret`; a `text` field is refused so
+            // no other path can mistake it for ordinary typed text.
+            guard p?.text == nil, let secret = p?.secret, !secret.isEmpty,
+                  secret.utf8.count <= SecretTypingError.maximumUTF8Bytes else {
+                throw CommandValidationError.invalid("secret")
+            }
+            guard (p?.x == nil) == (p?.y == nil) else { throw CommandValidationError.invalid("x/y") }
+            try check(p?.x, "x", 0...(scaling.scaledWidth - 1))
+            try check(p?.y, "y", 0...(scaling.scaledHeight - 1))
+        } else if p?.secret != nil {
+            throw CommandValidationError.invalid("secret")
         }
         // Observation rectangles use the current scaled display space.
         if method == "zoom" || method == "expect_change" {

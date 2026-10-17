@@ -138,18 +138,18 @@ test('lane journal records each action with frame hash, provenance and redaction
   const owner = '0a0a0a0a-0b0b-4c0c-8d0d-0e0e0e0e0e0e';
   lane.acquire(owner);
   const responses = await lane.execute([{ action: 'screenshot' },
-    { action: 'type_secret', ref: 'vault', text: 'do-not-store' }, { action: 'mouse_click', x: 1, y: 2 }]);
+    { action: 'configure', api_key: 'do-not-store' }, { action: 'mouse_click', x: 1, y: 2 }]);
   assert.equal(responses[0].result.image, PNG, 'the returned frame is unchanged');
   await observer.flush();
   const file = path.join(dir, `${owner}.jsonl`);
   const records = await lines(file);
   assert.deepEqual(records.map(record => [record.method, record.result.outcome]),
-    [['screenshot', 'ok'], ['type_secret', 'ok'], ['mouse_click', 'ok']]);
+    [['screenshot', 'ok'], ['configure', 'ok'], ['mouse_click', 'ok']]);
   assert.equal(records[0].frame_sha256, sha256(Buffer.from(PNG, 'base64')));
   assert.deepEqual(records[0].provenance, { stream: 'owned', frame: 7 });
   assert.equal(records[0].target, 'desktop');
   assert.equal(records[0].session, owner);
-  assert.deepEqual(records[1].params, { ref: 'vault', text: '[redacted]' });
+  assert.deepEqual(records[1].params, { api_key: '[redacted]' });
   assert.deepEqual(records[2].params, { x: 1, y: 2 });
   assert.ok(!(await fs.readFile(file, 'utf8')).includes('do-not-store'));
   assert.ok(!(await fs.readFile(file, 'utf8')).includes(PNG));
@@ -168,7 +168,7 @@ test('failed and refused batches are journalled without claiming unrun input', a
     preflight() { throw preAdmissionRefusal('Action unavailable on native backend'); } }),
   { name: 'other', observer });
   t.after(() => refusing.close());
-  await assert.rejects(refusing.execute([{ action: 'type_secret', ref: 'r', text: 's' }]), /unavailable/);
+  await assert.rejects(refusing.execute([{ action: 'mouse_click', x: 0, y: 0 }]), /unavailable/);
   await observer.flush();
   const files = (await fs.readdir(dir)).sort();
   assert.equal(files.length, 2);
@@ -179,7 +179,7 @@ test('failed and refused batches are journalled without claiming unrun input', a
     assert.equal((await verifyJournal(path.join(dir, file))).ok, true);
   }
   assert.deepEqual(outcomes.sort(), ['desktop:key_tap:not_run', 'desktop:mouse_click:failed',
-    'desktop:wait:ok', 'other:type_secret:refused']);
+    'desktop:wait:ok', 'other:mouse_click:refused']);
 });
 
 test('telemetry writes per-action JSONL, rotates by size and renders a Prometheus summary atomically', async t => {

@@ -9,7 +9,8 @@ struct PCRequest: Decodable {
         "screenshot", "cursor_crop", "diff_check", "set_baseline", "detect_elements",
         "zoom", "wait_for_stable", "expect_baseline", "expect_change",
         "mouse_move", "hover", "nudge", "mouse_click", "mouse_double_click", "mouse_drag", "scroll",
-        "key_tap", "key_combo", "key_type", "paste", "configure", "get_timing", "wait", "health", "shutdown",
+        "key_tap", "key_combo", "key_type", "paste", "type_secret",
+        "configure", "get_timing", "wait", "health", "shutdown",
         "adopt_observation", "begin_input_permit", "grant_input_permit",
         "triple_click", "cursor_position", "hold_key", "mouse_down", "mouse_up", "release_holds",
     ]
@@ -29,6 +30,9 @@ struct PCRequest: Decodable {
         let key: String?
         let keys: [String]?
         let text: String?
+        // D16: private broker -> native secret for type_secret. Not an MCP
+        // field; never logged, echoed or placed on the clipboard.
+        let secret: String?
         let direction: String?
         let amount: Int?
         let ms: Int?
@@ -90,7 +94,7 @@ struct PCRequest: Decodable {
         // swiftlint:disable nesting
         enum CodingKeys: String, CodingKey {
             case x, y, toX, toY, dx, dy
-            case button, key, keys, text, direction, amount, ms, modifiers
+            case button, key, keys, text, secret, direction, amount, ms, modifiers
             case durationMs = "duration_ms"
             case holdScope = "hold_scope"
             case width, height, regions, ignore
