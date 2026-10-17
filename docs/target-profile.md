@@ -176,8 +176,9 @@ paste, `type_secret`), the broker reads the target's desktop state over SSH and 
 batch if macOS is showing something that would block or capture that input.
 Nothing is sent to the target in that case, and the lease is kept, so the
 agent can retry after a human has dealt with it. A batch with no input
-(`screenshot`, `health` and the other read actions) is never refused or
-delayed; a batch that mixes observation and input is refused as a whole.
+(`screenshot`, `health` and the other read actions) is never refused, and
+only `health` waits for the probe (at most 1.5 s, within its deadline); a
+batch that mixes observation and input is refused as a whole.
 
 ```json
 "desktopState": { "ssh": "alex@office-desktop", "enabled": true }
@@ -197,13 +198,16 @@ The probe is one fixed read-only script: `stat` of `/dev/console`,
 processes. It reads no window titles and no pixels, sends no input and never
 answers a dialog. A result is cached for about 2 s; a failed probe is cached
 for 10 s so an unreachable target is not re-probed per action. A probe that
-does not answer within 4 s (or the request's deadline) reads as `unknown`.
+does not answer within 4 s, or within half of what is left of the request's
+deadline, reads as `unknown`, and the batch keeps the rest of its budget. A
+screenshot reports the cached sample only while it is fresh; an older one is
+`unknown` with `reason: stale`, never shown as the current state.
 
 Health and screenshot results carry `desktop_state`:
 
 | Field | Values | Refuses input |
 | --- | --- | --- |
-| `sentinel` | `ok`, or `unknown` with `reason` (`not_configured`, `pending`, `probe_failed`, `probe_timeout`) | Never on its own |
+| `sentinel` | `ok`, or `unknown` with `reason` (`not_configured`, `pending`, `stale`, `probe_failed`, `probe_timeout`) | Never on its own |
 | `locked` | `true` for the lock screen or the login window (`console: loginwindow`) | Yes, `-32015` `target_locked` |
 | `display_asleep` | `true` when the main display is asleep | Yes, `display_asleep` |
 | `consent_dialog` | `{ owner, kind }` for an on-screen window of a dialog owner, else `null` | Yes, `-32014` `human_consent_required` |

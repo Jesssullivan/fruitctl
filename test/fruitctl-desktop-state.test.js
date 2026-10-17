@@ -275,3 +275,44 @@ test('a lock reaches the MCP result as -32015 with its data, through the broker 
   await assert.rejects(createBroker({ socketPath: path.join(dir, 'bad.sock'),
     config: { targets: { desktop: { desktopState: { ssh: '-oX' } } } } }), /desktopState/);
 });
+
+test('a hanging probe never runs a short batch into its deadline or past it', async t => {
+  const { factory, sent } = recordingFactory();
+  const lane = new TargetLane({ desktopState: { ssh: 'op@mac' } }, factory,
+    { desktopProbe: () => new Promise(() => {}) });
+  t.after(() => lane.close());
+  lane.acquire('owner');
+  // A 3 s budget leaves 1.5 s of work; the probe may take only half of it.
+  const [click] = await lane.execute([{ action: 'mouse_click', x: 1, y: 1 }], { timeoutMs: 3000 });
+  assert.equal(click.result.detail, 'mouse_click done');
+  assert.equal(lane.owner, 'owner');
+  assert.ok(!lane.releasing, 'an unknown state did not retire the lane');
+  // Health waits for the probe only within its own deadline.
+  const started = performance.now();
+  const [health] = await lane.execute([{ action: 'health' }], { timeoutMs: 400 });
+  assert.ok(performance.now() - started < 400, 'health answered inside its deadline');
+  assert.equal(health.result.desktop_state.reason, 'probe_timeout');
+  assert.deepEqual(sent, ['mouse_click', 'health']);
+});
+
+test('a screenshot never reports an expired sample as the current desktop state', async t => {
+  let now = 0;
+  const { probe, calls } = sentinelProbe([variant({ desktop_windows: windows(UNC_ALERT) }),
+    () => delay(50).then(() => variant())]);
+  const { factory } = recordingFactory();
+  const lane = new TargetLane({ desktopState: { ssh: 'op@mac' } }, factory, { desktopProbe: probe });
+  lane.desktop.now = () => now;
+  t.after(() => lane.close());
+  await assert.rejects(lane.execute([{ action: 'mouse_click', x: 1, y: 1 }]),
+    error => error.code === HUMAN_CONSENT_REQUIRED_CODE);
+  // A human answers the dialog; a minute later the agent looks again. The
+  // probe this screenshot starts has not answered when the capture returns.
+  now = 60000;
+  const [shot] = await lane.execute([{ action: 'screenshot' }]);
+  assert.deepEqual([shot.result.desktop_state.sentinel, shot.result.desktop_state.reason], ['unknown', 'stale']);
+  assert.equal(shot.result.desktop_state.consent_dialog, 'unknown');
+  await lane.desktop.inflight;
+  assert.equal(calls.length, 2);
+  const [next] = await lane.execute([{ action: 'screenshot' }]);
+  assert.equal(next.result.desktop_state.consent_dialog, null);
+});

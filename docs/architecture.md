@@ -150,8 +150,11 @@ not retired and the lease is kept. The journal records it as `refused`. The
 script shares doctor's probe fragments and parsers; it reads no window titles
 or pixels and never answers a dialog (D16). Results are cached for about 2 s.
 Health and screenshot results carry `desktop_state`; a screenshot never waits
-for a probe, and health waits at most 1.5 s for one already running. An
-unreachable, slow or unconfigured sentinel is `unknown` and refuses nothing.
+for a probe and reports a cached sample only while it is fresh (else `unknown`,
+`stale`), and health waits at most 1.5 s, within its deadline, for one already
+running. Before input the probe gets at most half of the batch's remaining
+budget. An unreachable, slow or unconfigured sentinel is `unknown` and refuses
+nothing.
 Fields and codes: [target profile](target-profile.md#desktop-state-sentinel).
 
 ### Action journal
