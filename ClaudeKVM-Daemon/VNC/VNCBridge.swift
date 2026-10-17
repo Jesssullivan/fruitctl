@@ -201,6 +201,11 @@ final class VNCBridge: @unchecked Sendable {
     /// re-arm supersedes the full request; while the screen animates the
     /// race repeats every frame and only partial updates ever arrive.
     private var captureHoldsRequestGate = false
+    /// D8/D29: the target clipboard as this connection last knew it, and how
+    /// many server answers have arrived. Only with `retainClipboard`
+    /// (messageQueue). Cleared on every new connection.
+    private var clipboardSnapshot: VNCClipboardSnapshot?
+    private var clipboardReceipts = 0
     private static let incompleteFrameRefreshIntervalNs: UInt64 = 1_000_000_000
     private var reconnectCount = 0
     private let stateStreamStorage = OSAllocatedUnfairLock<AsyncStream<VNCConnectionState>.Continuation?>(initialState: nil)
@@ -671,6 +676,9 @@ final class VNCBridge: @unchecked Sendable {
         newClient.pointee.GetPassword = vncGetPassword
         newClient.pointee.GetCredential = vncGetCredential
         newClient.pointee.GotXCutText = vncGotXCutText
+        // The callback is what makes LibVNC advertise ExtendedClipboard.
+        if config.extendedClipboard { newClient.pointee.GotXCutTextUTF8 = vncGotXCutTextUTF8 }
+        clipboardSnapshot = nil
         // A zero upstream default meant unbounded connect/read waits. These
         // are native per-operation limits, not a whole-handshake deadline.
         let timeout = config.connectTimeout > 0 ? min(config.connectTimeout, 30) : 10
@@ -1227,10 +1235,110 @@ final class VNCBridge: @unchecked Sendable {
                 throw VNCError.sendFailed("Clipboard input is unavailable for the observed display")
             }
             try admitSettledInput()
-            let bytes = Array(text.utf8CString)
             try inputPermit?.check(context: context)
-            guard operations.sendClientCutText(client, bytes) else { throw VNCError.sendFailed("clipboard text") }
-            ledgerInput(client, type: rfbClientCutText)
+            try writeClipboard(client, text)
+        }
+    }
+
+    /// D29: put back the clipboard a paste-routed key_type replaced. Like a
+    /// key release it runs after cancellation or a lapsed permit, but only on
+    /// the connection generation that was written to.
+    func restoreClipboardText(_ text: String, context: VNCInputContext?) async throws {
+        try await sendOnNativeQueue(releaseOnly: true) { [self] in
+            guard let client = activeClient else { throw VNCError.notConnected }
+            guard admitsInput(context, releaseOnly: true), text.utf8.count <= 1_048_576 else {
+                throw VNCError.sendFailed("Clipboard restore refused for a different connection")
+            }
+            try admitSettledInput()
+            try writeClipboard(client, text)
+        }
+    }
+
+    /// UTF-8 through ExtendedClipboard when the server advertised text;
+    /// otherwise legacy Latin-1, refused typed before any write for text that
+    /// Latin-1 cannot carry (sending UTF-8 bytes there would paste mojibake).
+    private func writeClipboard(_ client: UnsafeMutablePointer<rfbClient>, _ text: String) throws {
+        guard let encoding = clipboardEncoding(client, text) else {
+            throw NativeInputRefusal.clipboardUnicodeUnsupported
+        }
+        let sent: Bool
+        switch encoding {
+        case .utf8:
+            sent = operations.sendClientCutTextUTF8(client, Array(text.utf8CString))
+        case .latin1:
+            sent = operations.sendClientCutText(client,
+                text.unicodeScalars.map { CChar(bitPattern: UInt8($0.value)) } + [0])
+        }
+        guard sent else { throw VNCError.sendFailed("clipboard text") }
+        ledgerInput(client, type: rfbClientCutText)
+        if config.retainClipboard {
+            clipboardSnapshot = VNCClipboardSnapshot(text: text, encoding: encoding,
+                connectionGeneration: framebufferDiagnostics.connectionGeneration,
+                observedNs: monotonicNanoseconds())
+        }
+    }
+
+    private func clipboardEncoding(_ client: UnsafeMutablePointer<rfbClient>,
+                                   _ text: String) -> VNCClipboardSnapshot.Encoding? {
+        if config.extendedClipboard && operations.extendedClipboardText(client) { return .utf8 }
+        return VNCClipboardSnapshot.isLatin1(text) ? .latin1 : nil
+    }
+
+    /// How text would reach the clipboard now, or nil when it cannot.
+    func clipboardEncoding(for text: String) -> VNCClipboardSnapshot.Encoding? {
+        onMessageQueue { activeClient.map { clipboardEncoding($0, text) } ?? nil }
+    }
+
+    /// Server cut text, received on the message queue. Read only when the
+    /// profile retains the clipboard; otherwise the bytes are never touched.
+    func receivedClipboard(for native: UnsafeMutablePointer<rfbClient>, bytes: UnsafeRawBufferPointer,
+                           encoding: VNCClipboardSnapshot.Encoding) {
+        guard config.retainClipboard, native == client, clientReady,
+              let session = clientSession, wants(session) else { return }
+        let text: String?
+        switch encoding {
+        case .latin1: text = VNCClipboardSnapshot.decodeLatin1(bytes)
+        case .utf8: text = VNCClipboardSnapshot.decodeUTF8(bytes)
+        }
+        guard let text else { return }
+        clipboardReceipts &+= 1
+        clipboardSnapshot = VNCClipboardSnapshot(text: text, encoding: encoding,
+            connectionGeneration: framebufferDiagnostics.connectionGeneration,
+            observedNs: monotonicNanoseconds())
+    }
+
+    /// The target clipboard. With ExtendedClipboard text this asks the server
+    /// and waits up to `waitNanoseconds` for its answer (`fresh`); otherwise,
+    /// or without an answer, it is the last text this connection received or
+    /// wrote. nil when the profile retains nothing or nothing is known.
+    /// Writes no input.
+    func readClipboard(waitNanoseconds: UInt64) async throws -> (snapshot: VNCClipboardSnapshot, fresh: Bool)? {
+        guard config.retainClipboard else { return nil }
+        let generation = framebufferDiagnostics.connectionGeneration
+        let requested: Int? = onMessageQueue {
+            guard let client = activeClient, config.extendedClipboard,
+                  operations.extendedClipboardText(client) else { return nil }
+            let before = clipboardReceipts
+            guard operations.requestClipboardText(client) else { return nil }
+            ledger(type: Int(rfbClientCutText), length: 12)
+            return before
+        }
+        if let before = requested {
+            let start = monotonicNanoseconds()
+            while true {
+                let answered = onMessageQueue { clipboardReceipts != before }
+                if answered { return currentClipboard(generation).map { (snapshot: $0, fresh: true) } }
+                guard monotonicNanoseconds() &- start < waitNanoseconds else { break }
+                try await Task.sleep(nanoseconds: 10_000_000)
+            }
+        }
+        return currentClipboard(generation).map { (snapshot: $0, fresh: false) }
+    }
+
+    private func currentClipboard(_ generation: Int) -> VNCClipboardSnapshot? {
+        onMessageQueue {
+            guard let snapshot = clipboardSnapshot, snapshot.connectionGeneration == generation else { return nil }
+            return snapshot
         }
     }
 

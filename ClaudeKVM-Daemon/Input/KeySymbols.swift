@@ -41,6 +41,9 @@ struct InputTiming {
     var typeInterKeyUs: UInt32  = 20_000   // 20ms
     var typeShiftUs: UInt32     = 10_000   // 10ms
     var pasteSettleUs: UInt32   = 30_000   // 30ms
+    /// D29: after a routed paste's Cmd+V, before the next clipboard write
+    /// (the restore included), so the target app reads the pasted text.
+    var pasteRestoreUs: UInt32  = 300_000  // 300ms
 
     // Display
     var cursorCropRadius: Int   = 150      // px

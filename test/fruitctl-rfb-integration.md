@@ -111,6 +111,18 @@ per request mode. The MCP run adds four more:
   and resume after the captures. The published alpha.10 controller fails this
   scenario in stream mode with `stale_screen` `incomplete_coverage`, as on
   PZM, and passes it on demand.
+- Native only, per clipboard model (`legacy`, `extended`), with
+  `--clipboard-read --paste-unmappable`: `legacy` ignores the
+  ExtendedClipboard pseudo-encoding and pushes Latin-1 cut text after
+  SetEncodings; `extended` answers it with Caps (text, request, notify,
+  provide) and answers each Request with a Provide. `clipboard_read` must
+  return the server text (`fresh` only when extended). `paste` of Latin-1 text
+  must arrive exactly in that encoding followed by Ctrl+V; non-Latin-1 text must
+  arrive as UTF-8 when extended and be refused `-32011`
+  `clipboard_unicode_unsupported` with nothing written when legacy. A routed
+  `key_type` must write `a`, the pasted scalar, Ctrl+V, `b`, then the saved
+  clipboard, in that order, and report `kind: "paste"`. Neither model is
+  Apple's server.
 - Through MCP, invoke all four compatible tools. Verify a two-action queue and
   its coordinate effect, active ownership release through `task_complete`, and
   active ownership release through `task_failed` in a separate scenario. The

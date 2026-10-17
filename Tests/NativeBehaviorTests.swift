@@ -1442,4 +1442,225 @@ final class NativeBehaviorTests: XCTestCase {
         XCTAssertFalse(PCRequest.inputMethods.contains("cursor_position"))
         XCTAssertFalse(PCRequest.inputMethods.contains("release_holds"))
     }
+
+    // MARK: - Clipboard and paste routing (D8, D29)
+
+    /// The owned client pointer and the server's ExtendedClipboard state.
+    private final class ClipboardServer: @unchecked Sendable {
+        var client: UnsafeMutablePointer<rfbClient>?
+        var extendedText = false
+        /// The server's answer to a Request, written back as a Provide.
+        var answer: String?
+    }
+
+    /// A real VNCBridge over an owned in-memory client whose clipboard writes,
+    /// requests and keys are traced. No socket, server or desktop.
+    private func clipboardBridge(_ trace: WireTrace, _ server: ClipboardServer,
+                                 retain: Bool = true, extended: Bool = true) async throws -> VNCBridge {
+        var config = VNCConfiguration()
+        config.retainClipboard = retain
+        config.extendedClipboard = extended
+        let operations = VNCClientOperations(make: { config in
+            rfbGetClient(config.bitsPerSample, config.samplesPerPixel, config.bytesPerPixel)
+        }, initialize: { client in
+            server.client = client
+            client.pointee.width = 2; client.pointee.height = 2
+            client.pointee.format.bitsPerPixel = 32
+            guard vncMallocFrameBuffer(client) != 0 else { VNCClientOperations.release(client); return false }
+            vncGotFrameBufferUpdate(client, 0, 0, 2, 2)
+            vncFinishedFrameBufferUpdate(client)
+            return true
+        }, cleanup: VNCClientOperations.release,
+        poll: { _, _, _ in true }, incrementalUpdate: { _ in true }, fullUpdate: { _ in true },
+        sendKey: { _, key, down in
+            trace.append((down ? "down 0x" : "up 0x") + String(key, radix: 16, uppercase: true))
+            return true
+        }, sendClientCutText: { _, bytes in
+            trace.append("latin1 " + bytes.dropLast().map { String(UInt8(bitPattern: $0), radix: 16) }.joined(separator: " "))
+            return true
+        }, sendClientCutTextUTF8: { _, bytes in
+            trace.append("utf8 " + String(decoding: bytes.dropLast().map { UInt8(bitPattern: $0) }, as: UTF8.self))
+            return true
+        }, extendedClipboardText: { _ in server.extendedText },
+        requestClipboardText: { client in
+            trace.append("request")
+            if let answer = server.answer {
+                // Provide text is NUL-terminated UTF-8; the bridge strips the NUL.
+                Array(answer.utf8CString).withUnsafeBufferPointer {
+                    vncGotXCutTextUTF8(client, $0.baseAddress, Int32($0.count))
+                }
+            }
+            return true
+        })
+        let bridge = VNCBridge(config: config, operations: operations, schedule: { _, _, _ in })
+        try await bridge.connect()
+        try await bridge.waitForFramebuffer()
+        return bridge
+    }
+
+    private func pushLegacyCutText(_ server: ClipboardServer, _ bytes: [UInt8]) {
+        bytes.map { CChar(bitPattern: $0) }.withUnsafeBufferPointer {
+            vncGotXCutText(server.client, $0.baseAddress, Int32($0.count))
+        }
+    }
+
+    private var modifierSync: [String] {
+        VNCBridge.modifierKeysyms.map { "up 0x" + String($0, radix: 16, uppercase: true) }
+    }
+
+    func testClipboardIsUTF8OnlyWithExtendedTextAndLegacyRefusesNonLatin1BeforeWriting() async throws {
+        let trace = WireTrace(), server = ClipboardServer()
+        let bridge = try await clipboardBridge(trace, server)
+        let context = VNCInputContext(bridge.framebufferDiagnostics)
+        // Legacy cut text is Latin-1: é is the single byte E9, never UTF-8's C3 A9.
+        try await bridge.sendClipboardText("café", context: context)
+        do {
+            try await bridge.sendClipboardText("日本", context: context)
+            XCTFail("non-Latin-1 text reached a legacy clipboard")
+        } catch NativeInputRefusal.clipboardUnicodeUnsupported {}
+        XCTAssertNil(bridge.clipboardEncoding(for: "日本"))
+        server.extendedText = true
+        XCTAssertEqual(bridge.clipboardEncoding(for: "日本"), .utf8)
+        try await bridge.sendClipboardText("日本", context: context)
+        XCTAssertEqual(trace.values, ["latin1 63 61 66 e9", "utf8 日本"])
+        bridge.disconnect()
+
+        // A profile that does not advertise ExtendedClipboard never uses it.
+        let legacyTrace = WireTrace(), legacyServer = ClipboardServer()
+        legacyServer.extendedText = true
+        let legacy = try await clipboardBridge(legacyTrace, legacyServer, extended: false)
+        do {
+            try await legacy.sendClipboardText("日本", context: VNCInputContext(legacy.framebufferDiagnostics))
+            XCTFail("UTF-8 clipboard used without advertising ExtendedClipboard")
+        } catch NativeInputRefusal.clipboardUnicodeUnsupported {}
+        XCTAssertEqual(legacyTrace.values, [])
+        legacy.disconnect()
+    }
+
+    func testReceivedClipboardIsReadOnlyWhenRetainedAndDecodedPerEncoding() async throws {
+        let trace = WireTrace(), off = ClipboardServer()
+        let ignoring = try await clipboardBridge(trace, off, retain: false)
+        pushLegacyCutText(off, Array("ignored".utf8))
+        let ignored = try await ignoring.readClipboard(waitNanoseconds: 0)
+        XCTAssertNil(ignored)
+        ignoring.disconnect()
+
+        let server = ClipboardServer()
+        let bridge = try await clipboardBridge(trace, server)
+        pushLegacyCutText(server, [0x63, 0x61, 0x66, 0xE9])
+        let pushed = try await bridge.readClipboard(waitNanoseconds: 0)
+        XCTAssertEqual(pushed?.snapshot.text, "café")
+        XCTAssertEqual(pushed?.snapshot.encoding, .latin1)
+        XCTAssertEqual(pushed?.fresh, false)
+        // ExtendedClipboard: the server answers this request with UTF-8.
+        server.extendedText = true
+        server.answer = "Grüße 日本"
+        let answered = try await bridge.readClipboard(waitNanoseconds: 0)
+        XCTAssertEqual(answered?.snapshot.text, "Grüße 日本")
+        XCTAssertEqual(answered?.snapshot.encoding, .utf8)
+        XCTAssertEqual(answered?.fresh, true)
+        // An unanswered request falls back to the last known text, not fresh.
+        server.answer = nil
+        let unanswered = try await bridge.readClipboard(waitNanoseconds: 20_000_000)
+        XCTAssertEqual(unanswered?.snapshot.text, "Grüße 日本")
+        XCTAssertEqual(unanswered?.fresh, false)
+        XCTAssertEqual(trace.values, ["request", "request"], "reading the clipboard writes no input")
+        bridge.disconnect()
+    }
+
+    func testPasteRoutingTypesKeysPastesTheRestAndRestoresTheSavedClipboard() async throws {
+        let trace = WireTrace(), server = ClipboardServer()
+        server.extendedText = true
+        server.answer = "saved"
+        let bridge = try await clipboardBridge(trace, server)
+        let input = InputController(vnc: bridge, sleeper: { trace.append("pause \($0)") })
+        input.context = VNCInputContext(bridge.framebufferDiagnostics)
+        input.textRouting = TextRouting(pasteUnmappable: true)
+        let kind = try await input.typeText("a日b", routeUnmappable: true)
+        XCTAssertEqual(kind, .paste)
+        let writes = trace.values.filter { !$0.hasPrefix("pause") }
+        XCTAssertEqual(writes, ["request"] + modifierSync + ["down 0x61", "up 0x61", "utf8 日",
+            "down 0xFFE3", "down 0x76", "up 0x76", "up 0xFFE3", "down 0x62", "up 0x62", "utf8 saved"])
+        // The target reads the pasted text before anything else is written.
+        let afterPaste = try XCTUnwrap(trace.values.firstIndex(of: "up 0xFFE3"))
+        XCTAssertTrue(trace.values[afterPaste...].contains("pause 300000"))
+        XCTAssertTrue(input.heldKeys.isEmpty)
+
+        // Without the request's routing (type_secret's path) nothing is pasted.
+        let before = trace.values.count
+        let unrouted = try await input.typeText("a日b")
+        XCTAssertEqual(unrouted, .keys)
+        XCTAssertEqual(Array(trace.values[before...]).filter { !$0.hasPrefix("pause") },
+                       ["down 0x61", "up 0x61", "down 0x10065E5", "up 0x10065E5", "down 0x62", "up 0x62"])
+        bridge.disconnect()
+    }
+
+    func testRoutingRefusesBeforeAnyEventWithoutAClipboardToRestore() async throws {
+        let trace = WireTrace(), server = ClipboardServer()
+        let bridge = try await clipboardBridge(trace, server)
+        let input = InputController(vnc: bridge, sleeper: { _ in })
+        input.context = VNCInputContext(bridge.framebufferDiagnostics)
+        input.textRouting = TextRouting(pasteUnmappable: true)
+        do {
+            try await input.typeText("aéb", routeUnmappable: true)
+            XCTFail("routed paste without a known clipboard")
+        } catch NativeInputRefusal.clipboardRestoreUnavailable {}
+        // Legacy text that Latin-1 cannot carry is refused first.
+        do {
+            try await input.typeText("a日b", routeUnmappable: true)
+            XCTFail("non-Latin-1 paste on a legacy clipboard")
+        } catch NativeInputRefusal.clipboardUnicodeUnsupported {}
+        XCTAssertEqual(trace.values, [])
+        // Once the server has pushed its clipboard, the same text routes and restores it.
+        pushLegacyCutText(server, Array("prior".utf8))
+        try await input.typeText("aéb", routeUnmappable: true)
+        XCTAssertEqual(trace.values.last, "latin1 70 72 69 6f 72")
+        XCTAssertTrue(trace.values.contains("latin1 e9"))
+        bridge.disconnect()
+    }
+
+    func testNonUSInputSourceRefusesTypedTextUnlessRoutedThenPastesPrintables() async throws {
+        let trace = WireTrace(), server = ClipboardServer()
+        server.extendedText = true
+        server.answer = "saved"
+        let bridge = try await clipboardBridge(trace, server)
+        let input = InputController(vnc: bridge, sleeper: { _ in })
+        input.context = VNCInputContext(bridge.framebufferDiagnostics)
+        input.textRouting = TextRouting(pasteUnmappable: false, usCompatibleInputSource: false)
+        do {
+            try await input.typeText("ab", routeUnmappable: true)
+            XCTFail("typed text on a non-US source without paste routing")
+        } catch NativeInputRefusal.inputSourceNotUS {}
+        XCTAssertEqual(trace.values, [])
+        // Return and Tab are layout-independent keys.
+        try await input.typeText("\n")
+        XCTAssertEqual(trace.values, modifierSync + ["down 0xFF0D", "up 0xFF0D"])
+        input.textRouting.pasteUnmappable = true
+        let before = trace.values.count
+        try await input.typeText("ab\n", routeUnmappable: true)
+        XCTAssertEqual(Array(trace.values[before...]), ["request", "utf8 ab",
+            "down 0xFFE3", "down 0x76", "up 0x76", "up 0xFFE3", "down 0xFF0D", "up 0xFF0D", "utf8 saved"])
+        bridge.disconnect()
+    }
+
+    // A secret on a non-US source is refused before the focus click; paste
+    // routing never applies to it, even where the target opted in.
+    func testSecretOnNonUSSourceIsRefusedBeforeTheFocusClick() async throws {
+        let trace = WireTrace()
+        let input = tracedInput(trace)
+        input.textRouting = TextRouting(pasteUnmappable: true, usCompatibleInputSource: false)
+        do {
+            try await input.typeSecret("s3c", focusAt: (x: 4, y: 5))
+            XCTFail("secret typed on a non-US source")
+        } catch NativeInputRefusal.inputSourceNotUS {}
+        XCTAssertTrue(trace.values.isEmpty)
+    }
+
+    func testTextSegmentsKeepScalarOrderAndLineEndingsAsKeys() {
+        XCTAssertEqual(TextRouting.segments("Grüße\r\nok", usCompatible: true),
+                       [.keys("Gr"), .paste("üß"), .keys("e\r\nok")])
+        XCTAssertEqual(TextRouting.segments("ab\tc", usCompatible: false),
+                       [.paste("ab"), .keys("\t"), .paste("c")])
+        XCTAssertEqual(TextRouting.segments("", usCompatible: true), [])
+    }
 }

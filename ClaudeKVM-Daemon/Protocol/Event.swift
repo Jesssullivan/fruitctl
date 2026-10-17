@@ -63,6 +63,11 @@ struct PCResponse: Encodable {
         var zoom: ZoomSummary?
         /// wait_for_stable: how long the screen stayed unchanged.
         var stable: StableSummary?
+        /// clipboard_read: the target clipboard text (D8). The broker bounds
+        /// and redacts it before any client sees it; never journalled.
+        var clipboard: ClipboardSummary?
+        /// key_type: "paste" when D29 routing pasted any of the text.
+        var kind: String?
     }
 
     struct ErrorPayload: Encodable {
@@ -72,12 +77,14 @@ struct PCResponse: Encodable {
     }
 
     /// Typed `error.data`: stale_screen (-32010), an input refusal (-32011),
-    /// an unmet observation condition (-32012) or input_not_ready (-32013).
+    /// an unmet observation condition (-32012), input_not_ready (-32013) or
+    /// an unavailable clipboard_read (-32014).
     enum ErrorData: Encodable {
         case staleScreen(StaleScreenData)
         case inputRefusal(InputRefusalData)
         case inputNotReady(InputNotReadyData)
         case observationUnmet(ObservationUnmetData)
+        case clipboardUnavailable(InputRefusalData)
 
         func encode(to encoder: Encoder) throws {
             var container = encoder.singleValueContainer()
@@ -86,6 +93,7 @@ struct PCResponse: Encodable {
             case .inputRefusal(let data): try container.encode(data)
             case .inputNotReady(let data): try container.encode(data)
             case .observationUnmet(let data): try container.encode(data)
+            case .clipboardUnavailable(let data): try container.encode(data)
             }
         }
     }
@@ -138,7 +146,9 @@ struct PCResponse: Encodable {
         provenance: VNCCaptureProvenance? = nil,
         diff: FrameDiffSummary? = nil,
         zoom: ZoomSummary? = nil,
-        stable: StableSummary? = nil
+        stable: StableSummary? = nil,
+        clipboard: ClipboardSummary? = nil,
+        kind: String? = nil
     ) -> PCResponse {
         PCResponse(
             result: ResultPayload(
@@ -148,7 +158,8 @@ struct PCResponse: Encodable {
                 nativeWidth: frameContext?.width, nativeHeight: frameContext?.height,
                 connectionGeneration: frameContext?.connectionGeneration,
                 allocation: frameContext?.allocation, capabilities: capabilities,
-                provenance: provenance, diff: diff, zoom: zoom, stable: stable
+                provenance: provenance, diff: diff, zoom: zoom, stable: stable,
+                clipboard: clipboard, kind: kind
             ),
             error: nil, id: id
         )
@@ -201,6 +212,14 @@ struct PCResponse: Encodable {
                 elapsedMilliseconds: typed.elapsedMilliseconds, captures: typed.captures))), id: id)
     }
 
+    /// The typed clipboard_read failure, or nil for any other error.
+    static func clipboardUnavailable(id: PCId?, error: Error) -> PCResponse? {
+        guard let typed = error as? ClipboardReadError else { return nil }
+        return PCResponse(result: nil, error: ErrorPayload(
+            code: ClipboardReadError.code, message: typed.localizedDescription,
+            data: .clipboardUnavailable(InputRefusalData(reason: typed.rawValue))), id: id)
+    }
+
     static func inputPermit(id: PCId?, receipt: NativeInputPermit.Receipt) -> PCResponse {
         let binding = receipt.binding
         return PCResponse(result: ResultPayload(detail: "OK", scaledWidth: binding.scaledWidth,
@@ -230,6 +249,21 @@ struct ZoomSummary: Encodable, Equatable {
         case region, native
         case imageWidth = "image_width"
         case imageHeight = "image_height"
+    }
+}
+
+/// clipboard_read: the text and where it came from. `fresh` is the server's
+/// answer to this request (ExtendedClipboard); otherwise the last text the
+/// connection received or wrote, `age_ms` old.
+struct ClipboardSummary: Encodable, Equatable {
+    let text: String
+    let encoding: String
+    let ageMilliseconds: Int
+    let fresh: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case text, encoding, fresh
+        case ageMilliseconds = "age_ms"
     }
 }
 

@@ -51,13 +51,26 @@ func vncGetPassword(_ client: UnsafeMutablePointer<rfbClient>?) -> UnsafeMutable
     return strdup(password)
 }
 
-/// Called when the server sends clipboard text.
+/// Legacy ServerCutText (Latin-1). The bridge reads it only when the profile
+/// retains the clipboard; it is never logged.
 func vncGotXCutText(
     _ client: UnsafeMutablePointer<rfbClient>?,
     _ text: UnsafePointer<CChar>?, _ len: Int32
 ) {
-    // Intentionally ignore this unsolicited payload without reading it.
-    // Clipboard content is neither retained nor logged.
+    guard let client, let text, len >= 0, let b = bridge(from: client) else { return }
+    b.receivedClipboard(for: client, bytes: UnsafeRawBufferPointer(start: text, count: Int(len)),
+                        encoding: .latin1)
+}
+
+/// ExtendedClipboard Provide (UTF-8), pushed or answering our Request.
+/// Setting this callback is also what makes LibVNC advertise the encoding.
+func vncGotXCutTextUTF8(
+    _ client: UnsafeMutablePointer<rfbClient>?,
+    _ text: UnsafePointer<CChar>?, _ len: Int32
+) {
+    guard let client, let text, len >= 0, let b = bridge(from: client) else { return }
+    b.receivedClipboard(for: client, bytes: UnsafeRawBufferPointer(start: text, count: Int(len)),
+                        encoding: .utf8)
 }
 
 // MARK: - ARD Authentication

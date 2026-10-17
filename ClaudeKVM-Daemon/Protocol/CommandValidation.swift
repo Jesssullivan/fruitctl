@@ -107,6 +107,9 @@ extension PCRequest {
         } else if p?.secret != nil {
             throw CommandValidationError.invalid("secret")
         }
+        if let unmappable = p?.unmappable, method != "key_type" || unmappable != "paste" {
+            throw CommandValidationError.invalid("unmappable")
+        }
         // Observation rectangles use the current scaled display space.
         if method == "zoom" || method == "expect_change" {
             guard let rect = p?.rect, rect.isInside(width: scaling.scaledWidth, height: scaling.scaledHeight) else {
@@ -154,6 +157,7 @@ extension PCRequest {
         try check(p?.typeInterKeyMs, "type_inter_key_ms", 1...200)
         try check(p?.typeShiftMs, "type_shift_ms", 1...200)
         try check(p?.pasteSettleMs, "paste_settle_ms", 1...500)
+        try check(p?.pasteRestoreMs, "paste_restore_ms", 1...2000)
     }
 
     /// Validate geometry independently of the previous native observation.

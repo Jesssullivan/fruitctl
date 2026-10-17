@@ -133,10 +133,11 @@ export function vncCommandTool() {
       '  key_tap        {key}                    → single key press (enter|escape|tab|space|...)',
       '  key_combo      {key} or {keys:[...]}    → modifier combo (e.g. "cmd+c" or ["cmd","shift","3"])',
       '  hold_key       {key, duration_ms}       → hold one key, released before the call returns',
-      '  key_type       {text}                   → type text character by character',
+      '  key_type       {text}                   → type text; with input.pasteUnmappable, untypable text is pasted',
       '  paste          {text}                   → paste text via clipboard',
       '  type_secret    {ref, x?, y?}            → type an operator-allowlisted secret by name',
       '                                            (clicks x,y first); the value is never returned',
+      '  clipboard_read                          → target clipboard text, when the profile enables it',
       '  detect_elements                         → OCR text detection with bounding boxes',
       '  ax_snapshot    {depth?, focused_app?}   → Host route only: live Accessibility tree with',
       '                                            role/label/value/frame and structural refs',
@@ -155,7 +156,7 @@ export function vncCommandTool() {
         'screenshot', 'cursor_crop', 'diff_check', 'set_baseline', 'zoom', 'wait_for_stable',
         'mouse_click', 'mouse_double_click', 'mouse_move', 'hover', 'nudge',
         'mouse_drag', 'scroll',
-        'key_tap', 'key_combo', 'key_type', 'paste', 'type_secret',
+        'key_tap', 'key_combo', 'key_type', 'paste', 'type_secret', 'clipboard_read',
         'detect_elements', 'ax_snapshot',
         'configure', 'get_timing',
         'wait', 'health', 'shutdown',
@@ -208,6 +209,8 @@ export function vncCommandTool() {
       type_inter_key_ms: z.number().int().min(1).max(200).optional().describe('Inter-character delay'),
       type_shift_ms: z.number().int().min(1).max(200).optional().describe('Shift key settle'),
       paste_settle_ms: z.number().int().min(1).max(500).optional().describe('Post-clipboard write wait'),
+      paste_restore_ms: z.number().int().min(1).max(2000).optional()
+        .describe('Routed key_type paste: wait after Cmd+V before restoring the clipboard'),
     },
   };
 }

@@ -100,6 +100,48 @@ not secret.
 - An unreadable source with `inputSource` declared: `input_source_unverified`
   in `unknowns`.
 
+### Typing on a non-US source
+
+`key_type` sends RFB key symbols, and the target's selected layout decides
+which characters they produce. A declared `inputSource` other than
+`com.apple.keylayout.US`, `com.apple.keylayout.ABC`,
+`com.apple.keylayout.USExtended`, `U.S.`, `US` or `ABC` is not US-compatible.
+On such a target `key_type` is refused before any key with code `-32011`,
+reason `input_source_not_us`, unless paste routing is on. Return and Tab are
+always keys. An undeclared source keeps the US assumption.
+
+## Clipboard and paste routing
+
+Clipboard text is UTF-8 when the server accepts the ExtendedClipboard
+pseudo-encoding, which the controller advertises by default. Otherwise only
+legacy Latin-1 cut text exists: `paste` of text that Latin-1 cannot carry is
+refused before any write with `-32011` `clipboard_unicode_unsupported`, never
+sent as mojibake. Profile keys (Home Manager uses the same names):
+
+| Key | Default | Effect |
+| --- | --- | --- |
+| `clipboard.read` | `false` | Allows `clipboard_read`. Otherwise it is refused before admission as `clipboard_read_disabled`, and received clipboard text is never read. |
+| `clipboard.maxBytes` | 16384 | Longest returned text in UTF-8 bytes; longer text is cut on a character boundary and marked `truncated`. |
+| `clipboard.ttlMs` | none | `clipboard_read` refuses text older than this (`-32014` `clipboard_unavailable`). Requires `clipboard.read`. |
+| `clipboard.extended` | `true` | `false` stops advertising ExtendedClipboard, leaving Latin-1 only. |
+| `input.pasteUnmappable` | `false` | Paste routing for `key_type` (below). |
+
+`clipboard_read` asks an ExtendedClipboard server for its text (`fresh: true`).
+Without one it returns the last text the connection received from the server
+or wrote itself, with its `age_ms`. The Darwin broker withholds the whole
+value when it contains a declared secret, such as the target's VNC credential;
+the result then carries `redacted: true` and no text. The journal never stores
+clipboard text.
+
+With `input.pasteUnmappable`, `key_type` types what the US keymap can type and
+pastes the rest: it reads the target clipboard, sets the text, sends Cmd+V
+(Ctrl+V on other servers), waits `paste_restore_ms` (default 300) and writes
+the saved clipboard back, also after a failure or Stop. On a non-US source
+every printable character is pasted. The result and journal record carry
+`kind: "paste"`. If the current clipboard cannot be learned, `key_type` is
+refused before any event as `clipboard_restore_unavailable`. `type_secret`
+never uses this route.
+
 ## One input owner per Mac
 
 Each Mac should have one remote input owner. Doctor warns

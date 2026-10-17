@@ -207,6 +207,11 @@ input source, such as `com.apple.keylayout.US`. `fruitctl doctor --macos`
 warns `input_source_mismatch` when the target selects another one
 ([target profile](target-profile.md#input-source)).
 
+`targets.<profile>.input.pasteUnmappable` and `targets.<profile>.clipboard`
+(`read`, `maxBytes`, `ttlMs`, `extended`) set the target's paste routing and
+clipboard policy ([clipboard](target-profile.md#clipboard-and-paste-routing)).
+Both default off, apart from `clipboard.extended`. Linux declares none of them.
+
 The optional Host/indicator remains a private prototype until its exact
 capture mode passes background and indicator-exclusion qualification. Alpha.8
 ships no Host app, ZIP, package export, service or helper mapping. The existing

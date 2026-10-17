@@ -25,6 +25,27 @@ struct VNCClientOperations {
         var bytes = text
         return SendClientCutText(client, &bytes, Int32(bytes.count - 1)) != 0
     }
+    /// Writes UTF-8 text as an ExtendedClipboard Notify + Provide from a
+    /// NUL-terminated buffer. LibVNC refuses it unless the server advertised
+    /// text capability, so callers check `extendedClipboardText` first.
+    var sendClientCutTextUTF8: (Client, [CChar]) -> Bool = { client, text in
+        var bytes = text
+        return SendClientCutTextUTF8(client, &bytes, Int32(bytes.count - 1)) != 0
+    }
+    /// Whether the server's ExtendedClipboard Caps message included text.
+    var extendedClipboardText: (Client) -> Bool = {
+        ($0.pointee.extendedClipboardServerCapabilities & 1) != 0 // rfbExtendedClipboard_Text
+    }
+    /// Asks for the server's clipboard text: an ExtendedClipboard Request
+    /// (ClientCutText, length -4, flags Request|Text). The answer arrives as
+    /// a Provide through GotXCutTextUTF8. LibVNC has no API for this message.
+    var requestClipboardText: (Client) -> Bool = { client in
+        let message: [UInt8] = [6, 0, 0, 0, 0xFF, 0xFF, 0xFF, 0xFC, 0x02, 0x00, 0x00, 0x01]
+        return message.withUnsafeBytes { raw in
+            guard let base = raw.baseAddress else { return false }
+            return WriteToRFBServer(client, base.assumingMemoryBound(to: CChar.self), UInt32(raw.count)) != 0
+        }
+    }
 
     static let native = VNCClientOperations(
         make: { rfbGetClient($0.bitsPerSample, $0.samplesPerPixel, $0.bytesPerPixel) },
