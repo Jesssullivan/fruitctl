@@ -322,6 +322,52 @@ silently emit that schema. [OpenCode v2 MCP](https://dev.opencode.ai/v2/docs/mcp
 Claude Code inherits Claude's adapter, while image/model capabilities still need
 their own acceptance run. [Kimi in Claude](https://www.kimi.com/code/docs/en/third-party-tools/claude-code.html).
 
+## Frontend acceptance journey
+
+A frontend counts as qualified on a target only after two fresh sessions each
+complete this journey on the real desktop, the second one after the first has
+released its session. The operator runs it in the frontend under test. An
+agent must never launch another agent's binary to produce it. Paste the prompt
+into a new session, replacing `<marker>` with a lowercase alphanumeric marker
+unique to that session, for example `fruitctlqual1` and then `fruitctlqual2`.
+
+```text
+Use only the Fruitctl MCP tools (vnc_command, action_queue, task_complete,
+task_failed; your frontend may prefix them). Do not launch, quit or install
+apps, and do not change settings.
+1. vnc_command health. If it reports a typed failure, call task_failed with it.
+2. vnc_command screenshot. Describe what is on screen.
+3. If a System Settings window shows its sidebar search field, click it with
+   mouse_click. Otherwise send key_combo with keys ["cmd","space"] to open
+   Spotlight, take a screenshot, and click inside the Spotlight field.
+4. key_type the text <marker>.
+5. Take a screenshot and say whether <marker> is visible in that field.
+6. Clear it: key_combo with keys ["cmd","a"], then key_tap backspace. If
+   Spotlight is open, key_tap escape. Take a screenshot showing the field
+   empty or closed.
+7. Call task_complete with a one-line summary that names <marker>, or
+   task_failed with the reason if any step failed. Do not retry past one
+   stale_screen or input_not_ready retry per step.
+```
+
+Verify each run on the broker host from the [action journal](architecture.md#action-journal),
+not from the transcript alone:
+
+1. Each session leaves one new `journal/<session>.jsonl`, so two runs leave
+   two files. List them by time with `ls -t` in the journal directory.
+2. `fruitctl journal verify FILE` returns `"ok": true` for both files. The
+   installed CLI must include the `journal` command.
+3. Each file records `health`, then `screenshot` with `outcome` `ok` and a
+   non-null `frame_sha256`, then `mouse_click`, `key_type` with `params.text`
+   equal to that session's marker, the clearing keys, and a final
+   `screenshot`, all with `outcome` `ok`. Session 2 has its own session UUID
+   and its own marker.
+4. The transcript shows `task_complete` succeeding. Release is not a journal
+   action, so this is the only release evidence.
+5. The screenshots in the transcript show the marker in the field after step 5
+   and no marker after step 6. A tool acknowledgement alone is not evidence of
+   either.
+
 ## Preservation and recovery
 
 The installer changes only its `fruitctl` MCP entry and creates a symlink to the
