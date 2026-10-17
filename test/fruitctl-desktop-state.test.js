@@ -202,6 +202,21 @@ test('D16: type_secret is never typed into a consent dialog', async t => {
   assert.deepEqual(sent, []);
 });
 
+test('Host element actions never press or focus under a consent dialog', async t => {
+  const { probe } = sentinelProbe([variant({ desktop_windows: windows('window|824|8|500|300|1') })]);
+  const { factory, sent } = recordingFactory();
+  let started = 0;
+  const lane = new TargetLane({ desktopState: { ssh: 'op@mac' }, hostHelper: { sshHost: 'op@mac' } },
+    (...args) => { started++; return factory(...args); }, { desktopProbe: probe });
+  t.after(() => lane.close());
+  for (const action of ['click_element', 'focus_element']) {
+    await assert.rejects(lane.execute([{ action, ref: 'ax:824:0.0.1' }]),
+      error => error.code === HUMAN_CONSENT_REQUIRED_CODE && error.data.owner === 'CoreServicesUIAgent');
+  }
+  assert.equal(started, 0);
+  assert.deepEqual(sent, []);
+});
+
 test('lane caches a clear state, re-probes after the TTL, and lets input through', async t => {
   let now = 0;
   const { probe, calls } = sentinelProbe([variant()]);

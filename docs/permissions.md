@@ -21,14 +21,19 @@ The source targets Apple silicon macOS 15 or later. Check the
 | Target's Apple Screen Sharing | The target owner enables the service and chooses permitted users. |
 | Optional Fruitctl Host on the target | The target user enables capture and grants that app Screen Capture and Accessibility access. |
 
-The Host source supplies images, an Accessibility snapshot and an indicator, with
-no local input service. It reads the Accessibility tree for `ax_snapshot` only;
-it posts no events and clicks no elements. The Accessibility grant is expected
-on a standard Host install (D10). Without it, capture still works and
-`ax_snapshot` fails with the typed code `accessibility_permission_required`.
-The Host requests no event-posting, input monitoring, microphone or Full Disk
-Access policy. VNC input remains with the controller and the target's Screen
-Sharing service.
+The Host source supplies images, an Accessibility snapshot, element actions and
+an indicator. It has no local input service and posts no synthetic events. The
+Accessibility grant serves two purposes: reading the tree for `ax_snapshot`, and
+`click_element` / `focus_element`, which ask one element from the latest snapshot
+to perform `AXPress` or set `AXFocused`. Those element actions run only under the
+controller's activity lease and stop when the human Stop latch is set. When an
+element cannot perform the action, the controller sends one VNC click at the
+element's centre through its ordinary input path. The Accessibility grant is
+expected on a standard Host install (D10). Without it, capture still works, and
+`ax_snapshot`, `click_element` and `focus_element` fail with the typed code
+`accessibility_permission_required`. The Host requests no event-posting, input
+monitoring, microphone or Full Disk Access policy. VNC input remains with the
+controller and the target's Screen Sharing service.
 
 ## Unmanaged target: attended Host setup
 
@@ -224,9 +229,9 @@ The session and Host warnings are listed below. The
 
 The Host route with Screen Recording and Accessibility granted is the standard
 macOS install. Raw VNC with no grants is the degraded fallback. The Host uses
-Accessibility for `ax_snapshot`; without the grant that action fails with
-`accessibility_permission_required` while capture continues. The raw route
-refuses `ax_snapshot` with `unsupported_on_route`.
+Accessibility for `ax_snapshot`, `click_element` and `focus_element`. Without the
+grant those actions fail with `accessibility_permission_required` while capture
+continues. The raw route refuses all three with `unsupported_on_route`.
 
 Reading TCC.db needs Full Disk Access for the SSH session. Doctor does not
 need it, and it is optional. Without it, both grants read as `unknown`;

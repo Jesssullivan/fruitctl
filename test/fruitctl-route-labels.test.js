@@ -219,12 +219,17 @@ test('regression: an error frame from the broker cannot attest the indicator', a
   assert.deepEqual(client.presentation, { route: 'host', indicator: 'unknown' });
 });
 
-test('the raw route refuses ax_snapshot with typed unsupported_on_route before any admission', async t => {
+const HOST_ONLY = [{ action: 'ax_snapshot' }, { action: 'click_element', ref: 'ax:1:0' },
+  { action: 'focus_element', ref: 'ax:1:0' }];
+
+test('the raw route refuses Host-only AX actions with typed unsupported_on_route before any admission', async t => {
   const typed = error => isPreAdmissionRefusal(error) && error.code === 'unsupported_on_route' &&
     /raw VNC route/.test(error.message);
-  for (const capabilities of [nativeCapabilities(), nativeCapabilities(['health', 'ax_snapshot'])]) {
-    assert.throws(() => NativeExecutor.prototype.preflight.call({ isReady: true, terminal: false, capabilities },
-      [{ action: 'wait' }, { action: 'ax_snapshot' }]), typed);
+  for (const hostOnly of HOST_ONLY) {
+    for (const capabilities of [nativeCapabilities(), nativeCapabilities(['health', hostOnly.action])]) {
+      assert.throws(() => NativeExecutor.prototype.preflight.call({ isReady: true, terminal: false, capabilities },
+        [{ action: 'wait' }, hostOnly]), typed);
+    }
   }
   const calls = [];
   const executor = { presentation: RAW_PRESENTATION, async execute(actions) {
@@ -233,6 +238,11 @@ test('the raw route refuses ax_snapshot with typed unsupported_on_route before a
     return actions.map(() => ({ result: { detail: 'OK' } }));
   } };
   const session = new McpSession(executor);
+  // type_secret and the element actions share `ref`; each takes only its own form.
+  for (const wrong of [{ action: 'click_element', ref: 'vault-login' }, { action: 'type_secret', ref: 'ax:1:0.2' }]) {
+    assert.equal((await session.command(wrong)).isError, true);
+  }
+  assert.deepEqual(calls, []);
   const refused = await session.command({ action: 'ax_snapshot', depth: 2 });
   assert.equal(refused.isError, true);
   assert.equal(refused.structuredContent.error.code, 'unsupported_on_route');
@@ -255,17 +265,26 @@ test('the raw route refuses ax_snapshot with typed unsupported_on_route before a
   } }, factory: async profile => {
     started.push(profile.targetId);
     return { presentation: profile.hostHelper ? { route: 'host', indicator: 'unknown' } : RAW_PRESENTATION,
-      async execute(actions) { return actions.map(() => ({ result: { detail: 'OK' } })); }, async close() {} };
+      async execute(actions) {
+        if (actions[0].action === 'click_element') throw Object.assign(new Error('Host helper refused request: stale_ref'), { code: 'stale_ref' });
+        return actions.map(() => ({ result: { detail: 'OK' } }));
+      }, async close() {} };
   } });
   t.after(() => broker.close());
   const raw = new BrokerExecutor({ socketPath, target: 'raw' });
   const host = new BrokerExecutor({ socketPath, target: 'host' });
   t.after(async () => { await raw.close(); await host.close(); });
   await Promise.all([raw.opened, host.opened]);
-  const viaBroker = await new McpSession(raw).command({ action: 'ax_snapshot' });
-  assert.equal(viaBroker.structuredContent.error.code, 'unsupported_on_route');
+  for (const hostOnly of HOST_ONLY) {
+    const viaBroker = await new McpSession(raw).command(hostOnly);
+    assert.equal(viaBroker.structuredContent.error.code, 'unsupported_on_route');
+  }
   assert.deepEqual(started, []);
   await raw.execute([{ action: 'wait' }]);
   await host.execute([{ action: 'ax_snapshot' }]);
   assert.deepEqual(started, ['raw-desktop', 'host-desktop']);
+  // A Host's typed element refusal keeps its code through the broker to MCP.
+  const stale = await new McpSession(host).command({ action: 'click_element', ref: 'ax:1:0.4' });
+  assert.equal(stale.isError, true);
+  assert.equal(stale.structuredContent.error.code, 'stale_ref');
 });

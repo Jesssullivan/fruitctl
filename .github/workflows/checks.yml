@@ -226,7 +226,7 @@ jobs:
             ${{ runner.temp }}/fruitctl-native-deps/downloads
             ${{ runner.temp }}/fruitctl-native-deps/openssl-source
             ${{ runner.temp }}/fruitctl-native-deps/libvnc-source
-      - name: Build unsigned controller and run two pure suites
+      - name: Build unsigned controller and Host, run pure suites
         id: native-build
         if: needs.changes.outputs.native != 'false'
         env:
@@ -240,6 +240,7 @@ jobs:
             --jobs "$(sysctl -n hw.ncpu)" \
             --reuse-inputs "$FRUITCTL_NATIVE_DEPS" \
             --build-scheme claude-kvm-daemon \
+            --build-scheme FruitctlHost \
             --test-scheme VNCReconnectTests \
             --test-scheme NativeBehaviorTests \
             --test-scheme FruitctlHostTests \

@@ -50,8 +50,8 @@ reports `input_ready` and `input_settle_remaining_ms`. Code `-32013`
 `-32011` is a typed input refusal written before any event, for example
 `mouse_down` outside one `action_queue` batch; see
 [operation](references/operation.md) for the input actions. Code
-`unsupported_on_route` means the action (for example `ax_snapshot`) needs
-the Host route.
+`unsupported_on_route` means the action (for example `ax_snapshot` or
+`click_element`) needs the Host route.
 
 macOS dialogs, the lock screen and display sleep can block input. Results
 may carry `desktop_state`, and input is refused before anything is sent when
@@ -75,6 +75,22 @@ native resolution, `diff_check` with `regions`/`ignore` to see what changed, and
 step's `expect` (`change_in`, `stable_ms`) is checked after the step. An unmet
 condition fails as code `-32012` and stops the batch. On the Host route these
 raw-pixel observations are refused as `unsupported_on_route`.
+
+On the Host route, `ax_snapshot` returns element refs. `click_element {ref}`
+and `focus_element {ref}` act on a ref from the latest snapshot. The result's
+`ax_action.path` names how the action was done: `ax_press`, `ax_show_menu`,
+`ax_focus` or `ax_raise` (an Accessibility action), or `vnc_click` (one click at
+the element's centre). `verified` reports whether the element's state then
+changed or it took focus. `verified: false` means no change was observed, not
+that the action failed; take a screenshot before acting again. Never repeat a
+click to get `verified: true`. Code `stale_ref` means the ref is not in the
+latest snapshot, or its element is gone; take a new `ax_snapshot`.
+`ax_unreachable` means a system-owned view (some popovers, sheets and system
+prompts) did not respond to Accessibility and no click was guessed.
+`ax_action_unsupported` means no action applies and no click was safe. For
+both, report the failure, or ask the operator before clicking by coordinates.
+Use `menu_extras: true` on `ax_snapshot` to reach menu-bar extras and Control
+Center.
 
 ## Computer-use alias
 

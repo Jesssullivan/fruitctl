@@ -126,15 +126,56 @@ handshake. If either is unavailable or geometry changes, stop input and report
 the qualification gap.
 
 On the Host route, `vnc_command` action `ax_snapshot` (`depth` 1-12, default 6;
-`focused_app`, default `true`) returns the live Accessibility tree: each node's
-`role`, `label`, `value`, `frame` in framebuffer pixels, `display_frame` in the
-current scaled screenshot coordinates, and a structural `ref`. Secure text is
-redacted. `truncated: true` means the depth, node or time budget ended the read.
-It is observation only: it authorizes no input, does not replace a fresh
-screenshot for verification, and refs are not clickable handles. The raw route
-refuses it with code `unsupported_on_route`; a Host without the Accessibility
-grant refuses it with `accessibility_permission_required`. Report either; do not
-change grants yourself.
+`focused_app`, default `true`; `menu_extras`, default `false`) returns the live
+Accessibility tree: each node's `role`, `label`, `value`, `frame` in framebuffer
+pixels, `display_frame` in the current scaled screenshot coordinates, and a
+`ref`. `menu_extras: true` adds Control Center, SystemUIServer and accessory
+apps, with their menu-bar extras and open menus, popovers and panels. Secure text
+is redacted. `truncated: true` means the depth, node or time budget ended the
+read. The snapshot itself authorizes no input and does not replace a fresh
+screenshot for verification.
+
+Each snapshot replaces the previous `generation`. `click_element {ref}` and
+`focus_element {ref}` act on a ref from that latest generation in the same owned
+session. A ref names the element object, not a tree position. If that element
+is destroyed, or a newer snapshot, lease change, Stop or display change replaces
+the generation, the action fails with `stale_ref`. A ref missing from the latest
+snapshot is refused before anything runs.
+
+- `click_element` performs `AXPress`, or `AXShowMenu` on a menu-bar item that
+  offers only that. `focus_element` sets `AXFocused`, or performs `AXRaise` on a
+  window.
+- Element actions are input. The desktop-state sentinel refuses them under a
+  consent or system dialog, the lock screen or display sleep, as it refuses
+  any other input. Never use them to answer a consent dialog.
+- An action runs only after its element is read and the lease and the human
+  Stop latch are checked again. The Host makes exactly one Accessibility call
+  and never retries it.
+- If the element definitely cannot perform the action, and it is a visible
+  control rather than a container (window, sheet, popover, group, list), the
+  controller clicks its live centre once. The click uses the qualified input
+  mapping, the input-settle gate and the native permit. Without a qualified
+  mapping this fails as `ax_action_unsupported`.
+- A call that timed out or failed may still have acted. It is reported as
+  `ax_result: "indeterminate"` and is never followed by a click.
+- `ax_action` in the result has `path` (`ax_press`, `ax_show_menu`, `ax_focus`,
+  `ax_raise` or `vnc_click` with `point` in scaled coordinates), `surface`
+  (`sheet`, `popover`, `menu`, `menu_bar`, `menu_extra`, `control_center`,
+  `window` or `application`), `role` and `verified`. A focus is verified when
+  the element reports focus (a raised window, main). A click is verified when
+  the element's value, selection, expansion, focus, enabled state, label or
+  child count changed, or the element was destroyed (a sheet or menu closed).
+  `verified: false` is no evidence either way; check with a screenshot.
+- Elements hosted by a system remote view service (some popovers, sheets and
+  system prompts) may not respond. Then the action fails with `ax_unreachable`
+  and no coordinate is guessed. An owner that does not answer at all fails the
+  same way.
+
+The raw route refuses `ax_snapshot`, `click_element` and `focus_element` with code
+`unsupported_on_route`. A Host without the Accessibility grant refuses them with
+`accessibility_permission_required`. Report either; do not change grants
+yourself. A failed element action ends the owned session like any other failed
+action, and the next call starts a new session with no refs.
 
 If a capture fails or pixels/geometry are uncertain, stop input. After a
 resize/display change, re-establish the session's scaled mapping before acting;
