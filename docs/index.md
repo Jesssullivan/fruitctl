@@ -46,58 +46,19 @@ milestones and the distinction between Lab targets and public best-effort suppor
 ## Current status
 
 The curated current preview is immutable
-[v0.1.0-alpha.9](https://github.com/xoxd-ai/fruitctl/releases/tag/v0.1.0-alpha.9),
-runtime producer `1ba90e84d4b6fe464c9146e7c41c4cffc3edf8e3`.
-Use the [current installation guide](install.md) or
+[v0.1.0-alpha.11](https://github.com/xoxd-ai/fruitctl/releases/tag/v0.1.0-alpha.11),
+runtime producer `142743262d3242775f210c9d62a6b8e423c3ce5a`, with a signed
+annotated tag. Use the [current installation guide](install.md) or
 [rendered agent prompt](https://fruitctl.clients.xoxd.ai/install-prompt.md) for
-the exact bootstrap and release checksums. The runtime bundles Node.js 24.21.0;
-Darwin ARM64 retains the unchanged signed controller from
-`e00fcc86bbac4247d5a0847d7e656369c52cc15f`.
+the exact bootstrap and release checksums. The runtime bundles Node.js 24.21.0.
+The Darwin ARM64 runtime bundles the native controller, built, Developer
+ID-signed and notarized from the same revision.
 
-Alpha.9 has anonymous public asset verification. Its accepted public installer
-scope is Linux x64 stock public bootstrap and Claude project configuration lifecycle: install, help, doctor, timed doctor, reinstall, same-version prior-receipt rollback and uninstall/cache retention; populated project configuration bytes and mode 0640 were restored.
-That scope does not qualify a complete platform, actual agent frontend or target
-desktop. Nine runtime previews are published; zero fully qualified product
-releases are available. The optional Host and purple indicator have no public
-binary or automatic setup. Portable Host-installer payload/help and optional
-installer `--timings` grant no native Host or permissions. The public Linux x64 installed alpha.9 CLI advertised `--timings`; timed doctor emitted the fixed nine-stage report with the same installation result as default doctor. This is optional installer measurement evidence and establishes no latency SLO or speedup.
+All 13 alpha.11 assets match the curated hashes through anonymous download.
+Real agent frontends, the Linux-to-Darwin SSH journey and measured service
+objectives remain pending, so no product release is fully qualified yet. The
+optional Host and purple indicator have no public binary or automatic setup.
 Profiles, controller-local credentials, broker and SSH setup, target Screen
-Sharing and macOS consent remain operator prerequisites.
-
-## Historical preview evidence
-
-Alpha.8 remains immutable at producer `ceb1d4643b8f3c66f744f536777214285a4d20ad`. Its public asset, Linux installer/configuration and two-task Claude synthetic component observations remain historical for alpha.8; its Home Manager observations are separately scoped and do not qualify alpha.9.
-
-Alpha.7 remains immutable at producer `cd34bbcdcc9e70bf25f77cbcfd1f129e1eac30db`. Its public Linux x64 stock bootstrap and Claude project configuration lifecycle evidence remains historical and does not qualify alpha.8.
-
-Alpha.6 remains immutable at producer `8653325c6ccc0e058b3e4cf84eb44101cfd270fc`. Its anonymous public asset
-verification and scoped Darwin ARM64 Junie project installer evidence remain
-historical for alpha.6; they do not qualify alpha.7 or a real frontend.
-
-
-The immutable [v0.1.0-alpha.4 runtime preview](https://github.com/xoxd-ai/fruitctl/releases/tag/v0.1.0-alpha.4)
-pins portable source `e0f4d064b076e58b33856d877e0e1c9266f55177` and bundles
-Node.js 24.21.0. Its macOS 15+ ARM64 runtime reuses the signed VNC controller
-from `e00fcc86bbac4247d5a0847d7e656369c52cc15f`, retaining that controller's
-original Apple Accepted submission. The entire runtime archive is a separate
-asset.
-
-On Linux x64, alpha.4 passed an anonymous stock Junie project bootstrap, help,
-doctor, reinstall, alternate-project-alias dry-run refusal and uninstall. A
-continuation initialized the MCP SDK against Junie's installed MCP launcher
-and discovered four tool schemas. Original unrelated configuration bytes/modes and
-3,671 Linux runtime payload files were preserved; the generated identity
-marker is separate and installer history remains append-only. No tool action
-or frontend image rendering ran.
-
-On Darwin ARM64, alpha.4 passed an offline Junie project lifecycle through the
-bundled installer API and an installed SDK/shared-broker journey through the
-unchanged signed controller to a loopback RFB fixture. The synthetic journey
-verified four complete 96×53 frames, one reconnect and two terminal releases.
-
-Alpha.2's seven-adapter bootstrap and alpha.3's Claude bootstrap, 14 bundled-API
-lifecycle cases and Darwin synthetic image exchange remain explicitly
-historical. Linux uses the configured SSH bridge to Darwin. Host is an unqualified source
-prototype with no public executable or automatic setup. Real frontend and
-desktop journeys, physical overlay exclusion, the SSH journey and measured
-service objectives remain pending.
+Sharing and macOS consent remain operator prerequisites. Eleven runtime
+previews are published; each older one stays immutable and is listed with its
+hashes in the [curated release inventory](site/versions.json).

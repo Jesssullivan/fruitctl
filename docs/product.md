@@ -12,6 +12,53 @@ reviewable installation. xoxd-ai owns the public product and its releases.
 | Agent workflow | [Shared Fruitctl skill](../skills/fruitctl/SKILL.md) |
 | Reliability targets | [Lab SLOs](slo.md) |
 
+## Product shape
+
+Fruitctl is efficient, business-level agent control of Macs over VNC. An
+agent sees a Mac's screen and drives its keyboard and mouse through Apple
+Screen Sharing, under one operator-configured target profile per Mac.
+
+- **Controllers from enterprise environments.** Agents run on Linux seats,
+  especially Rocky Linux, or on macOS. A Linux seat reaches the Darwin broker
+  through the SSH relay and never holds a VNC credential. A macOS seat uses the
+  broker directly.
+- **Secrets from real sources, vault-agnostic.** The Darwin broker reads the
+  target credential, and any value an agent types with `type_secret {ref}`,
+  from what the operator already runs: a file materialized by sops-nix or
+  Ansible, a vault CLI, or the login keychain. Refs are allowlisted per target.
+  Values never reach the agent, tool arguments, the Linux seat, logs or the
+  journal, and are never used to answer a TCC consent prompt.
+- **Mac quirks handled.** Fruitctl expects TCC and system dialogs on the
+  desktop, the input dead time after Screen Sharing authentication, mid-answer
+  capture stalls, display sleep, other remote-input owners, and Remote
+  Management/VNC settings. It waits, refuses with a typed error, or reports
+  them through `fruitctl doctor` instead of guessing. Input is authorized only
+  by a fresh frame, and uncertain input is never replayed.
+- **Delivered the way the fleet is already managed.** Pinned, signed and
+  notarized releases; a Home Manager module with federated environments; and
+  `doctor` checks for a Fruitctl-ready target.
+
+Accessibility and Screen Recording grants for the optional Host are the
+expected adoption posture. Claude Code and Codex are the qualified agent
+frontends; other adapters are best effort and labelled unqualified.
+
+### Non-goals
+
+- Hardware KVM (betterkvmd/Comet); a separate post-GA initiative.
+- Windows or Linux desktops as targets, Intel Macs, and VNC servers other than
+  Apple Screen Sharing until each is qualified.
+- Native Linux VNC control without a Darwin broker.
+- Generic browser automation or a proprietary computer-use engine.
+- A secret store of its own, or secrets passed through prompts, tool
+  arguments or MCP configuration.
+- Granting TCC consent, managed or headless Screen Capture grants, or MDM.
+- Cached frames, automatic input replay, or an automatic human-activity pause
+  (the human Stop latch is the control).
+- Session recording (opt-in RFB recording is post-GA), a Guacamole listener,
+  and any feature outside VNC/KVM control of Macs.
+
+## Authority
+
 The repository owns the specification. Linear tracks owners, work, dates, and
 acceptance evidence. Public pages are built from the repository; a release's
 installation instructions must resolve to that release's immutable revision.
