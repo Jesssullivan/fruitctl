@@ -181,3 +181,53 @@ ancestry. Neither simulated fixture timing nor a passing file series proves
 input revocation, cursor attribution or capture-indicator exclusion. The oracle
 keeps complete pixels and the existing narrow pointer diagnostic; it applies
 no masking, cropping or color repair.
+
+## Overlay exclusion gate (attended, Host route)
+
+`overlay_exclusion_gate.mjs` checks that agent frames from the Host route do not
+contain the Host's own activity overlay. It is an MCP client of the operator's
+configured target profile (`fruitctl mcp --target PROFILE`), so it sees exactly
+the frames an agent sees. It sends only `health` and `screenshot`; any other
+action is refused before it is sent. It never launches the Host, grants a
+permission, sends input or masks pixels. Closing the client releases the lease.
+
+Prerequisites are attended: the Host installed and running with Screen
+Recording granted and capture enabled, a profile with `hostHelper` for that
+Mac, and the scene fixture (`test/qualification/generate.mjs`) shown full screen
+so the background is a known neutral.
+
+```sh
+just qualification-overlay-gate PROFILE /absolute/control.png /absolute/new-output-dir
+```
+
+Defaults are 600 captures at a 100 ms cadence (the 600-frame/60-second gate).
+Each capture is a fresh `screenshot`, so the Host's activity lease and its
+overlay stay up for the whole series. A frame passes when:
+
+- its labels say `route: host`, `indicator: present`,
+  `capture_backend: owned_sck`, `raw_vnc_exclusion: false`,
+  `overlay_ready: true` and `capture_enabled: true`, so the overlay was attested
+  on screen and the pixels came from the Host's filtered capture, not raw VNC;
+- no pixel has the overlay's purple signature (`min(R, B) - G >= 12`; the
+  overlay is sRGB 75/0/130 from `FruitctlHost/HostRenderer.swift`). Neutral and
+  cyan fixture pixels, and any scaling of them, score 0 or less.
+
+The series stops at the first failing frame, which is always saved. Add
+`--save-frames` to keep every frame (private evidence). Latency is the MCP
+round trip per capture; the receipt reports p50/p95/max, and fewer than 95% of
+captures within `--latency-limit-ms` (default 5000, the warm-capture SLO) fails.
+
+**Positive control.** An absent signature only means something if the overlay
+was really visible and the detector would have seen it through the same colour
+pipeline. During the run, capture the same display through a path that does not
+exclude the overlay (for example a Chrome Remote Desktop screenshot) and save
+it at the `--control` path. The gate reads it after the last frame and requires
+the signature on at least half of the outer ring on every side. Without that
+control the result is `unanchored` (exit 1), never `passed`.
+
+`overlay-exclusion-receipt.json` in the new output directory records each
+frame's hash, latency, overlay pixel count and label failures. Exit 0 is
+`passed`, 1 is `failed` or `unanchored`, 2 is a usage or transport error. The
+gate does not qualify scene validity (use `scene_stream.mjs`), consent, Stop,
+input mapping or the human-visible heartbeat.
+

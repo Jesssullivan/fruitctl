@@ -25,6 +25,8 @@ spec = importlib.util.spec_from_file_location("release_verifier", ROOT / "script
 release = importlib.util.module_from_spec(spec); spec.loader.exec_module(release)
 apple_spec = importlib.util.spec_from_file_location("apple_distribution", ROOT / "scripts/release/apple_distribution.py")
 apple = importlib.util.module_from_spec(apple_spec); apple_spec.loader.exec_module(apple)
+native_spec = importlib.util.spec_from_file_location("native_release", ROOT / "scripts/release/native_release.py")
+native = importlib.util.module_from_spec(native_spec); native_spec.loader.exec_module(native)
 source_spec = importlib.util.spec_from_file_location("source_packager", ROOT / "scripts/release/package_source.py")
 source = importlib.util.module_from_spec(source_spec); source_spec.loader.exec_module(source)
 runtime_spec = importlib.util.spec_from_file_location("runtime_inputs", ROOT / "scripts/release/runtime_inputs.py")
@@ -578,6 +580,144 @@ class AppleToolArchiveTests(unittest.TestCase):
             with self.subTest(name=name), self.assertRaisesRegex(ValueError, "not a readable ZIP"):
                 self.invoke(producer, suffix=name)
             self.assertFalse((self.base / (name + ".json")).exists())
+
+
+class AppleHostDistributionTests(unittest.TestCase):
+    """The distribute phase produces exactly what the native release writer consumes."""
+    requirement = 'identifier "com.xoxd.fruitctl.host" and anchor apple generic and certificate leaf[subject.OU] = QP994XQKNH'
+    certificate = b"public leaf certificate fixture"
+    description = "\n".join(("Identifier=com.xoxd.fruitctl.host", "TeamIdentifier=QP994XQKNH",
+        "CodeDirectory v=20500 flags=0x10000(runtime)", "Timestamp=Oct 17, 2026",
+        "Authority=Developer ID Application: Test (QP994XQKNH)"))
+    # Minimal valid AppleDouble header with zero entries.
+    sidecar = bytes.fromhex("00051607") + bytes.fromhex("00020000") + bytes(16) + bytes(2)
+
+    def setUp(self):
+        directory = tempfile.TemporaryDirectory(); self.addCleanup(directory.cleanup)
+        self.base = Path(directory.name).resolve()
+        self.app = self.base / "host" / "FruitctlHost.app"
+        files = {"Contents/Info.plist": (b"plist fixture", 0o644), "Contents/MacOS/FruitctlHost": (b"signed host", 0o755),
+                 "Contents/_CodeSignature/CodeResources": (b"seal", 0o644), "Contents/CodeResources": (b"ticket", 0o644)}
+        for name, (data, mode) in files.items():
+            path = self.app / name; path.parent.mkdir(parents=True, exist_ok=True); path.write_bytes(data); path.chmod(mode)
+        self.final = apple.inventory(self.app)
+        signature = {"identifier": "com.xoxd.fruitctl.host", "teamIdentifier": "QP994XQKNH",
+                     "certificateSha1": hashlib.sha1(self.certificate).hexdigest().upper(), "description": self.description}
+        self.receipts = {}
+        self.save("sign", {"kind": "fruitctl-apple-sign", "appName": self.app.name, "signature": signature,
+                           "files": {k: v for k, v in self.final.items() if k != "Contents/CodeResources"}})
+        self.save("archive", {"kind": "fruitctl-apple-submission-archive", "appName": self.app.name,
+                              "signReceiptSha256": self.sha("sign"), "archiveSha256": "a" * 64, "archiveBytes": 1})
+        self.save("notary", {"kind": "fruitctl-apple-notarization", "appName": self.app.name, "archiveReceiptSha256": self.sha("archive"),
+                             "submittedArchiveSha256": "a" * 64, "apple": {"id": "11111111-1111-4111-8111-111111111111", "status": "Accepted"}})
+        self.save("staple", {"kind": "fruitctl-apple-staple", "appName": self.app.name, "signReceiptSha256": self.sha("sign"),
+                             "notarizationReceiptSha256": self.sha("notary"), "submissionId": "11111111-1111-4111-8111-111111111111",
+                             "files": self.final, "signature": signature})
+        self.zip, self.extract, self.receipt = self.base / "FruitctlHost-stapled-distribution.zip", self.base / "extract", self.base / "dist.json"
+        self.calls, self.extract_mutation, self.failing = [], None, set()
+
+    def save(self, key, value):
+        value.update(schemaVersion=1, status="passed")
+        path = self.base / (key + ".json"); path.write_text(json.dumps(value)); self.receipts[key] = path
+
+    def sha(self, key):
+        return hashlib.sha256(self.receipts[key].read_bytes()).hexdigest()
+
+    def fake_run(self, command):
+        command = [str(value) for value in command]; self.calls.append(command)
+        tool = command[0] if command[0] != "xcrun" else command[1]
+        if tool in self.failing:
+            raise subprocess.CalledProcessError(3, command)
+        if tool == "codesign" and any(value.startswith("--extract-certificates=") for value in command):
+            Path(command[2].split("=", 1)[1] + "0").write_bytes(self.certificate); return ""
+        if tool == "codesign" and "--requirements" in command:
+            return "Executable=" + command[-1] + "\ndesignated => " + self.requirement + "\n"
+        if tool == "codesign":
+            return self.description if "--display" in command else ""
+        if command[:3] == ["ditto", "-c", "-k"]:
+            source = Path(command[-2]); entries = [(source.name + "/", None, stat.S_IFDIR | 0o755)]
+            for path in sorted(source.rglob("*")):
+                name = source.name + "/" + path.relative_to(source).as_posix()
+                entries.append((name + "/", None, stat.S_IFDIR | 0o755) if path.is_dir()
+                               else (name, path.read_bytes(), stat.S_IFREG | stat.S_IMODE(path.stat().st_mode)))
+            entries.append(("__MACOSX/" + source.name + "/Contents/._Info.plist", self.sidecar, stat.S_IFREG | 0o644))
+            with zipfile.ZipFile(command[-1], "w") as archive:
+                for name, data, mode in entries:
+                    info = zipfile.ZipInfo(name); info.create_system = 3; info.external_attr = mode << 16
+                    archive.writestr(info, data or b"")
+            return ""
+        if command[:3] == ["ditto", "-x", "-k"]:
+            with zipfile.ZipFile(command[-2]) as archive:
+                for info in archive.infolist():
+                    if info.filename.startswith("__MACOSX/") or info.is_dir():
+                        continue
+                    path = Path(command[-1]) / info.filename; path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_bytes(archive.read(info)); path.chmod(stat.S_IMODE(info.external_attr >> 16))
+            if self.extract_mutation:
+                self.extract_mutation(Path(command[-1]) / "FruitctlHost.app")
+            return ""
+        return "accepted\nsource=Notarized Developer ID" if tool == "spctl" else ""
+
+    def distribute(self):
+        argv = ["apple_distribution.py", "distribute", "--app", str(self.app), "--zip", str(self.zip),
+                "--extract-dir", str(self.extract), "--receipt", str(self.receipt)]
+        for key, flag in (("sign", "--sign-receipt"), ("archive", "--archive-receipt"),
+                          ("notary", "--notarization-receipt"), ("staple", "--staple-receipt")):
+            argv += [flag, str(self.receipts[key])]
+        with patch.object(sys, "argv", argv), patch.object(apple.platform, "system", return_value="Darwin"), \
+                patch.object(apple, "run", self.fake_run), patch("builtins.print"):
+            apple.main()
+        return json.loads(self.receipt.read_text())
+
+    def test_receipt_is_accepted_by_the_native_release_consumer(self):
+        result = self.distribute()
+        self.assertEqual(result["kind"], "fruitctl-private-stapled-host-distribution")
+        self.assertEqual((result["signReceiptSha256"], result["submissionArchiveReceiptSha256"],
+                          result["acceptedNotarizationReceiptSha256"], result["stapleReceiptSha256"]),
+                         (self.sha("sign"), self.sha("archive"), self.sha("notary"), self.sha("staple")))
+        self.assertEqual(result["archiveSha256"], hashlib.sha256(self.zip.read_bytes()).hexdigest())
+        self.assertEqual(result["actualPostStapleFiles"], self.final)
+        # The writer's own checks: requirement roundtrip and complete ZIP map.
+        signature = native.signature_projection(json.loads(self.receipts["sign"].read_text())["signature"], "FruitctlHost.app")
+        self.assertEqual(native.host_requirement(result, signature)["expression"], self.requirement)
+        recorded, actual = result["archivePayloadAndMetadataValidation"], native.zip_map(self.zip, "FruitctlHost.app", self.final)
+        self.assertEqual(actual["payloads"], recorded["payloads"])
+        self.assertEqual(actual["AppleDoubleSidecars"], recorded["AppleDoubleSidecars"])
+        self.assertEqual(actual["directories"], native.recorded_directories(recorded["directories"]))
+        # The ticket and Gatekeeper checks run on the re-extracted copy, not the source app.
+        restored = str(self.extract / "FruitctlHost.app")
+        self.assertIn(["xcrun", "stapler", "validate", restored], self.calls)
+        self.assertIn(["spctl", "--assess", "--type", "execute", "--verbose=4", restored], self.calls)
+
+    def assert_refused(self, error=ValueError, phrase=None):
+        with self.assertRaises(error) as raised:
+            self.distribute()
+        if phrase:
+            self.assertIn(phrase, str(raised.exception))
+        self.assertFalse(self.receipt.exists())
+
+    def test_reextracted_payload_drift_is_refused(self):
+        self.extract_mutation = lambda app: (app / "Contents/Info.plist").write_bytes(b"other plist")
+        self.assert_refused(phrase="re-extracted Host payload differs")
+
+    def test_ticket_or_gatekeeper_failure_on_the_restored_copy_is_refused(self):
+        for tool in ("stapler", "spctl"):
+            with self.subTest(tool=tool):
+                self.failing = {tool}; self.calls = []
+                for path in (self.zip, self.extract):
+                    shutil.rmtree(path) if path.is_dir() else path.unlink(missing_ok=True)
+                self.assert_refused(subprocess.CalledProcessError)
+
+    def test_broken_receipt_chain_is_refused_before_any_command(self):
+        staple = json.loads(self.receipts["staple"].read_text()); staple["notarizationReceiptSha256"] = "0" * 64
+        self.receipts["staple"].write_text(json.dumps(staple))
+        self.assert_refused(phrase="receipt chain")
+        self.assertEqual(self.calls, [])
+
+    def test_app_changed_after_staple_is_refused_before_archiving(self):
+        (self.app / "Contents/Info.plist").write_bytes(b"tampered")
+        self.assert_refused(phrase="differs from its staple receipt")
+        self.assertFalse(self.zip.exists())
 
 
 class PortableHostLauncherTests(unittest.TestCase):
