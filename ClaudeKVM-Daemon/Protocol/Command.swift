@@ -9,7 +9,7 @@ struct PCRequest: Decodable {
         "screenshot", "cursor_crop", "diff_check", "set_baseline", "detect_elements",
         "zoom", "wait_for_stable", "expect_baseline", "expect_change",
         "mouse_move", "hover", "nudge", "mouse_click", "mouse_double_click", "mouse_drag", "scroll",
-        "key_tap", "key_combo", "key_type", "paste", "type_secret",
+        "key_tap", "key_combo", "key_type", "paste", "type_secret", "clipboard_read",
         "configure", "get_timing", "wait", "health", "shutdown",
         "adopt_observation", "begin_input_permit", "grant_input_permit",
         "triple_click", "cursor_position", "hold_key", "mouse_down", "mouse_up", "release_holds",
@@ -38,6 +38,11 @@ struct PCRequest: Decodable {
         let ms: Int?
         let modifiers: [String]?
         let durationMs: Int?
+
+        // Private executor -> native D29 routing request for key_type
+        // ("paste"). The executor sets it only for a target that opted in;
+        // it is not an MCP field and type_secret never carries it.
+        let unmappable: String?
 
         // Private executor -> native batch scope for D27 mouse holds. The
         // executor assigns it per action_queue batch; it is not an MCP field.
@@ -89,6 +94,7 @@ struct PCRequest: Decodable {
         let typeInterKeyMs: Int?
         let typeShiftMs: Int?
         let pasteSettleMs: Int?
+        let pasteRestoreMs: Int?
         let cursorCropRadius: Int?
 
         // swiftlint:disable nesting
@@ -96,6 +102,7 @@ struct PCRequest: Decodable {
             case x, y, toX, toY, dx, dy
             case button, key, keys, text, secret, direction, amount, ms, modifiers
             case durationMs = "duration_ms"
+            case unmappable
             case holdScope = "hold_scope"
             case width, height, regions, ignore
             case stableMs = "stable_ms"
@@ -126,6 +133,7 @@ struct PCRequest: Decodable {
             case typeInterKeyMs = "type_inter_key_ms"
             case typeShiftMs = "type_shift_ms"
             case pasteSettleMs = "paste_settle_ms"
+            case pasteRestoreMs = "paste_restore_ms"
             case cursorCropRadius = "cursor_crop_radius"
         }
         // swiftlint:enable nesting

@@ -423,9 +423,24 @@ extension ClaudeKVMDaemon {
                 guard let text = p?.text else {
                     throw VNCError.sendFailed("Missing text")
                 }
-                try await input.typeText(text)
+                let kind = try await input.typeText(text, routeUnmappable: p?.unmappable == "paste")
                 try input.checkInputAdmission()
-                respond(.success(id: id, detail: "OK"))
+                // D29: a routed key_type is journalled as a paste.
+                respond(.success(id: id, detail: "OK", kind: kind == .paste ? kind.rawValue : nil))
+
+            // ── Clipboard (D8) ────────────────────────────────
+
+            case "clipboard_read":
+                // Policy-gated per target; reads, never writes input.
+                guard clipboardRead else { throw ClipboardReadError.disabled }
+                let waitNs = InputController.clipboardReadWaitNs(input.requestDeadlineNs, now: input.inputSettle.now())
+                guard let read = try await vnc.readClipboard(waitNanoseconds: waitNs) else {
+                    throw ClipboardReadError.unavailable
+                }
+                let ageMs = Int(min(UInt64(Int.max), (input.inputSettle.now() &- read.snapshot.observedNs) / 1_000_000))
+                if let ttl = clipboardTtlMs, ageMs > ttl { throw ClipboardReadError.unavailable }
+                respond(.success(id: id, clipboard: ClipboardSummary(text: read.snapshot.text,
+                    encoding: read.snapshot.encoding.rawValue, ageMilliseconds: ageMs, fresh: read.fresh)))
 
             case "paste":
                 guard let text = p?.text else {
@@ -525,6 +540,7 @@ extension ClaudeKVMDaemon {
                     ?? PCResponse.inputRefusal(id: id, error: error)
                     ?? PCResponse.inputNotReady(id: id, error: error)
                     ?? PCResponse.observationUnmet(id: id, error: error)
+                    ?? PCResponse.clipboardUnavailable(id: id, error: error)
                     ?? .error(id: id, message: error.localizedDescription))
         }
     }
@@ -632,6 +648,10 @@ extension ClaudeKVMDaemon {
             input.timing.pasteSettleUs = UInt32(v) * 1000
             changed.append("paste_settle_ms")
         }
+        if let v = p?.pasteRestoreMs {
+            input.timing.pasteRestoreUs = UInt32(v) * 1000
+            changed.append("paste_restore_ms")
+        }
 
         // Display tuning
         if let v = p?.cursorCropRadius {
@@ -678,6 +698,7 @@ extension ClaudeKVMDaemon {
             "type_inter_key_ms": Double(t.typeInterKeyUs) / 1000,
             "type_shift_ms": Double(t.typeShiftUs) / 1000,
             "paste_settle_ms": Double(t.pasteSettleUs) / 1000,
+            "paste_restore_ms": Double(t.pasteRestoreUs) / 1000,
             "cursor_crop_radius": Double(t.cursorCropRadius),
         ]
     }

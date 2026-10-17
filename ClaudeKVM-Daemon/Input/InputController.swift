@@ -20,6 +20,8 @@ final class InputController {
     /// nil when the caller supplied none.
     var requestDeadlineNs: UInt64?
     let inputSettle: VNCInputSettle
+    /// D29 and the declared input source, fixed per target at launch.
+    var textRouting = TextRouting()
     typealias PointerSender = (Int, Int, Int, VNCInputContext?, Bool) async throws -> Void
     typealias KeySender = (UInt32, Bool, VNCInputContext?, Bool) async throws -> Void
     private let pointerSender: PointerSender
@@ -158,25 +160,6 @@ final class InputController {
                 throw VNCError.sendFailed("Input failed and held-state release could not be confirmed")
             }
             throw error
-        }
-    }
-}
-
-/// Typed input refusals (JSON-RPC code -32011, `data.reason`). Each is raised
-/// before any wire event of the refused request.
-enum NativeInputRefusal: String, Error, LocalizedError {
-    /// mouse_down/mouse_up outside one action_queue batch (D27).
-    case holdOutsideBatch = "hold_outside_batch"
-    case buttonAlreadyHeld = "button_already_held"
-    case buttonNotHeld = "button_not_held"
-
-    static let code = -32011
-
-    var errorDescription: String? {
-        switch self {
-        case .holdOutsideBatch: "mouse_down and mouse_up are only valid inside one action_queue batch"
-        case .buttonAlreadyHeld: "Mouse button is already held in this batch"
-        case .buttonNotHeld: "Mouse button is not held in this batch"
         }
     }
 }

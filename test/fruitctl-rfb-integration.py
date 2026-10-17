@@ -61,6 +61,14 @@ INPUT_REFUSED_CODE = -32011
 MODIFIER_KEYSYMS = (0xFFE1, 0xFFE2, 0xFFE3, 0xFFE4, 0xFFE9, 0xFFEA, 0xFFE7, 0xFFE8, 0xFFEB, 0xFFEC)
 MODIFIER_SYNC = [{"kind": "key", "down": 0, "key": key} for key in MODIFIER_KEYSYMS]
 OBSERVATION_UNMET_CODE = -32012
+CLIPBOARD_UNAVAILABLE_CODE = -32014
+# ExtendedClipboard (rfbproto "Extended Clipboard Pseudo-Encoding"). The
+# fixture's "extended" clipboard model advertises text with request, notify
+# and provide; "legacy" ignores the pseudo-encoding and uses Latin-1 cut text.
+CLIPBOARD_MODELS = ("legacy", "extended")
+EXTENDED_CLIPBOARD_ENCODING = -1063131698  # 0xC0A1E5CE as a signed int32
+CLIP_TEXT, CLIP_CAPS, CLIP_REQUEST, CLIP_PEEK, CLIP_NOTIFY, CLIP_PROVIDE = 1, 1 << 24, 1 << 25, 1 << 26, 1 << 27, 1 << 28
+CLIPBOARD_SCENARIO_TEXT = {"legacy": "caf\u00e9 server", "extended": "Gr\u00fc\u00dfe \u65e5\u672c server"}
 
 
 def require(condition, message):
@@ -135,8 +143,14 @@ class RfbFixture:
     pin predicted behaviors; none qualifies any real server.
     """
 
-    def __init__(self, request_model="immediate"):
+    def __init__(self, request_model="immediate", clipboard="legacy"):
         require(request_model in REQUEST_MODELS, "invalid fixture request model")
+        require(clipboard in CLIPBOARD_MODELS, "invalid fixture clipboard model")
+        self.clipboard = clipboard
+        # The server's clipboard text. Legacy pushes it after SetEncodings;
+        # extended answers a Request with it. A client write replaces it.
+        self.server_clipboard = None
+        self.extended_caps_sent = 0
         self.listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.listener.bind(("127.0.0.1", 0))
         self.listener.listen(1)
@@ -261,7 +275,8 @@ class RfbFixture:
                 elif kind == 2:  # SetEncodings; raw is universally available.
                     _, count = struct.unpack("!BH", exact_read(connection, 3))
                     require(count <= 1024, "unbounded fixture encoding list")
-                    exact_read(connection, count * 4)
+                    encodings = struct.unpack("!%di" % count, exact_read(connection, count * 4))
+                    self._announce_clipboard(connection, EXTENDED_CLIPBOARD_ENCODING in encodings)
                 elif kind == 3:  # FramebufferUpdateRequest
                     incremental, x, y, width, height = struct.unpack("!BHHHH", exact_read(connection, 9))
                     require(width > 0 and height > 0 and x + width <= WIDTH and y + height <= HEIGHT,
@@ -294,12 +309,14 @@ class RfbFixture:
                         self.events.append({"kind": "pointer", "mask": mask, "x": x, "y": y})
                         self.event_times.append({"at": time.monotonic(), "connection": index})
                 elif kind == 6:  # ClientCutText (no real clipboard involved).
-                    length = struct.unpack("!3xI", exact_read(connection, 7))[0]
-                    require(length <= 1024 * 1024, "unbounded fixture clipboard message")
-                    exact_read(connection, length)
-                    with self.lock:
-                        self.events.append({"kind": "clipboard", "bytes": length})
-                        self.event_times.append({"at": time.monotonic(), "connection": index})
+                    length = struct.unpack("!3xi", exact_read(connection, 7))[0]
+                    require(abs(length) <= 1024 * 1024, "unbounded fixture clipboard message")
+                    if length >= 0:
+                        text = exact_read(connection, length).decode("latin-1")
+                        self._record_clipboard(index, {"kind": "clipboard", "bytes": length,
+                                                       "encoding": "latin1", "text": text})
+                    else:
+                        self._extended_clipboard(connection, index, exact_read(connection, -length))
                 else:
                     raise AssertionError("unsupported fixture client message type %d" % kind)
                 if outstanding and self._quiet(connection) and self._answers(outstanding, answered_full):
@@ -324,6 +341,50 @@ class RfbFixture:
             with self.lock:
                 record["closedAt"] = time.monotonic()
             self.finished.set()
+
+    def _record_clipboard(self, index, event):
+        with self.lock:
+            self.events.append(event)
+            self.event_times.append({"at": time.monotonic(), "connection": index})
+            if "text" in event:
+                self.server_clipboard = event["text"]
+
+    def _announce_clipboard(self, connection, extended_advertised):
+        with self.lock:
+            text = self.server_clipboard
+        if self.clipboard == "extended" and extended_advertised:
+            # Caps: text with request/notify/provide, then its size limit.
+            flags = CLIP_CAPS | CLIP_TEXT | CLIP_REQUEST | CLIP_NOTIFY | CLIP_PROVIDE
+            connection.sendall(struct.pack("!B3xiII", 3, -8, flags, 1024 * 1024))
+            with self.lock:
+                self.extended_caps_sent += 1
+        elif self.clipboard == "legacy" and text is not None:
+            data = text.encode("latin-1")
+            connection.sendall(struct.pack("!B3xI", 3, len(data)) + data)
+
+    def _extended_clipboard(self, connection, index, payload):
+        require(len(payload) >= 4, "short extended clipboard message")
+        flags = struct.unpack("!I", payload[:4])[0]
+        require(self.clipboard == "extended" and self.extended_caps_sent and not flags & CLIP_CAPS,
+                "extended clipboard message without negotiation")
+        if flags & CLIP_PROVIDE:
+            require(flags & CLIP_TEXT, "provide without text")
+            inflater = zlib.decompressobj()
+            data = inflater.decompress(payload[4:], 4 + 1024 * 1024 + 1)
+            size = struct.unpack("!I", data[:4])[0]
+            require(size == len(data) - 4 and data.endswith(b"\0"), "malformed extended clipboard text")
+            text = data[4:-1].decode("utf-8")
+            self._record_clipboard(index, {"kind": "clipboard", "bytes": len(text.encode()),
+                                           "encoding": "utf8", "text": text})
+        elif flags & CLIP_REQUEST:
+            require(flags & CLIP_TEXT, "request without text")
+            self._record_clipboard(index, {"kind": "clipboard-request"})
+            with self.lock:
+                text = self.server_clipboard
+            data = (text or "").encode("utf-8") + b"\0"
+            body = struct.pack("!I", CLIP_PROVIDE | CLIP_TEXT) + zlib.compress(struct.pack("!I", len(data)) + data)
+            connection.sendall(struct.pack("!B3xi", 3, -len(body)) + body)
+        # Notify (LibVNC sends one before each Provide) needs no answer here.
 
     def _animate(self, connection, outstanding, animation):
         """One animation tick: answer whatever request is newest."""
@@ -1369,6 +1430,105 @@ def run_input_settle_scenario(args):
     return report
 
 
+def run_clipboard_scenario(clipboard, args):
+    """D8/D29 through the real LibVNC client: clipboard_read, paste encoding
+    and a paste-routed key_type that restores the clipboard. `legacy` models
+    a Latin-1-only server that pushes its clipboard; `extended` negotiates
+    ExtendedClipboard and answers Requests. Neither is Apple's server."""
+    fixture = RfbFixture(clipboard=clipboard)
+    fixture.server_clipboard = CLIPBOARD_SCENARIO_TEXT[clipboard]
+    session = None
+    name = "clipboard-" + clipboard
+    report = {"transport": "native", "scenario": name, "loopbackPort": fixture.port, "status": "failed",
+              "captures": [],
+              "claimedScope": "synthetic-loopback-RFB-only; Apple's clipboard support is not modeled"}
+    extended = clipboard == "extended"
+    ctrl_v = [{"kind": "key", "down": 1, "key": 0xFFE3}, {"kind": "key", "down": 1, "key": 0x76},
+              {"kind": "key", "down": 0, "key": 0x76}, {"kind": "key", "down": 0, "key": 0xFFE3}]
+
+    def clip(text):
+        encoding = "utf8" if extended else "latin1"
+        size = len(text.encode("utf-8" if extended else "latin-1"))
+        return {"kind": "clipboard", "bytes": size, "encoding": encoding, "text": text}
+
+    def events_since(mark, expected=None):
+        # A reply can precede the fixture thread's parse of the last write.
+        deadline = time.monotonic() + 3
+        while expected is not None and len(fixture.snapshot()["events"]) - mark < len(expected) \
+                and time.monotonic() < deadline:
+            time.sleep(0.01)
+        return fixture.snapshot()["events"][mark:]
+
+    try:
+        session = NativeSession(args.daemon, fixture.port, ["--clipboard-read", "--paste-unmappable"])
+        report["route"] = "native-PC"
+        # The screenshot authorizes input; its poll cycle also handles the
+        # server's Caps (extended) or pushed cut text (legacy).
+        inspect_capture(session.action("screenshot"), fixture)
+        require(fixture.extended_caps_sent == (1 if extended else 0), "ExtendedClipboard negotiation mismatch")
+        read = session.action("clipboard_read")
+        require(not read["error"], "clipboard_read failed: %r" % read["error"])
+        got = read["metadata"].get("clipboard") or {}
+        require(got.get("text") == CLIPBOARD_SCENARIO_TEXT[clipboard] and
+                got.get("encoding") == ("utf8" if extended else "latin1") and got.get("fresh") is extended,
+                "clipboard_read returned %r" % got)
+        request = [{"kind": "clipboard-request"}] if extended else []
+        require(events_since(0, request) == request,
+                "clipboard_read wrote more than its request")
+
+        mark = len(events_since(0))
+        require(not session.action("paste", text="naïve")["error"], "Latin-1 paste failed")
+        expected = [clip("naïve")] + MODIFIER_SYNC + ctrl_v
+        require(events_since(mark, expected) == expected, "paste wire sequence mismatch")
+
+        mark = len(events_since(0))
+        wide = session.action("paste", text="日本")
+        if extended:
+            require(not wide["error"], "UTF-8 paste failed: %r" % wide["error"])
+            expected = [clip("日本")] + ctrl_v
+            require(events_since(mark, expected) == expected, "UTF-8 paste wire sequence mismatch")
+        else:
+            error = wide["error"] or {}
+            require(error.get("code") == INPUT_REFUSED_CODE and
+                    (error.get("data") or {}).get("reason") == "clipboard_unicode_unsupported",
+                    "non-Latin-1 legacy paste was not refused typed: %r" % error)
+            require(not events_since(mark), "a refused paste reached the server")
+        report["pasteRefusedWithoutUtf8"] = not extended
+
+        # The input mapping survives image-less input; route one unmappable scalar.
+        unmappable = "日" if extended else "é"
+        restored = "日本" if extended else "naïve"
+        mark = len(events_since(0))
+        typed = session.action("key_type", text="a" + unmappable + "b", unmappable="paste")
+        require(not typed["error"] and typed["metadata"].get("kind") == "paste",
+                "routed key_type failed: %r" % typed)
+        key = lambda down, value: {"kind": "key", "down": down, "key": value}
+        expected = ([{"kind": "clipboard-request"}] if extended else []) + [
+            key(1, ord("a")), key(0, ord("a")), clip(unmappable)] + ctrl_v + [
+            key(1, ord("b")), key(0, ord("b")), clip(restored)]
+        require(events_since(mark, expected) == expected,
+                "routed key_type wire sequence mismatch: %r" % events_since(mark))
+        require(fixture.server_clipboard == restored, "the server clipboard was not restored")
+        report["routedKeyType"] = {"kind": "paste", "restored": True}
+        report["status"] = "passed"
+    except Exception as error:
+        report["failure"] = type(error).__name__ + ": " + str(error)
+    finally:
+        if session:
+            report["processExitCode"] = session.close()
+            (args.output_dir / ("native-%s.stderr.txt" % name)).write_bytes(session.stderr)
+        fixture.finished.wait(3)
+        fixture.close()
+        report["fixtureErrors"] = fixture.snapshot()["errors"]
+        if report["status"] == "passed" and (report["fixtureErrors"] or report.get("processExitCode") != 0):
+            report["status"] = "failed"
+            report["failure"] = "fixture errors %r or nonzero exit %r" % (report["fixtureErrors"],
+                                                                          report.get("processExitCode"))
+        (args.output_dir / ("native-%s.json" % name)).write_text(json.dumps(report, indent=2) + "\n")
+    require(report["status"] == "passed", report.get("failure", "fixture failed"))
+    return report
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--daemon", type=Path, required=True, help="existing compiled unsigned native daemon")
@@ -1431,6 +1591,9 @@ def main():
         receipt["scenarios"].append(run_input_settle_scenario(args))
         print("Running native capture-timeout fixture", flush=True)
         receipt["scenarios"].append(run_capture_timeout_scenario(args))
+        for clipboard in CLIPBOARD_MODELS:
+            print("Running native %s clipboard fixture" % clipboard, flush=True)
+            receipt["scenarios"].append(run_clipboard_scenario(clipboard, args))
         for request_mode in args.request_modes:
             for model in MODEL_SCENARIOS:
                 print("Running native %s request model in %s mode" % (model, request_mode), flush=True)

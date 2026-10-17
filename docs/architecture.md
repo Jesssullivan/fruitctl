@@ -181,7 +181,9 @@ Images are never stored, only their digests. `type_secret` stores its `ref`,
 parameter with `[redacted]` ([secret providers](secrets.md)). Any parameter whose name
 looks like a credential (password, secret, token, credential, API or private
 key, OTP, PIN code, auth) is redacted for every action. Text is cut to 256
-characters.
+characters. A `key_type` that paste routing sent through the clipboard records
+`kind: "paste"` in its result summary. A `clipboard_read` record holds only
+whether the text was withheld, never the text.
 
 Journal writes are queued after the result is known. A write failure is logged
 and counted, and never fails or delays a returned action. A broken existing

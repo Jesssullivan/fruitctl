@@ -36,6 +36,9 @@ let
       daemonPath = "/Users/fruitctl-test/Applications/qualified-native/claude-kvm-daemon";
       vnc.username = "fixture-user";
       vnc.captureTimeoutMs = 12000;
+      input.pasteUnmappable = true;
+      clipboard.read = true;
+      clipboard.ttlMs = 60000;
     };
   };
   nativeController = fruitctlFlake.packages.aarch64-darwin.native-controller;
@@ -192,6 +195,19 @@ let
       vnc.captureTimeoutMs = 30000;
     };
   }).home.file."Library/Application Support/fruitctl/config.json".text).success;
+  linuxClipboardRejected = rejected "x86_64-linux" {
+    enable = true;
+    bridgeHost = "darwin-bridge";
+    targets.desktop.clipboard.read = true;
+  };
+  clipboardTtlWithoutReadRejected = rejected "aarch64-darwin" {
+    enable = true;
+    targets.desktop = {
+      credentialFile = "/Users/fruitctl-test/private/password";
+      daemonPath = "/Users/fruitctl-test/Applications/qualified-native/claude-kvm-daemon";
+      clipboard.ttlMs = 60000;
+    };
+  };
   linuxCaptureTimeoutRejected = rejected "x86_64-linux" {
     enable = true;
     bridgeHost = "darwin-bridge";
@@ -291,6 +307,10 @@ assert darwinDocument.targets.desktop.vnc.captureTimeoutMs == 12000;
 assert !(nativeDocument.targets.desktop.vnc ? captureTimeoutMs);
 assert invalidCaptureTimeoutRejected && linuxCaptureTimeoutRejected;
 assert invalidInputSourceRejected;
+assert darwinDocument.targets.desktop.input == { pasteUnmappable = true; };
+assert darwinDocument.targets.desktop.clipboard == { read = true; ttlMs = 60000; };
+assert !(nativeDocument.targets.desktop ? input) && !(nativeDocument.targets.desktop ? clipboard);
+assert linuxClipboardRejected && clipboardTtlWithoutReadRejected;
 assert darwinDocument.targets.desktop.credentialFile == "/Users/fruitctl-test/.config/private/desktop-password";
 assert helperDocument.targets.desktop.hostHelper.mapping.displayBounds.x == -1920;
 assert helperDocument.targets.desktop.hostHelper.mapping.nativeWidth == 3840;

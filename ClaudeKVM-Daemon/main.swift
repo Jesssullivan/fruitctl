@@ -62,6 +62,9 @@ struct ClaudeKVMDaemon: AsyncParsableCommand {
                 key_type       {text}                   Type text character by character
                 paste          {text}                   Paste via clipboard + combo
 
+              Clipboard:
+                clipboard_read                          Target clipboard text (--clipboard-read only)
+
               Detection:
                 detect_elements                         OCR text detection with bounding boxes
 
@@ -111,6 +114,7 @@ struct ClaudeKVMDaemon: AsyncParsableCommand {
                 type_inter_key_ms    Between characters                (default: 20)
                 type_shift_ms        Shift key settle                  (default: 10)
                 paste_settle_ms      After clipboard write             (default: 30)
+                paste_restore_ms     Routed paste, before restore      (default: 300)
 
             CONFIGURE EXAMPLES:
               Set timing:
@@ -178,6 +182,24 @@ struct ClaudeKVMDaemon: AsyncParsableCommand {
               miss still fails as stale_screen; no cached frame is returned.
               A request's deadline_ms budget caps the wait.
 
+            CLIPBOARD (D8, D29):
+              ExtendedClipboard is advertised (--no-extended-clipboard turns
+              it off). When the server accepts it, clipboard text is UTF-8 in
+              both directions; otherwise paste uses legacy Latin-1 cut text
+              and refuses other text typed (clipboard_unicode_unsupported).
+              Received clipboard text is read only with --clipboard-read or
+              --paste-unmappable, kept in memory for the connection and never
+              logged. clipboard_read asks an ExtendedClipboard server for its
+              text, else returns the last text received or written, at most
+              --clipboard-ttl-ms old.
+              --paste-unmappable lets a key_type that carries the private
+              unmappable:"paste" field paste what the US keymap cannot type:
+              save the clipboard, set the text, Cmd+V (Ctrl+V off Apple), wait
+              paste_restore_ms, restore. The result carries kind "paste".
+              --non-us-input-source refuses key_type typed
+              (input_source_not_us) unless that routing applies; routing then
+              pastes every printable character.
+
             ERRORS:
               Screen observations that obtain no fresh complete frame return
               code -32010 with data.reason (server_silent, metadata_only,
@@ -188,8 +210,12 @@ struct ClaudeKVMDaemon: AsyncParsableCommand {
               returns code -32013, data.reason input_not_ready and
               data.remaining_ms; no event is written.
               Input refusals return code -32011 with data.reason
-              (hold_outside_batch, button_already_held, button_not_held)
-              before any event of the refused request.
+              (hold_outside_batch, button_already_held, button_not_held,
+              clipboard_unicode_unsupported, input_source_not_us,
+              clipboard_restore_unavailable) before any event of the
+              refused request.
+              clipboard_read returns code -32014 with data.reason
+              clipboard_read_disabled or clipboard_unavailable.
               Observation conditions that fresh captures did not meet return
               code -32012 with data.reason (stable_timeout,
               change_not_observed), data.elapsed_ms and data.captures.
@@ -266,6 +292,28 @@ struct ClaudeKVMDaemon: AsyncParsableCommand {
             help: "Framebuffer request mode: stream (default) or on-demand (no incremental requests; LibVNC's own requests are gated off).")
     var rfbRequestMode: String = VNCRequestMode.stream.rawValue
 
+    // MARK: - Clipboard and text (D8, D29)
+
+    @Flag(name: .customLong("no-extended-clipboard"),
+          help: "Do not advertise ExtendedClipboard; clipboard text is then legacy Latin-1 only.")
+    var noExtendedClipboard: Bool = false
+
+    @Flag(name: .customLong("clipboard-read"),
+          help: "Allow clipboard_read and keep received clipboard text in memory for this connection.")
+    var clipboardRead: Bool = false
+
+    @Option(name: .customLong("clipboard-ttl-ms"),
+            help: "clipboard_read refuses text older than N ms (1000...86400000). Requires --clipboard-read.")
+    var clipboardTtlMs: Int?
+
+    @Flag(name: .customLong("paste-unmappable"),
+          help: "Paste-route key_type text the US keymap cannot type when the request asks for it (D29).")
+    var pasteUnmappable: Bool = false
+
+    @Flag(name: .customLong("non-us-input-source"),
+          help: "The target's declared input source is not US-compatible; key_type refuses unless paste-routed.")
+    var nonUSInputSource: Bool = false
+
     // MARK: - General
 
     @Flag(name: [.short, .long], help: "Enable verbose logging to stderr.")
@@ -296,6 +344,12 @@ struct ClaudeKVMDaemon: AsyncParsableCommand {
         guard VNCRequestMode(rawValue: rfbRequestMode) != nil else {
             throw ValidationError("--rfb-request-mode must be stream or on-demand")
         }
+        if let ttl = clipboardTtlMs {
+            guard clipboardRead else { throw ValidationError("--clipboard-ttl-ms requires --clipboard-read") }
+            guard (1_000...86_400_000).contains(ttl) else {
+                throw ValidationError("--clipboard-ttl-ms must be 1000...86400000")
+            }
+        }
     }
 
     func run() async throws {
@@ -324,6 +378,8 @@ struct ClaudeKVMDaemon: AsyncParsableCommand {
         vncConfig.requestMode = VNCRequestMode(rawValue: rfbRequestMode) ?? .stream
         vncConfig.inputSettleMilliseconds = inputSettleMs
         vncConfig.captureTimeoutMilliseconds = captureTimeoutMs
+        vncConfig.extendedClipboard = !noExtendedClipboard
+        vncConfig.retainClipboard = clipboardRead || pasteUnmappable
 
         let vnc = VNCBridge(config: vncConfig)
         vnc.verbose = verbose
@@ -355,6 +411,8 @@ struct ClaudeKVMDaemon: AsyncParsableCommand {
         ])
 
         let input = InputController(vnc: vnc)
+        input.textRouting = TextRouting(pasteUnmappable: pasteUnmappable,
+                                        usCompatibleInputSource: !nonUSInputSource)
 
         let commandTask = Task { await runCommandLoop(vnc: vnc, input: input, scaling: scaling) }
         // Cancel the owning loop, which unwinds the current input action and

@@ -38,6 +38,10 @@ let
     inherit (target) targetId;
   } // lib.optionalAttrs (target.inputSource != null) {
     inherit (target) inputSource;
+  } // lib.optionalAttrs target.input.pasteUnmappable {
+    input.pasteUnmappable = true;
+  } // lib.optionalAttrs (clipboardPolicy target != { }) {
+    clipboard = clipboardPolicy target;
   } // lib.optionalAttrs (target.daemonPath != null || nativePath != null) {
     daemonPath = if target.daemonPath != null then target.daemonPath else nativePath;
   } // lib.optionalAttrs (target.hostHelper != null) {
@@ -47,6 +51,12 @@ let
     } // lib.optionalAttrs (target.hostHelper.mapping != null) {
       mapping = lib.filterAttrs (_: value: value != null) target.hostHelper.mapping;
     };
+  };
+  # Only non-default clipboard fields reach the broker profile.
+  clipboardPolicy = target: lib.filterAttrs (_: value: value != null) {
+    read = if target.clipboard.read then true else null;
+    extended = if target.clipboard.extended then null else false;
+    inherit (target.clipboard) maxBytes ttlMs;
   };
   brokerConfig = {
     schema = "fruitctl.config.v1";
@@ -137,6 +147,33 @@ let
         default = null;
         example = "com.apple.keylayout.US";
         description = "Optional declared target input source, as a HIToolbox source ID or layout name. `fruitctl doctor --macos` warns input_source_mismatch when the target's selected source differs.";
+      };
+      input.pasteUnmappable = lib.mkOption {
+        type = lib.types.bool;
+        default = false;
+        description = "D29 paste routing: key_type pastes text the target's keymap cannot type (save the clipboard, set the text, Cmd+V, restore it) and journals it as a paste. Never used for type_secret. With a declared non-US inputSource every printable character is pasted; without this option such a target refuses key_type as input_source_not_us.";
+      };
+      clipboard = {
+        read = lib.mkOption {
+          type = lib.types.bool;
+          default = false;
+          description = "Allow clipboard_read (D8). Off by default. Text containing a declared secret, such as the VNC credential, is withheld.";
+        };
+        maxBytes = lib.mkOption {
+          type = lib.types.nullOr (lib.types.ints.between 1 1048576);
+          default = null;
+          description = "Longest clipboard_read text returned, in UTF-8 bytes; longer text is truncated. Unset keeps 16384.";
+        };
+        ttlMs = lib.mkOption {
+          type = lib.types.nullOr (lib.types.ints.between 1000 86400000);
+          default = null;
+          description = "clipboard_read refuses text older than this. Requires clipboard.read.";
+        };
+        extended = lib.mkOption {
+          type = lib.types.bool;
+          default = true;
+          description = "Advertise ExtendedClipboard for UTF-8 clipboard text. False keeps legacy Latin-1 cut text only.";
+        };
       };
       credentialFile = lib.mkOption {
         type = lib.types.nullOr lib.types.str;
@@ -296,7 +333,7 @@ in {
         { assertion = cfg.bridgeSocketPath == null || absolute cfg.bridgeSocketPath; message = "Fruitctl bridgeSocketPath must be an absolute remote path when supplied."; }
         { assertion = cfg.bridgeCommand == "fruitctl" || absolute cfg.bridgeCommand; message = "Fruitctl bridgeCommand must be fruitctl or an absolute executable path."; }
         { assertion = isDarwin || (cfg.bridgeHost != null && cfg.bridgeHost != "" && !(lib.hasPrefix "-" cfg.bridgeHost) && !(lib.hasInfix "\n" cfg.bridgeHost)); message = "Linux Fruitctl requires an existing Darwin bridgeHost SSH alias."; }
-        { assertion = isDarwin || (cfg.nativePackage == null && builtins.all (name: cfg.targets.${name}.targetId == null && cfg.targets.${name}.inputSource == null && cfg.targets.${name}.credentialFile == null && cfg.targets.${name}.credential == null && cfg.targets.${name}.secrets == { } && cfg.targets.${name}.daemonPath == null && cfg.targets.${name}.hostHelper == null && cfg.targets.${name}.vnc.username == "" && cfg.targets.${name}.vnc.host == "127.0.0.1" && cfg.targets.${name}.vnc.port == 15900 && cfg.targets.${name}.vnc.captureTimeoutMs == null) targetNames); message = "Linux declares Fruitctl target names only; configure physical identities, VNC, credentials and native clients on the Darwin bridge."; }
+        { assertion = isDarwin || (cfg.nativePackage == null && builtins.all (name: cfg.targets.${name}.targetId == null && cfg.targets.${name}.inputSource == null && !cfg.targets.${name}.input.pasteUnmappable && clipboardPolicy cfg.targets.${name} == { } && cfg.targets.${name}.credentialFile == null && cfg.targets.${name}.credential == null && cfg.targets.${name}.secrets == { } && cfg.targets.${name}.daemonPath == null && cfg.targets.${name}.hostHelper == null && cfg.targets.${name}.vnc.username == "" && cfg.targets.${name}.vnc.host == "127.0.0.1" && cfg.targets.${name}.vnc.port == 15900 && cfg.targets.${name}.vnc.captureTimeoutMs == null) targetNames); message = "Linux declares Fruitctl target names only; configure physical identities, VNC, credentials and native clients on the Darwin bridge."; }
         { assertion = !isDarwin || builtins.all (name: let target = cfg.targets.${name}; in
             (if target.credential != null then target.credentialFile == null && sourceValid target.credential else absolute target.credentialFile)
             && absolute (if target.daemonPath != null then target.daemonPath else nativePath)) targetNames;
@@ -305,6 +342,7 @@ in {
             (builtins.attrNames cfg.targets.${name}.secrets)) targetNames;
           message = "Fruitctl secrets need ref names of letters, digits, '.', '_' or '-' and a complete provider: file.path absolute, env.name a variable name, command.argv with an absolute executable, or keychain.service and account."; }
         { assertion = builtins.all (name: let helper = cfg.targets.${name}.hostHelper; in helper == null || (helper.sshHost != "" && builtins.length helper.command == 2 && absolute (builtins.head helper.command) && builtins.elemAt helper.command 1 == "--stdio" && (helper.displayId != null || helper.displayUuid != null) && (helper.displayId == null || helper.displayId > 0) && (helper.displayUuid == null || displayUuid helper.displayUuid))) targetNames; message = "Fruitctl hostHelper requires an SSH alias, [ absolute-executable --stdio ] command and a positive displayId or a displayUuid."; }
+        { assertion = builtins.all (name: cfg.targets.${name}.clipboard.ttlMs == null || cfg.targets.${name}.clipboard.read) targetNames; message = "Fruitctl clipboard.ttlMs requires clipboard.read."; }
         { assertion = builtins.all (name: let helper = cfg.targets.${name}.hostHelper; mapping = if helper == null then null else helper.mapping; in mapping == null || (mapping.qualificationReceipt != "" && mapping.displayId == helper.displayId && sameUuid mapping.displayUuid helper.displayUuid && (mapping.scale == null || (mapping.scale >= 1 && mapping.scale <= 8)) && mapping.displayBounds.width > 0 && mapping.displayBounds.height > 0)) targetNames; message = "Fruitctl hostHelper mapping requires its qualification receipt, matching displayId/displayUuid, a scale within 1-8 when set, and positive display bounds."; }
       ];
       home.file = lib.optionalAttrs isDarwin {

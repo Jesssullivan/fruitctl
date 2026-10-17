@@ -277,6 +277,13 @@ struct VNCConfiguration {
     var inputSettleMilliseconds: Int?
     /// `--capture-timeout-ms`: nil selects 10000 ms for an Apple server, else 5000.
     var captureTimeoutMilliseconds: Int?
+    /// Advertise the ExtendedClipboard pseudo-encoding so a server that
+    /// supports it exchanges UTF-8 clipboard text (`--no-extended-clipboard`
+    /// turns it off). Without it only Latin-1 legacy cut text is available.
+    var extendedClipboard: Bool = true
+    /// Keep the target clipboard text in memory. Only clipboard_read and
+    /// paste routing need it; otherwise received cut text is never read.
+    var retainClipboard: Bool = false
 }
 
 /// The fresh full-capture deadline.
