@@ -168,6 +168,8 @@ answers from an earlier image.
 | --- | --- | --- |
 | `screenshot` | `screenshot` | `screenshot` |
 | `left_click`, `right_click`, `middle_click` `{coordinate}` | `click {button, x, y}` (`left`, `right`, `wheel`) | `mouse_click` |
+| `left_click`, `right_click`, `middle_click` `{coordinate, text}` with modifier keys in `text` | | `mouse_click` with `modifiers` |
+| `hold_key {text, duration}` with one key | | `hold_key {key, duration_ms}` |
 | `double_click {coordinate}` | `double_click {x, y}` | `mouse_double_click` |
 | `mouse_move {coordinate}` | `move {x, y}` | `mouse_move` |
 | `left_click_drag {start_coordinate, coordinate}` | `drag {path}` with two points | `mouse_drag` |
@@ -183,14 +185,18 @@ meaning: `ctrl` is Control. `super`, `meta`, `win` and `cmd` are Command, so
 a macOS save is `cmd+s`. Single letters are sent lowercase; use `type` for
 case-sensitive text. `type` always types and never pastes. OpenAI scroll
 deltas are pixels, sent as one wheel tick per 100 pixels (1 to 20 ticks).
-`wait` and `hold_key` durations are seconds, from 0.05 to 10.
+`wait` and `hold_key` durations are seconds, from 0.05 to 10. `hold_key` holds
+one key and releases it before the call returns; a chord is refused. Click
+modifiers (`shift`, `ctrl`, `alt`, `cmd` and their right-hand forms) apply to
+single clicks only; a double click, triple click or scroll with modifiers is
+refused as `unsupported_action` rather than emulated.
 
 Some actions need a backend method that this build may not advertise:
 
 | Alias action | Needs |
 | --- | --- |
 | `triple_click` | `triple_click` |
-| `hold_key`, or a click or scroll with `text` modifiers | `key_down`, `key_up` |
+| `hold_key`, or a click with `text` modifiers | `hold_key` (modifier clicks shipped with it; an older controller would click unmodified) |
 | `cursor_position` | `cursor_position` |
 | `zoom {region}` | `zoom` (a new capture of the region, never a crop of an older image) |
 | OpenAI `drag` with more than two points | `mouse_down`, `mouse_up` |

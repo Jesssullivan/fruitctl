@@ -13,7 +13,7 @@ import { readFrames, writeFrame } from '../lib/broker/protocol.mjs';
 import { BrokerExecutor } from '../lib/broker/client.mjs';
 import { createMcpServer, McpSession } from '../lib/mcp/server.js';
 import { RAW_PRESENTATION, advertisedCapabilities, nativeCapabilities } from '../lib/mcp/capabilities.js';
-import { vncCommandTool } from '../tools/index.js';
+import { vncCommandTool, validateActionParameters } from '../tools/index.js';
 import { translateComputerAction, admitComputerPlan, translateKey, extendedActions,
   BASELINE_ACTIONS, ComputerAliasError, MAX_ALIAS_STEPS } from '../tools/computer-alias.js';
 
@@ -73,15 +73,29 @@ test('Anthropic actions translate to Fruitctl actions with scaled coordinates', 
   assert.deepEqual(steps({ action: 'zoom', region: [0, 0, 100, 50] }), [{ action: 'zoom', x: 0, y: 0, width: 100, height: 50 }]);
   assert.deepEqual(steps({ action: 'wait' }), [{ action: 'wait' }]);
   assert.deepEqual(steps({ action: 'wait', duration: 2 }), [{ action: 'wait', ms: 2000 }]);
+  // hold_key and click modifiers use the native methods (#101), which release
+  // within the same call; no key is ever left held between steps.
   assert.deepEqual(steps({ action: 'hold_key', text: 'shift', duration: 0.5 }),
-    [{ action: 'key_down', key: 'shift' }, { action: 'wait', ms: 500 }, { action: 'key_up', key: 'shift' }]);
-  assert.deepEqual(steps({ action: 'left_click', coordinate: [1, 1], text: 'ctrl+shift' }), [
-    { action: 'key_down', key: 'ctrl' }, { action: 'key_down', key: 'shift' },
-    { action: 'mouse_click', x: 1, y: 1, button: 'left' },
-    { action: 'key_up', key: 'shift' }, { action: 'key_up', key: 'ctrl' },
-  ]);
+    [{ action: 'hold_key', key: 'shift', duration_ms: 500 }]);
+  assert.deepEqual(steps({ action: 'hold_key', text: 'Return', duration: 10 }),
+    [{ action: 'hold_key', key: 'return', duration_ms: 10000 }]);
+  assert.deepEqual(steps({ action: 'left_click', coordinate: [1, 1], text: 'ctrl+shift' }),
+    [{ action: 'mouse_click', x: 1, y: 1, button: 'left', modifiers: ['ctrl', 'shift'] }]);
+  assert.deepEqual(steps({ action: 'right_click', coordinate: [2, 3], text: 'super' }),
+    [{ action: 'mouse_click', x: 2, y: 3, button: 'right', modifiers: ['cmd'] }]);
+  assert.deepEqual(steps({ action: 'middle_click', coordinate: [2, 3], text: 'Alt_R' }),
+    [{ action: 'mouse_click', x: 2, y: 3, button: 'middle', modifiers: ['ralt'] }]);
   assert.equal(translateComputerAction({ action: 'left_click', coordinate: [1, 1], text: 'shift' }).label,
     'left_click with modifiers');
+  assert.equal(translateComputerAction({ action: 'left_click', coordinate: [1, 1] }).label, undefined);
+});
+
+test('translated hold_key and modifier clicks pass the native parameter rules', () => {
+  for (const input of [{ action: 'hold_key', text: 'cmd', duration: 1 },
+    { action: 'left_click', coordinate: [4, 5], text: 'ctrl+alt+shift+cmd' },
+    { action: 'right_click', coordinate: [4, 5], text: 'Shift_R+Control_R' }]) {
+    for (const step of steps(input)) assert.doesNotThrow(() => validateActionParameters(step), JSON.stringify(input));
+  }
 });
 
 test('Anthropic xdotool key strings become Fruitctl taps, combos and sequences', () => {
@@ -159,6 +173,16 @@ test('malformed and unknown alias actions are typed refusals before execution', 
   refusal(() => steps({ action: 'scroll', coordinate: [1, 2], scroll_direction: 'up', scroll_amount: 50 }), 'invalid_arguments', 'scroll');
   refusal(() => steps({ action: 'wait', duration: 30 }), 'invalid_arguments', 'wait');
   refusal(() => steps({ action: 'hold_key', text: 'shift' }), 'invalid_arguments', 'hold_key');
+  refusal(() => steps({ action: 'hold_key', text: 'ctrl+shift', duration: 1 }), 'unsupported_action', 'hold_key');
+  refusal(() => steps({ action: 'left_click', coordinate: [1, 1], text: 'ctrl+a' }), 'invalid_arguments', 'left_click');
+  refusal(() => steps({ action: 'left_click', coordinate: [1, 1], text: 'cmd+super' }), 'invalid_arguments', 'left_click');
+  for (const input of [{ action: 'double_click', coordinate: [1, 1], text: 'shift' },
+    { action: 'triple_click', coordinate: [1, 1], text: 'cmd' },
+    { action: 'scroll', coordinate: [1, 1], scroll_direction: 'down', text: 'shift' }]) {
+    assert.throws(() => steps(input), (error) => error instanceof ComputerAliasError &&
+      error.code === 'unsupported_action' && error.action === input.action &&
+      error.message.includes(`${input.action} with modifiers`));
+  }
   refusal(() => steps({ action: 'type' }), 'invalid_arguments', 'type');
   refusal(() => steps({ action: 'zoom', region: [10, 10, 5, 20] }), 'invalid_arguments', 'zoom');
   refusal(() => steps({ action: 'teleport' }), 'unsupported_action', 'teleport');
@@ -182,10 +206,12 @@ test('D27: a mouse hold never spans tool calls, even when mouse_down is advertis
 test('capability admission refuses unadvertised actions and lights them up when advertised', () => {
   const extended = [
     [{ action: 'triple_click', coordinate: [1, 1] }, ['triple_click'], 'triple_click'],
-    [{ action: 'hold_key', text: 'shift', duration: 1 }, ['key_down', 'key_up'], 'hold_key'],
+    [{ action: 'hold_key', text: 'shift', duration: 1 }, ['hold_key'], 'hold_key'],
     [{ action: 'cursor_position' }, ['cursor_position'], 'cursor_position'],
     [{ action: 'zoom', region: [0, 0, 10, 10] }, ['zoom'], 'zoom'],
-    [{ action: 'left_click', coordinate: [1, 1], text: 'shift' }, ['key_down', 'key_up'], 'left_click with modifiers'],
+    // An older controller ignores `modifiers` and would click unmodified, so a
+    // modifier click needs the input-parity controller that advertises hold_key.
+    [{ action: 'left_click', coordinate: [1, 1], text: 'shift' }, ['hold_key'], 'left_click with modifiers'],
     [{ action: { type: 'drag', path: [{ x: 1, y: 1 }, { x: 2, y: 2 }, { x: 3, y: 3 }] } }, ['mouse_down', 'mouse_up'],
       'drag with a multi-point path'],
   ];
@@ -282,7 +308,7 @@ test('refusals are typed, never reach the executor and cannot attest the indicat
 });
 
 test('advertised extended actions light up without an alias change', async t => {
-  const executor = fakeExecutor({ capabilities: known('triple_click', 'cursor_position', 'key_down', 'key_up'),
+  const executor = fakeExecutor({ capabilities: known('triple_click', 'cursor_position', 'hold_key'),
     handle: action => action.action === 'cursor_position' ? { result: { x: 12, y: 34 } } : undefined });
   const { computer } = await connect(t, executor);
   const triple = await computer({ action: 'triple_click', coordinate: [5, 6] });
@@ -291,10 +317,15 @@ test('advertised extended actions light up without an alias change', async t => 
   assert.ok(cursor.content.some(block => block.text === 'cursor: (12, 34)'));
   assert.equal(cursor.structuredContent.x, 12);
   const held = await computer({ action: 'hold_key', text: 'shift', duration: 0.1 });
-  assert.deepEqual(held.structuredContent, { completed: 3, ...RAW_PRESENTATION,
-    alias: { shape: 'anthropic', action: 'hold_key', actions: ['key_down', 'wait', 'key_up'] } });
-  assert.deepEqual(executor.batches.map(batch => batch.map(step => step.action)),
-    [['triple_click'], ['cursor_position'], ['key_down', 'wait', 'key_up']]);
+  assert.notEqual(held.isError, true);
+  assert.deepEqual(held.structuredContent, { detail: 'OK', ...RAW_PRESENTATION,
+    alias: { shape: 'anthropic', action: 'hold_key', actions: ['hold_key'] } });
+  const modified = await computer({ action: 'left_click', coordinate: [7, 8], text: 'cmd' });
+  assert.notEqual(modified.isError, true);
+  assert.deepEqual(executor.batches, [
+    [{ action: 'triple_click', x: 5, y: 6 }], [{ action: 'cursor_position' }],
+    [{ action: 'hold_key', key: 'shift', duration_ms: 100 }],
+    [{ action: 'mouse_click', x: 7, y: 8, button: 'left', modifiers: ['cmd'] }]]);
 });
 
 test('a failing step reports progress, the failed index and a typed code', async t => {
