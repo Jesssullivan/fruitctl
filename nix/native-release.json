@@ -1,22 +1,22 @@
 {
   "schema": "fruitctl.nix-native-release.v1",
-  "version": "0.1.0-alpha.10",
-  "tag": "v0.1.0-alpha.10",
+  "version": "0.1.0-alpha.11",
+  "tag": "v0.1.0-alpha.11",
   "repository": "xoxd-ai/fruitctl",
-  "sourceRevision": "a80d40a5b27f4917200f8248f813605f5c2c1fea",
-  "nativeSourceTreeSha256": "eb16b333e603e9c8555b63e3705dfce16efc4aec680315e3329c4fd2bdfbf5b7",
+  "sourceRevision": "142743262d3242775f210c9d62a6b8e423c3ce5a",
+  "nativeSourceTreeSha256": "0ff4e160d436c885536c6228f238ad3f63f604c6b0df619ede6a1b5a3967a0f0",
   "runtimeArchive": {
-    "name": "fruitctl-v0.1.0-alpha.10-darwin-arm64.tar.gz",
-    "url": "https://github.com/xoxd-ai/fruitctl/releases/download/v0.1.0-alpha.10/fruitctl-v0.1.0-alpha.10-darwin-arm64.tar.gz",
-    "sha256": "2282c4019b171f13455f420db0d6b71f9e62ed3a3fe2de47b0884df9338879ae",
-    "hash": "sha256-IoLEAZsXHxNFX0INsNa3H55i7To/4t5HsIhN+TOIea4=",
-    "bytes": 45559891
+    "name": "fruitctl-v0.1.0-alpha.11-darwin-arm64.tar.gz",
+    "url": "https://github.com/xoxd-ai/fruitctl/releases/download/v0.1.0-alpha.11/fruitctl-v0.1.0-alpha.11-darwin-arm64.tar.gz",
+    "sha256": "b00f1388e38acd9ae21c8b0620abf1af0b66359d73f8fbdf473084db0923475c",
+    "hash": "sha256-sA8TiOOKzZriHIsGIKvxrwtmNZ1z+PvfRzCE2wkjR1w=",
+    "bytes": 45560227
   },
-  "releaseManifestSha256": "7980c3bd2ddaf41923b3377d6a7d4e9e453da5500dd20e926620c06ebd07eb73",
+  "releaseManifestSha256": "4a6f6b5af7bd3ede354f246eccea0035440bd7f3097c735a2e9cd2ac83a688c2",
   "controller": {
     "archivePath": "bin/claude-kvm-daemon",
-    "sha256": "f6f13777bdeaf6bd25376f931eff757b88bcc51ce4eb54ddfe9d614c663ad9d2",
-    "bytes": 7532304,
+    "sha256": "f6a52f4385d7689ed36f4678807b5984859a7f0c8d614fbb98a66bc629740621",
+    "bytes": 7532432,
     "mode": 493,
     "architecture": "arm64",
     "minimumMacOS": "15.0",
@@ -26,22 +26,22 @@
   },
   "notarization": {
     "status": "Accepted",
-    "submissionId": "3b762b87-c109-4093-a3a3-a6a0b170a24b",
+    "submissionId": "ed81cbd8-3a8c-4113-a1c3-455a4781c5c5",
     "stapled": false,
     "evidenceKind": "original-submission",
-    "notarizationReceiptSha256": "0f44a02cbdc8a9096c4b3276ee7352330413abe601ba132490d806c8f395c8c2",
-    "archiveReceiptSha256": "1efea7c69b052a32808f202ab4506e8c0bd307f643c3c161d4a4b08abe04051d",
-    "signReceiptSha256": "c198873d68accd7404a0eac2a3341f353f29bc3ba4022072f7f254493dc94935",
-    "submittedArchiveSha256": "f3c3f1f4ab76d8c86f7d30154e7e6707f0571ae425096f9389161c0b225c5401",
+    "notarizationReceiptSha256": "443b5f61c46e525e9d003034cc573ac7c25399f044d82b68cf728452dd658c89",
+    "archiveReceiptSha256": "168797f84309739ad67737991c8d0628aee94bb4c9dc8ee36d00fd2345c00318",
+    "signReceiptSha256": "4ed7578e89c33fbb76c78a11a29fd2ab041cd5463bf59ebabe5f9a3e4e82d821",
+    "submittedArchiveSha256": "384fd738e7b268c9668b67f07a849d79b50a617f56ba3b771d7a9818b135db1a",
     "newSubmissions": 1,
     "scope": "controller-submission-zip-only",
     "wholeRuntimeNotarized": false
   },
   "correspondingSource": {
-    "name": "fruitctl-v0.1.0-alpha.10-corresponding-source.tar.gz",
-    "url": "https://github.com/xoxd-ai/fruitctl/releases/download/v0.1.0-alpha.10/fruitctl-v0.1.0-alpha.10-corresponding-source.tar.gz",
-    "sha256": "7b96494363d4d98df5a3e101fa4d5655250cbc3fef007872b4a36d3eda80af24",
-    "bytes": 168227714
+    "name": "fruitctl-v0.1.0-alpha.11-corresponding-source.tar.gz",
+    "url": "https://github.com/xoxd-ai/fruitctl/releases/download/v0.1.0-alpha.11/fruitctl-v0.1.0-alpha.11-corresponding-source.tar.gz",
+    "sha256": "5f12b0c8607c8390214e94886b3b5b15d1485580bef0009f45ae1f150486e57a",
+    "bytes": 168231562
   },
   "noticeFiles": {
     "LICENSE": {
@@ -78,15 +78,15 @@
     }
   },
   "verifiedScopes": {
-    "nativeXCTestCount": 237,
+    "nativeXCTestCount": 240,
     "nativeXCTestScope": "release-build-before-signing",
-    "nativeXCTestControllerSha256": "5dbdecd4fa81cd9d1767b0d0d716e556f62787a5e13bb2d13b3996c95eb80bb5",
+    "nativeXCTestControllerSha256": "a67106db18ab04258f4147790338fda5d70f9b7d17b7a809f5b29c6575a2af30",
     "nativeXCTestGroups": {
       "FruitctlHostTests": 102,
       "NativeBehaviorTests": 65,
-      "VNCReconnectTests": 70
+      "VNCReconnectTests": 73
     },
-    "nativeLoopbackRfbScenarios": 14,
+    "nativeLoopbackRfbScenarios": 16,
     "signedControllerLoopbackRfb": true,
     "runtimeArchiveFilesAndModes": true,
     "signedBinaryPrivacy": false,
@@ -105,96 +105,96 @@
   },
   "nativeSourceProvenance": {
     "mode": "strict",
-    "testedSourceTreeSha256": "eb16b333e603e9c8555b63e3705dfce16efc4aec680315e3329c4fd2bdfbf5b7",
-    "publicNativeSourceTreeSha256": "eb16b333e603e9c8555b63e3705dfce16efc4aec680315e3329c4fd2bdfbf5b7",
+    "testedSourceTreeSha256": "0ff4e160d436c885536c6228f238ad3f63f604c6b0df619ede6a1b5a3967a0f0",
+    "publicNativeSourceTreeSha256": "0ff4e160d436c885536c6228f238ad3f63f604c6b0df619ede6a1b5a3967a0f0",
     "nativeInputPaths": 51,
     "selectedBinaries": [
       "claude-kvm-daemon"
     ],
-    "originalBuildReceiptSha256": "bf477cc84cefb3ef905a949bde22d3e35291b014ff72f5c206456f67556e341c",
+    "originalBuildReceiptSha256": "ba7b06b60c45f6074655bf5e76fcb6e6966e813fe11be1e8f5a6b07b3cfbedc8",
     "nativeInputManifestSha256": "9795dbaeb77e8d7d381a506c985f1c178e5ae01defe529a0e4dd41d1555bc774",
-    "canonicalSourceRevision": "a80d40a5b27f4917200f8248f813605f5c2c1fea"
+    "canonicalSourceRevision": "142743262d3242775f210c9d62a6b8e423c3ce5a"
   },
   "qualification": {
     "status": "published-preview-with-scoped-acceptance",
     "publicRelease": {
       "status": "passed",
       "releaseIdentity": {
-        "id": 415433088,
-        "tag": "v0.1.0-alpha.10",
-        "publishedAt": "2026-10-16T22:32:35Z",
-        "url": "https://github.com/xoxd-ai/fruitctl/releases/tag/v0.1.0-alpha.10",
-        "producerSourceRevision": "a80d40a5b27f4917200f8248f813605f5c2c1fea",
-        "tagTarget": "a80d40a5b27f4917200f8248f813605f5c2c1fea",
-        "tagKind": "lightweight",
+        "id": 415488441,
+        "tag": "v0.1.0-alpha.11",
+        "publishedAt": "2026-10-17T00:29:34Z",
+        "url": "https://github.com/xoxd-ai/fruitctl/releases/tag/v0.1.0-alpha.11",
+        "producerSourceRevision": "142743262d3242775f210c9d62a6b8e423c3ce5a",
+        "tagTarget": "142743262d3242775f210c9d62a6b8e423c3ce5a",
+        "tagKind": "signed-annotated",
         "draft": false,
         "prerelease": true
       },
-      "releaseManifestSha256": "7980c3bd2ddaf41923b3377d6a7d4e9e453da5500dd20e926620c06ebd07eb73",
-      "checksumsSha256": "ad17bca503140be39dcafda332712b0327503fdb195a8c94944ee7135df18e2d",
-      "producerBindingSha256": "061a7cdb8a240e31b3c5d9ecc76b3d7bec620408d05a70e8b81fec98ee5b4dec",
+      "releaseManifestSha256": "4a6f6b5af7bd3ede354f246eccea0035440bd7f3097c735a2e9cd2ac83a688c2",
+      "checksumsSha256": "6a2faa5f139da3dab42f99f551af03e32095a8a1b48fc40beef589fb15ebd46f",
+      "producerBindingSha256": "03501ad4c6ae4044f15000be6f04080a72d803d978632f0bd28eaad9d4c31ab7",
       "assetCount": 13,
       "assets": {
         "SHA256SUMS": {
           "bytes": 623,
-          "sha256": "ad17bca503140be39dcafda332712b0327503fdb195a8c94944ee7135df18e2d"
+          "sha256": "6a2faa5f139da3dab42f99f551af03e32095a8a1b48fc40beef589fb15ebd46f"
         },
         "fruitctl-release.json": {
           "bytes": 1783,
-          "sha256": "7980c3bd2ddaf41923b3377d6a7d4e9e453da5500dd20e926620c06ebd07eb73"
+          "sha256": "4a6f6b5af7bd3ede354f246eccea0035440bd7f3097c735a2e9cd2ac83a688c2"
         },
-        "fruitctl-v0.1.0-alpha.10-corresponding-source.tar.gz": {
-          "bytes": 168227714,
-          "sha256": "7b96494363d4d98df5a3e101fa4d5655250cbc3fef007872b4a36d3eda80af24"
+        "fruitctl-v0.1.0-alpha.11-corresponding-source.tar.gz": {
+          "bytes": 168231562,
+          "sha256": "5f12b0c8607c8390214e94886b3b5b15d1485580bef0009f45ae1f150486e57a"
         },
-        "fruitctl-v0.1.0-alpha.10-darwin-arm64.tar.gz": {
-          "bytes": 45559891,
-          "sha256": "2282c4019b171f13455f420db0d6b71f9e62ed3a3fe2de47b0884df9338879ae"
+        "fruitctl-v0.1.0-alpha.11-darwin-arm64.tar.gz": {
+          "bytes": 45560227,
+          "sha256": "b00f1388e38acd9ae21c8b0620abf1af0b66359d73f8fbdf473084db0923475c"
         },
-        "fruitctl-v0.1.0-alpha.10-darwin-arm64.tar.gz.receipt.json": {
+        "fruitctl-v0.1.0-alpha.11-darwin-arm64.tar.gz.receipt.json": {
           "bytes": 468790,
-          "sha256": "9980233b5fbc80ad8d9e7e8eb786103669916681b0f1e470aa4dee484ea8e48a"
+          "sha256": "7e9f480bdc812945b707d1270496740a678f9a5eb5d6a016a7f7ceb431f493c7"
         },
-        "fruitctl-v0.1.0-alpha.10-linux-arm64.tar.gz": {
-          "bytes": 47252760,
-          "sha256": "d2f2dbd2ec9f27fb5034f6365f1cfab0ecc8e5771a25f5ca4e9586c931d1ac5b"
+        "fruitctl-v0.1.0-alpha.11-linux-arm64.tar.gz": {
+          "bytes": 47252759,
+          "sha256": "7ff89b144572357576172e8355556e68234edf8b134803810fb16fe47dbd465b"
         },
-        "fruitctl-v0.1.0-alpha.10-linux-arm64.tar.gz.receipt.json": {
+        "fruitctl-v0.1.0-alpha.11-linux-arm64.tar.gz.receipt.json": {
           "bytes": 468689,
-          "sha256": "cf72feddb9bbaccfb24b81ed67ede893fcc4b779eccac8f8d298b1d278b3efb1"
+          "sha256": "6e261288d945a766e347f5d2be946ae0e496930cfe1122e9a5ed2564e42fb19c"
         },
-        "fruitctl-v0.1.0-alpha.10-linux-x64.tar.gz": {
+        "fruitctl-v0.1.0-alpha.11-linux-x64.tar.gz": {
           "bytes": 47527660,
-          "sha256": "6e885bc973a4f000b51223da094beeaa45494e7c3fa019585040563503be438f"
+          "sha256": "4551e5153d1a4139f76640e92098d8e779bf662de3ad5d9f8efcc6c9c0839944"
         },
-        "fruitctl-v0.1.0-alpha.10-linux-x64.tar.gz.receipt.json": {
+        "fruitctl-v0.1.0-alpha.11-linux-x64.tar.gz.receipt.json": {
           "bytes": 468681,
-          "sha256": "8ea60c9d5939f37a7ce10c336fb554ea46f5e49c556f125f37cc3acf124f4007"
+          "sha256": "81fad5a08178eeda23b9e01c1a1a6d5a25982d20e3136d2c0a756b24f587b24f"
         },
         "node-v24.21.0.tar.xz": {
           "bytes": 57357488,
           "sha256": "a6f54defb6fd7c84f41dba13d61e78e9b4e0961712cf61f29715c05f5ced94fc"
         },
         "producer-binding.json": {
-          "bytes": 10018,
-          "sha256": "061a7cdb8a240e31b3c5d9ecc76b3d7bec620408d05a70e8b81fec98ee5b4dec"
+          "bytes": 10084,
+          "sha256": "03501ad4c6ae4044f15000be6f04080a72d803d978632f0bd28eaad9d4c31ab7"
         },
         "runtime-source-inventory.json": {
           "bytes": 36538,
-          "sha256": "59b489939970ba293c842ce5b490c457c3b87944a1c1560c11b9a0e346db4a79"
+          "sha256": "d693624c88b5e4660602895d64c8548a6e9b43d3e591710b18be47ef6763669b"
         },
         "source-package-receipt.json": {
           "bytes": 12860,
-          "sha256": "e628c8a37610463d2b7ae0c2a56ddaf97777a8fc5fcc413d51b66416abbad7c5"
+          "sha256": "8947ace66dc7ff1f06dc975078915c9c5010d63eba206e9456a546217a80ac79"
         }
       },
       "scope": "published-github-prerelease-metadata-and-server-upload-digests"
     },
     "anonymousReadback": {
       "status": "passed",
-      "checkedAt": "2026-10-16T22:34:42Z",
-      "tag": "v0.1.0-alpha.10",
-      "sourceRevision": "a80d40a5b27f4917200f8248f813605f5c2c1fea",
+      "checkedAt": "2026-10-17T00:30:08Z",
+      "tag": "v0.1.0-alpha.11",
+      "sourceRevision": "142743262d3242775f210c9d62a6b8e423c3ce5a",
       "anonymous": true,
       "assetCount": 13,
       "allPublishedAssetsByteVerified": true,
