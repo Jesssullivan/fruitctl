@@ -2,6 +2,7 @@
 """Explicit Apple signing phases. Never discover credentials, launch an app, or publish."""
 import argparse
 import hashlib
+import importlib.util
 import io
 import json
 from pathlib import Path
@@ -113,6 +114,82 @@ def metadata(app, team, certificate_sha1=None):
     return result
 
 
+HOST = "FruitctlHost.app"
+
+
+def native_release():
+    # The release consumer's own ZIP map, so producer and verifier cannot drift.
+    spec = importlib.util.spec_from_file_location("native_release", Path(__file__).with_name("native_release.py"))
+    module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
+    return module
+
+
+def signature_readback(app, signed):
+    """Strict signature, pinned leaf and the actual designated requirement."""
+    expected = signed["signature"]
+    signature = metadata(app, expected["teamIdentifier"], expected.get("certificateSha1"))
+    require(signature["identifier"] == expected.get("identifier"), "signed identifier changed")
+    lines = run(["codesign", "--display", "--requirements", "-", app]).splitlines()
+    requirements = [line[len("designated => "):] for line in lines if line.startswith("designated => ")]
+    require(len(requirements) == 1 and 'identifier "' + signature["identifier"] + '"' in requirements[0]
+            and signature["teamIdentifier"] in requirements[0], "designated requirement must name the signed identity")
+    require(not (app / "Contents/embedded.provisionprofile").exists(), "unexpected provisioning profile")
+    return {"identifier": signature["identifier"], "team": signature["teamIdentifier"],
+            "designatedRequirement": requirements[0], "strictVerification": True,
+            "certificatePinValidatedByStockSignReceipt": signature["certificateSha1"]}
+
+
+def distribute(args):
+    """Archive the stapled Host, prove the ticket survives extraction, and assess it."""
+    app = app_path(args.app)
+    require(app.name == HOST, "distribute is the Host app phase; a bare controller ships its Accepted ZIP")
+    raw = {key: Path(value).read_bytes() for key, value in (("sign", args.sign_receipt), ("archive", args.archive_receipt),
+           ("notary", args.notarization_receipt), ("staple", args.staple_receipt))}
+    sha = {key: hashlib.sha256(value).hexdigest() for key, value in raw.items()}
+    signed = parse_receipt(raw["sign"], "fruitctl-apple-sign")
+    archived = parse_receipt(raw["archive"], "fruitctl-apple-submission-archive")
+    accepted = parse_receipt(raw["notary"], "fruitctl-apple-notarization")
+    stapled = parse_receipt(raw["staple"], "fruitctl-apple-staple")
+    apple = accepted.get("apple", {})
+    require(apple.get("status") == "Accepted" and bool(apple.get("id")), "actual Accepted ticket is required")
+    require(archived["signReceiptSha256"] == sha["sign"] and accepted["archiveReceiptSha256"] == sha["archive"]
+            and accepted["submittedArchiveSha256"] == archived["archiveSha256"]
+            and stapled["signReceiptSha256"] == sha["sign"] and stapled["notarizationReceiptSha256"] == sha["notary"]
+            and stapled["submissionId"] == apple["id"], "distribution receipt chain differs")
+    require(signed["appName"] == archived["appName"] == accepted["appName"] == stapled["appName"] == HOST,
+            "receipts name a different app")
+    final = stapled["files"]
+    require(inventory(app) == final, "stapled app differs from its staple receipt")
+    target, extract = Path(args.zip), Path(args.extract_dir)
+    require(target.is_absolute() and not target.exists() and target.suffix == ".zip", "distribution archive must be a new absolute ZIP path")
+    require(extract.is_absolute() and not extract.exists() and extract.parent.resolve(strict=True) == extract.parent,
+            "extraction directory must be a new absolute path under a canonical parent")
+    current = signature_readback(app, signed)
+    run(["ditto", "-c", "-k", "--sequesterRsrc", "--keepParent", app, target])
+    archive_bytes = target.read_bytes()
+    zipped = native_release().zip_map(target, HOST, final)
+    # ZIP payload bytes alone cannot show that the ticket, held in metadata,
+    # survives extraction. Validate and assess the restored copy instead.
+    extract.mkdir(mode=0o700)
+    run(["ditto", "-x", "-k", target, extract])
+    restored = extract / HOST
+    require(restored.is_dir() and not restored.is_symlink() and inventory(restored) == final,
+            "re-extracted Host payload differs from the stapled app")
+    run(["xcrun", "stapler", "validate", restored])
+    restored_signature = signature_readback(restored, signed)
+    require(restored_signature == current, "re-extracted signature identity differs")
+    assessment = run(["spctl", "--assess", "--type", "execute", "--verbose=4", restored])
+    require(inventory(app) == final and target.read_bytes() == archive_bytes, "Host or archive changed during distribution")
+    write_receipt(args.receipt, {"kind": "fruitctl-private-stapled-host-distribution", "appName": HOST,
+        "archiveSha256": hashlib.sha256(archive_bytes).hexdigest(), "archiveBytes": len(archive_bytes),
+        "actualPostStapleFiles": final, "archivePayloadAndMetadataValidation": zipped,
+        "signReceiptSha256": sha["sign"], "submissionArchiveReceiptSha256": sha["archive"],
+        "submittedArchiveSha256": archived["archiveSha256"], "acceptedNotarizationReceiptSha256": sha["notary"],
+        "submissionId": apple["id"], "stapleReceiptSha256": sha["staple"],
+        "currentSignature": current, "reextractedSignature": restored_signature, "reextractedTicketValidated": True,
+        "actualGatekeeperAssessment": {"numericExit": 0, "output": assessment.strip()}})
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="phase", required=True)
@@ -152,6 +229,15 @@ def main():
     staple.add_argument("--notarization-receipt", required=True)
     staple.add_argument("--archive-receipt", required=True)
     staple.add_argument("--receipt", required=True)
+    dist = commands.add_parser("distribute", help="On PZM: archive the stapled Host, re-extract it, validate the ticket and assess it")
+    dist.add_argument("--app", required=True)
+    dist.add_argument("--sign-receipt", required=True)
+    dist.add_argument("--archive-receipt", required=True)
+    dist.add_argument("--notarization-receipt", required=True)
+    dist.add_argument("--staple-receipt", required=True)
+    dist.add_argument("--zip", required=True)
+    dist.add_argument("--extract-dir", required=True)
+    dist.add_argument("--receipt", required=True)
     args = parser.parse_args()
     require(platform.system() == "Darwin", "Apple distribution phases require a Darwin host")
     require(Path(args.receipt).is_absolute() and not Path(args.receipt).exists(), "receipt must be a new absolute path")
@@ -216,6 +302,8 @@ def main():
         write_receipt(args.receipt, {"kind": "fruitctl-apple-submission-archive", "appName": app.name,
                                      "signReceiptSha256": hashlib.sha256(sign_receipt_data).hexdigest(),
                                      **archived})
+    elif args.phase == "distribute":
+        distribute(args)
     elif args.phase == "notarize":
         previous = read_receipt(args.archive_receipt, "fruitctl-apple-submission-archive")
         target = Path(args.zip)
@@ -261,7 +349,8 @@ def main():
 if __name__ == "__main__":
     try:
         main()
-    except (ValueError, OSError, KeyError, TypeError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
+    except (ValueError, OSError, KeyError, TypeError, zipfile.BadZipFile, subprocess.CalledProcessError,
+            subprocess.TimeoutExpired) as error:
         # Avoid reproducing command arguments/output from credential-bearing tools.
         print("Apple distribution phase failed: " + (str(error) if not isinstance(error, (subprocess.CalledProcessError, subprocess.TimeoutExpired))
                                                        else "external tool returned a failure"), file=sys.stderr)

@@ -1,0 +1,147 @@
+// SPDX-License-Identifier: MIT
+// Offline checks of the attended overlay exclusion gate with synthetic frames.
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { deflateSync } from 'node:zlib';
+import { scene } from './qualification/scene.mjs';
+import { overlaySignature, controlAnchored, runGate, OVERLAY_RGB } from '../scripts/qualification/overlay_exclusion_gate.mjs';
+
+const runId = '0123456789abcdef0123456789abcdef';
+const width = 960, height = 640;
+
+function chunk(type, payload) {
+  const bytes = Buffer.alloc(payload.length + 12);
+  bytes.writeUInt32BE(payload.length); bytes.write(type, 4); payload.copy(bytes, 8);
+  bytes.writeUInt32BE(scene.crc32(bytes.subarray(4, -4)), bytes.length - 4); return bytes;
+}
+function png({ width: w, height: h, pixels }) {
+  const header = Buffer.alloc(13); header.writeUInt32BE(w); header.writeUInt32BE(h, 4); header[8] = 8; header[9] = 6;
+  const rows = Buffer.alloc((w * 4 + 1) * h);
+  for (let y = 0; y < h; y++) Buffer.from(pixels.buffer, pixels.byteOffset + y * w * 4, w * 4).copy(rows, y * (w * 4 + 1) + 1);
+  return Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), chunk('IHDR', header),
+    chunk('IDAT', deflateSync(rows)), chunk('IEND', Buffer.alloc(0))]);
+}
+const fixture = (sequence = 1) => ({ width, height, pixels: scene.renderPixels({ width, height, runId, sequence }) });
+
+// HostRenderer.swift's feathered edges at scale 1, at a given heartbeat opacity.
+function withOverlay(frame, opacity = 0.48) {
+  const pixels = Uint8Array.from(frame.pixels);
+  const feather = Math.min(160, Math.max(80, Math.min(frame.width, frame.height) * 0.13));
+  const stops = [[0, 0.94], [0.10, 0.72], [0.42, 0.24], [0.76, 0.035], [1, 0]];
+  const alphaAt = distance => {
+    const t = distance / feather; if (t >= 1) return 0;
+    const i = stops.findIndex(([location]) => location > t);
+    const [l0, a0] = stops[i - 1], [l1, a1] = stops[i];
+    return a0 + (a1 - a0) * (t - l0) / (l1 - l0);
+  };
+  for (let y = 0; y < frame.height; y++) for (let x = 0; x < frame.width; x++) {
+    if (Math.min(x, y, frame.width - 1 - x, frame.height - 1 - y) >= feather) continue;
+    const offset = (y * frame.width + x) * 4;
+    for (const distance of [x, frame.width - 1 - x, y, frame.height - 1 - y]) {
+      const alpha = alphaAt(distance) * opacity;
+      for (let c = 0; c < 3; c++) pixels[offset + c] = Math.round(pixels[offset + c] + (OVERLAY_RGB[c] - pixels[offset + c]) * alpha);
+    }
+  }
+  return { ...frame, pixels };
+}
+const overlaid = withOverlay(fixture()), controlPNG = png(overlaid);
+function halfScale(frame) {
+  const w = frame.width / 2, h = frame.height / 2, pixels = new Uint8Array(w * h * 4);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) for (let c = 0; c < 4; c++) {
+    const at = (dx, dy) => frame.pixels[((2 * y + dy) * frame.width + 2 * x + dx) * 4 + c];
+    pixels[(y * w + x) * 4 + c] = Math.round((at(0, 0) + at(1, 0) + at(0, 1) + at(1, 1)) / 4);
+  }
+  return { width: w, height: h, pixels };
+}
+
+test('detector: clean and rescaled fixture frames carry no overlay signature', () => {
+  assert.equal(overlaySignature(fixture()).tinted, 0);
+  // Scaling mixes cyan markers with neutrals; that must never read as purple.
+  assert.equal(overlaySignature(halfScale(fixture())).tinted, 0);
+});
+
+test('detector: the Host overlay is found on every side, even at the dimmest heartbeat', () => {
+  for (const frame of [overlaid, halfScale(overlaid)]) {
+    const signature = overlaySignature(frame);
+    assert.ok(controlAnchored(signature), JSON.stringify(signature.sides));
+    assert.ok(signature.tinted > 0);
+  }
+});
+
+test('detector: a faint interior leak is located, not only the edge ring', () => {
+  const frame = fixture();
+  for (let y = 100; y < 120; y++) for (let x = 600; x < 640; x++) {
+    const offset = (y * width + x) * 4, alpha = 0.2;
+    for (let c = 0; c < 3; c++) frame.pixels[offset + c] = Math.round(frame.pixels[offset + c] * (1 - alpha) + OVERLAY_RGB[c] * alpha);
+  }
+  const signature = overlaySignature(frame);
+  assert.equal(signature.tinted, 800);
+  assert.deepEqual(signature.bounds, { x: 600, y: 100, width: 40, height: 20 });
+  assert.ok(!controlAnchored(signature));
+});
+
+const hostLabels = { route: 'host', indicator: 'present', capture_backend: 'owned_sck',
+  raw_vnc_exclusion: false, overlay_ready: true, capture_enabled: true };
+const shot = (frame, labels = hostLabels) => ({ content: [{ type: 'image', mimeType: 'image/png', data: png(frame).toString('base64') }],
+  structuredContent: labels });
+
+function harness(frames, { latencies = [], control = controlPNG } = {}) {
+  let clock = 0, index = 0;
+  const actions = [];
+  const call = async action => {
+    actions.push(action);
+    if (action === 'health') return { structuredContent: { route: 'host', indicator: 'unknown' } };
+    clock += latencies[index] ?? 50;
+    return frames[index++];
+  };
+  return { actions, options: { call, readControl: async () => control, frames: frames.length, intervalMs: 100,
+    now: () => clock, sleep: async ms => { clock += ms; } } };
+}
+
+test('gate: clean Host frames with an anchored control pass and report latency', async () => {
+  const { options, actions } = harness(Array.from({ length: 5 }, (_, i) => shot(fixture(i + 1))),
+    { latencies: [40, 60, 80, 100, 300] });
+  const result = await runGate(options);
+  assert.equal(result.status, 'passed');
+  assert.equal(result.framesCaptured, 5);
+  assert.deepEqual([result.latency.p50, result.latency.p95, result.latency.max], [80, 300, 300]);
+  assert.deepEqual(actions, ['health', 'screenshot', 'screenshot', 'screenshot', 'screenshot', 'screenshot']);
+});
+
+test('gate: the first frame showing the overlay fails and stops the series', async () => {
+  const frames = [shot(fixture(1)), shot(fixture(2)), shot(overlaid), shot(fixture(4))];
+  const { options, actions } = harness(frames);
+  const result = await runGate(options);
+  assert.equal(result.status, 'failed');
+  assert.deepEqual([result.failure.number, result.failure.reason], [3, 'overlay_pixels_present']);
+  assert.equal(actions.filter(action => action === 'screenshot').length, 3);
+});
+
+test('gate: a frame not attested as owned Host capture with the indicator present fails', async () => {
+  for (const [key, value] of [['indicator', 'unknown'], ['route', 'raw'], ['raw_vnc_exclusion', true], ['overlay_ready', false]]) {
+    const { options } = harness([shot(fixture(), { ...hostLabels, [key]: value })]);
+    const result = await runGate(options);
+    assert.deepEqual([result.status, result.failure.reason, result.failure.detail], ['failed', 'labels', [key]]);
+  }
+});
+
+test('gate: clean frames without a control showing the overlay are unanchored, not passed', async () => {
+  for (const control of [null, png(fixture())]) {
+    const { options } = harness([shot(fixture())], { control });
+    assert.equal((await runGate(options)).status, 'unanchored');
+  }
+});
+
+test('gate: fewer than 95% of captures within the SLO limit fails on latency', async () => {
+  const frames = Array.from({ length: 10 }, (_, i) => shot(fixture(i + 1)));
+  const { options } = harness(frames, { latencies: [50, 50, 50, 50, 50, 50, 50, 50, 50, 5001] });
+  const result = await runGate(options);
+  assert.deepEqual([result.status, result.failure.reason, result.latency.withinLimit], ['failed', 'latency', 9]);
+});
+
+test('gate: a refused capture fails without decoding an image', async () => {
+  const { options } = harness([{ isError: true, content: [{ type: 'text', text: 'Error' }],
+    structuredContent: { error: { message: 'screen_capture_permission_required' }, route: 'host', indicator: 'unknown' } }]);
+  const result = await runGate(options);
+  assert.deepEqual([result.status, result.failure.reason], ['failed', 'capture_failed']);
+});

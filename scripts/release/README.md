@@ -100,6 +100,13 @@ The Apple rail uses `apple_distribution.py` phases in order:
    submission ID are required; failed submissions are not retried automatically.
 4. `staple` on PZM requires the unchanged signed app and complete receipt chain,
    staples the actual accepted ticket and verifies the final signature.
+5. `distribute` on PZM (Host only) archives the stapled app, re-extracts that
+   ZIP into a new directory, and runs `stapler validate`, the strict signature
+   and designated-requirement readback and `spctl --assess` on the restored
+   copy. Its `fruitctl-private-stapled-host-distribution` receipt records the
+   ZIP's complete payload and AppleDouble map with the same function
+   `write_manifest.py --native-only` uses to check it. A bare controller has no
+   staple or distribution phase; its Accepted submission ZIP is the asset.
 
 The source packager accepts a matching staple receipt when signing changed
 the app's executable bytes, or `--tool-sign-receipt` for the receipt-bound private
@@ -113,3 +120,155 @@ checks exact canonical URLs, asset hashes, safe tar entries, installer files
 and pinned Node bytes/notices. Its result is structural verification. Installer
 execution, Linux/Darwin runtime checks and desktop qualification have their own
 evidence; the installer fails explicitly when no qualifying release exists.
+
+## Host on the release rail
+
+`FruitctlHost.app` comes out of the same `build-native.sh` build as the
+controller, but it ships as its own **native-only** release: one tag carries one
+`fruitctl-release.json`, and `bin/fruitctl-host-install.mjs` accepts only a
+`mode: native-only` manifest with a `FruitctlHost.app` native asset. Choose an
+exact Host tag distinct from the runtime tag (`HOST_TAG` below). Tag it as a
+signed annotated tag, as for runtime releases.
+
+Signing, notarization and publication are operator steps. The commands below
+are the exact sequence. They do not grant Screen Recording or Accessibility,
+launch the Host, or qualify capture exclusion; those remain attended
+qualification (see `FruitctlHost/ATTENDED-QUALIFICATION.md` and
+`scripts/qualification/overlay_exclusion_gate.mjs`).
+
+Variables, on PZM: `B` is the build root of the release cut (it holds `source/`
+at the cut and `build/` from `build-native.sh`). The identity values are the
+controller's, read from the reviewed pin:
+
+```sh
+B=/absolute/build-root/of/the/cut
+HOST_TAG=<exact-host-tag>
+PIN() { /usr/bin/python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["controller"][sys.argv[2]])' "$B/source/nix/native-release.json" "$1"; }
+ID=$(PIN certificateSha1); TEAM=$(PIN developerIDTeam)
+KC="$HOME/Library/Keychains/login.keychain-db"
+AD="$B/source/scripts/release/apple_distribution.py"
+mkdir -m 700 "$B/host" "$B/host-assets"
+```
+
+1. **Private copy (PZM, SSH).** Sign a copy so the tested build output stays
+   byte-identical for the source package:
+
+   ```sh
+   ditto "$B/build/derived/Build/Products/Release/FruitctlHost.app" "$B/host/FruitctlHost.app"
+   ```
+
+2. **Sign (PZM, Aqua `asuser` route, no console keystrokes).** The Developer ID
+   key is usable only inside the Aqua bootstrap namespace; a plain SSH
+   `codesign` fails with `errSecInternalComponent` or "no identity found". Use a
+   host-local `SUDO_ASKPASS` helper that prints PZM's own materialized become
+   password; never place the password in argv or the environment.
+
+   ```sh
+   SUDO_ASKPASS=/absolute/host-local/askpass sudo -A /bin/launchctl asuser "$(id -u)" \
+     sudo -H -u "$(id -un)" /usr/bin/python3 -I -B "$AD" sign \
+       --app "$B/host/FruitctlHost.app" --identity "$ID" --team "$TEAM" \
+       --existing-keychain "$KC" --certificate-sha1 "$ID" \
+       --build-receipt "$B/build/build-receipt.json" --receipt "$B/host-sign-receipt.json"
+   ```
+
+3. **Archive (PZM, SSH).**
+
+   ```sh
+   /usr/bin/python3 -I -B "$AD" archive --app "$B/host/FruitctlHost.app" \
+     --sign-receipt "$B/host-sign-receipt.json" \
+     --zip "$B/host-assets/FruitctlHost-submission.zip" --receipt "$B/host-archive-receipt.json"
+   ```
+
+4. **Notarize (Neo, one submission).** Relay the ZIP, its archive receipt and
+   `apple_distribution.py` to Neo (`scp -3` through the relay seat) and compare
+   SHA-256 on every hop. Use the same `--material-dir` route as the controller,
+   resolving the sops-nix generation path at run time:
+
+   ```sh
+   N=/absolute/notary-dir/on/neo   # holds the three relayed files
+   M=$(/usr/bin/python3 -c 'import os;print(os.path.realpath(os.path.expanduser("~/.config/sops-nix/secrets/infrastructure")))')
+   /usr/bin/python3 -I -B "$N/apple_distribution.py" notarize --zip "$N/FruitctlHost-submission.zip" \
+     --archive-receipt "$N/host-archive-receipt.json" --material-dir "$M" \
+     --receipt "$N/host-notarization-receipt.json"
+   ```
+
+   On a `--wait` timeout do not resubmit; recover the submission ID read-only
+   with `notarytool history`/`info` using the same material. Relay
+   `host-notarization-receipt.json` back to `$B` and compare its hash.
+
+5. **Staple and distribute (PZM, SSH).**
+
+   ```sh
+   /usr/bin/python3 -I -B "$AD" staple --app "$B/host/FruitctlHost.app" \
+     --sign-receipt "$B/host-sign-receipt.json" --archive-receipt "$B/host-archive-receipt.json" \
+     --notarization-receipt "$B/host-notarization-receipt.json" --receipt "$B/host-staple-receipt.json"
+   /usr/bin/python3 -I -B "$AD" distribute --app "$B/host/FruitctlHost.app" \
+     --sign-receipt "$B/host-sign-receipt.json" --archive-receipt "$B/host-archive-receipt.json" \
+     --notarization-receipt "$B/host-notarization-receipt.json" --staple-receipt "$B/host-staple-receipt.json" \
+     --zip "$B/host-assets/FruitctlHost-stapled-distribution.zip" --extract-dir "$B/host-reextracted" \
+     --receipt "$B/host-distribution-receipt.json"
+   ```
+
+6. **Corresponding source (PZM, from `$B/source` at the cut).**
+
+   ```sh
+   cd "$B/source"
+   /usr/bin/python3 -I scripts/release/package_source.py --build-dir "$B/build" \
+     --source-inventory "$B/source-inventory.json" \
+     --binary "$B/host/FruitctlHost.app/Contents/MacOS/FruitctlHost" \
+     --app-sign-receipt "$B/host-sign-receipt.json" --app-archive-receipt "$B/host-archive-receipt.json" \
+     --app-notarization-receipt "$B/host-notarization-receipt.json" \
+     --app-submission-archive "$B/host-assets/FruitctlHost-submission.zip" \
+     --staple-receipt "$B/host-staple-receipt.json" \
+     --output "$B/host-assets/fruitctl-$HOST_TAG-host-corresponding-source.tar.gz" \
+     --receipt "$B/host-source-receipt.json"
+   ```
+
+7. **Native-only manifest and structural verification (PZM).** The input
+   contract names every asset (all beside the manifest) and every original
+   receipt; `sourceRoot`/`buildRoot` are the original roots replaced by portable
+   placeholders in public evidence.
+
+   ```sh
+   /usr/bin/python3 -I - "$B" "$HOST_TAG" <<'PY'
+   import json, sys
+   b, tag = sys.argv[1:]; a = b + "/host-assets/"
+   value = {"kind": "fruitctl-native-release-input", "schemaVersion": 1, "component": "FruitctlHost.app",
+            "archive": a + "FruitctlHost-stapled-distribution.zip", "submissionArchive": a + "FruitctlHost-submission.zip",
+            "sourceArchive": a + "fruitctl-" + tag + "-host-corresponding-source.tar.gz",
+            "sourceRoot": b + "/source", "buildRoot": b + "/build"}
+   for key, name in (("build", "build/build-receipt.json"), ("source", "host-source-receipt.json"),
+                     ("sign", "host-sign-receipt.json"), ("archive", "host-archive-receipt.json"),
+                     ("notary", "host-notarization-receipt.json"), ("staple", "host-staple-receipt.json"),
+                     ("distribution", "host-distribution-receipt.json")):
+       value[key + "Receipt"] = b + "/" + name
+   open(b + "/host-native-input.json", "x").write(json.dumps(value, indent=2) + "\n")
+   PY
+   /usr/bin/python3 -I scripts/release/write_manifest.py --native-only --version "$HOST_TAG" \
+     --native-input "$B/host-native-input.json" --output-dir "$B/host-assets"
+   /usr/bin/python3 -I scripts/verify-release.py "$B/host-assets/fruitctl-release.json" \
+     --assets-dir "$B/host-assets" --native-only
+   ```
+
+8. **File-only install check (PZM, before publication).** Install offline into
+   a scratch parent, run doctor, then uninstall. It launches nothing.
+
+   ```sh
+   mkdir -m 700 "$B/install-check"
+   node bin/fruitctl-host-install.mjs install --version "$HOST_TAG" \
+     --app-path "$B/install-check/FruitctlHost.app" \
+     --manifest-path "$B/host-assets/fruitctl-release.json" \
+     --manifest-sha256 "$(shasum -a 256 "$B/host-assets/fruitctl-release.json" | cut -d' ' -f1)" \
+     --evidence-path "$B/host-assets/native-evidence.json" \
+     --archive-path "$B/host-assets/FruitctlHost-stapled-distribution.zip"
+   node bin/fruitctl-host-install.mjs doctor --app-path "$B/install-check/FruitctlHost.app"
+   node bin/fruitctl-host-install.mjs uninstall --app-path "$B/install-check/FruitctlHost.app"
+   ```
+
+9. **Publish (operator).** Push only the signed annotated `HOST_TAG` and create
+   a prerelease with exactly the files in `$B/host-assets` named by the
+   manifest plus `fruitctl-release.json` and `SHA256SUMS`. Re-run
+   `verify-release.py --native-only` on an anonymous download of every asset,
+   then `fruitctl-host-install install --version "$HOST_TAG"` online on the
+   target. The Home Manager `hostHelper.appPath` default
+   (`~/Applications/FruitctlHost.app`) is the installer's default path.
