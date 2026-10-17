@@ -208,9 +208,9 @@ Health and screenshot results carry `desktop_state`:
 | Field | Values | Refuses input |
 | --- | --- | --- |
 | `sentinel` | `ok`, or `unknown` with `reason` (`not_configured`, `pending`, `stale`, `probe_failed`, `probe_timeout`) | Never on its own |
-| `locked` | `true` for the lock screen or the login window (`console: loginwindow`) | Yes, `-32015` `target_locked` |
+| `locked` | `true` for the lock screen or the login window (`console: loginwindow`) | Yes, `target_locked` |
 | `display_asleep` | `true` when the main display is asleep | Yes, `display_asleep` |
-| `consent_dialog` | `{ owner, kind }` for an on-screen window of a dialog owner, else `null` | Yes, `-32014` `human_consent_required` |
+| `consent_dialog` | `{ owner, kind }` for an on-screen window of a dialog owner, else `null` | Yes, `human_consent_required` |
 | `screen_saver` | `true` while ScreenSaverEngine has a window on screen | No; the first input dismisses it |
 | `secure_input_holder` | Process holding Secure Input, else `null` | No; typed keys may be dropped |
 | `other_input_owner` | `{ owner, evidence }` for another remote desktop host ([below](#one-input-owner-per-mac)), else `null` | No |
@@ -231,7 +231,9 @@ Dialog owners and their `kind`:
 | `CoreServicesUIAgent` | `gatekeeper` | "downloaded from the Internet", unidentified developer |
 | `SoftwareUpdateNotificationManager` | `software_update` | Install and restart countdowns |
 
-Refusal errors carry `data.reason`; `human_consent_required` also carries
+Refusal codes are broker strings, not JSON-RPC numbers (`-32014` is the
+native `clipboard_unavailable`). Refusal errors carry `data.reason`;
+`human_consent_required` also carries
 `data.owner` and `data.kind`, and `target_locked` carries `data.console`
 (`locked` or `loginwindow`). `display_asleep` is the stable D28 code
 ([architecture](architecture.md#display-wake-hold)).

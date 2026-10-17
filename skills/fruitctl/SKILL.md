@@ -55,11 +55,11 @@ the Host route.
 
 macOS dialogs, the lock screen and display sleep can block input. Results
 may carry `desktop_state`, and input is refused before anything is sent when
-one is in the way. Code `-32014` (`human_consent_required`) means a consent or
+one is in the way. Code `human_consent_required` means a consent or
 system dialog is on screen; `data.owner` and `data.kind` name it. Never click,
 type into or dismiss it yourself, and never use a stored secret for it: ask
 the human to answer it, wait, then take a screenshot before continuing. Code
-`-32015` (`target_locked`) means the lock screen or login window: ask the
+`target_locked` means the lock screen or login window: ask the
 human to unlock; never type a password. `display_asleep` means no current
 pixels exist: report it and ask; do not wake the Mac with input.
 

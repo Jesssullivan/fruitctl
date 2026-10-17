@@ -16,7 +16,8 @@ import { parseProbeOutput } from '../lib/install/macos-preflight.mjs';
 import { createBroker, TargetLane } from '../lib/broker/server.mjs';
 import { BrokerExecutor } from '../lib/broker/client.mjs';
 import { McpSession } from '../lib/mcp/server.js';
-import { isPreAdmissionRefusal, HUMAN_CONSENT_REQUIRED_CODE, TARGET_LOCKED_CODE } from '../lib/mcp/capabilities.js';
+import { isPreAdmissionRefusal, HUMAN_CONSENT_REQUIRED_CODE, TARGET_LOCKED_CODE, CLIPBOARD_UNAVAILABLE_CODE,
+  desktopRefusalData } from '../lib/mcp/capabilities.js';
 
 const PNG = Buffer.from('89504e470d0a1a0a0000000d49484452', 'hex').toString('base64');
 const base = await fs.readFile(new URL('./fixtures/desktop-state/pzm-26.7.1-crd-session.txt', import.meta.url), 'utf8');
@@ -53,6 +54,8 @@ test('an on-screen consent window is human_consent_required naming its owner', (
   assert.equal(refusal.code, HUMAN_CONSENT_REQUIRED_CODE);
   assert.deepEqual(refusal.data, { reason: 'human_consent_required', owner: 'UserNotificationCenter', kind: 'system_alert' });
   assert.ok(isPreAdmissionRefusal(refusal), 'nothing was admitted, so the lease survives');
+  // The native controller's -32014 is clipboard_unavailable, never a dialog.
+  assert.equal(desktopRefusalData({ code: CLIPBOARD_UNAVAILABLE_CODE, data: { reason: 'clipboard_unavailable' } }), undefined);
   assert.deepEqual(refusal.responses, []);
   assert.deepEqual(state({ desktop_windows: windows('window|824|8|500|300|1') }).consent_dialog,
     { owner: 'CoreServicesUIAgent', kind: 'gatekeeper' });
@@ -247,7 +250,7 @@ test('without a destination nothing is probed or refused and observations say no
   assert.deepEqual([shot.result.desktop_state.sentinel, shot.result.desktop_state.reason], ['unknown', 'not_configured']);
 });
 
-test('a lock reaches the MCP result as -32015 with its data, through the broker socket', async t => {
+test('a lock reaches the MCP result as target_locked with its data, through the broker socket', async t => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'fruitctl-desk-'));
   t.after(() => fs.rm(dir, { recursive: true, force: true }));
   const socketPath = path.join(dir, 'broker.sock');
