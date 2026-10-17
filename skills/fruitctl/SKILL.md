@@ -51,7 +51,19 @@ reports `input_ready` and `input_settle_remaining_ms`. Code `-32013`
 `mouse_down` outside one `action_queue` batch; see
 [operation](references/operation.md) for the input actions. Code
 `unsupported_on_route` means the action (for example `ax_snapshot`) needs
-the Host route. Inspect the current
+the Host route.
+
+macOS dialogs, the lock screen and display sleep can block input. Results
+may carry `desktop_state`, and input is refused before anything is sent when
+one is in the way. Code `-32014` (`human_consent_required`) means a consent or
+system dialog is on screen; `data.owner` and `data.kind` name it. Never click,
+type into or dismiss it yourself, and never use a stored secret for it: ask
+the human to answer it, wait, then take a screenshot before continuing. Code
+`-32015` (`target_locked`) means the lock screen or login window: ask the
+human to unlock; never type a password. `display_asleep` means no current
+pixels exist: report it and ask; do not wake the Mac with input.
+
+Inspect the current
 image and its scaled coordinates, perform authorized bounded input, and obtain
 a new screenshot to verify the result. OCR, a process health response, or an
 input acknowledgement alone does not prove that the requested desktop change

@@ -49,7 +49,9 @@ Alpha.11 reads the target credential from a private file only. The file,
 command (vault CLI), keychain and environment providers and `type_secret`
 (TIN-6599) are on `main` for the next release; see [secrets](secrets.md).
 Refusing input while a system dialog, lock screen or sleep covers the desktop
-is still in review.
+is also on `main` for the next release; see
+[target profile](target-profile.md#desktop-state-sentinel). Its live detection
+on a physical Mac is not yet qualified.
 
 ### Non-goals
 

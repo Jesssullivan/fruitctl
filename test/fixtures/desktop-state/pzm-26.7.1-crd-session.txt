@@ -1,0 +1,69 @@
+Desktop-state sentinel probe captured read-only from PZM (macOS 26.7.1, Mac mini) on
+2026-10-17 while a Chrome Remote Desktop session was active. Account names, the
+session UUID and kernel device assertions are redacted; nothing else is edited.
+UserNotificationCenter, CoreServicesUIAgent and SoftwareUpdateNotificationManager are
+running with no on-screen window.
+
+
+@@fruitctl-probe console@@
+operator
+
+@@fruitctl-status console 0@@
+
+@@fruitctl-probe ioreg_console@@
+      "IOConsoleLocked" = No
+      "IOConsoleUsers" = ({"kCGSSessionOnConsoleKey"=Yes,"kSCSecuritySessionID"=100002,"kCGSSessionSystemSafeBoot"=No,"kCGSessionLoginDoneKey"=Yes,"kCGSSessionIDKey"=257,"kCGSSessionUserNameKey"="operator","kCGSSessionGroupIDKey"=20,"CGSSessionUniqueSessionUUID"="00000000-0000-0000-0000-000000000000","kCGSessionLongUserNameKey"="Operator","kCGSSessionAuditIDKey"=100002,"kCGSSessionLoginwindowSafeLogin"=No,"kCGSSessionUserIDKey"=501})
+
+@@fruitctl-status ioreg_console 0@@
+
+@@fruitctl-probe secure_input_process@@
+
+@@fruitctl-status secure_input_process 0@@
+
+@@fruitctl-probe pmset_assertions@@
+2026-10-17 16:32:22 -0400 
+Assertion status system-wide:
+   BackgroundTask                 0
+   ApplePushServiceTask           0
+   UserIsActive                   1
+   PreventUserIdleDisplaySleep    1
+   SoftwareUpdateTask             0
+   PreventSystemSleep             0
+   ExternalMedia                  1
+   InternalPreventDisplaySleep    1
+   PreventUserIdleSystemSleep     1
+   NetworkClientActive            0
+Listed by owning process:
+   pid 371(powerd): [0x0000000b00018008] 46:55:15 PreventUserIdleSystemSleep named: "Powerd - Prevent sleep while display is on"  
+   pid 371(powerd): [0x0000000f00088087] 46:55:12 ExternalMedia named: "com.apple.powermanagement.externalmediamounted"  
+   pid 371(powerd): [0x0000000b00098009] 46:55:15 UserIsActive named: "com.apple.powerd.ws.initialize"  
+   pid 371(powerd): [0x0002938800108373] 00:01:26 InternalPreventDisplaySleep named: "com.apple.powermanagement.delayDisplayOff"  
+	Timeout will fire in 214 secs Action=TimeoutActionTurnOff
+   pid 430(WindowServer): [0x00000014000980b0] 00:00:04 UserIsActive named: "com.apple.iohideventsystem.queue.tickle.nxevent service:IOHIDSystem pid:1511 process:remoting_me2me_host"  
+   pid 867(sharingd): [0x000293d400018e30] 00:00:10 PreventUserIdleSystemSleep named: "Handoff"  
+   pid 1511(remoting_me2me_host): [0x000293d300058e2e] 00:00:10 NoDisplaySleepAssertion named: "Remoting session is active"  
+
+@@fruitctl-status pmset_assertions 0@@
+
+@@fruitctl-probe remote_input_processes@@
+read=ok
+/Library/PrivilegedHelperTools/ChromeRemoteDesktopHost.app/Contents/MacOS/remoting_me2me_host
+/System/Library/PrivateFrameworks/CoreParsec.framework/parsecd
+
+@@fruitctl-status remote_input_processes 0@@
+
+@@fruitctl-probe dialog_owners@@
+read=ok
+  824 /System/Library/CoreServices/CoreServicesUIAgent.app/Contents/MacOS/CoreServicesUIAgent
+ 1312 /System/Library/PrivateFrameworks/SoftwareUpdate.framework/Resources/SoftwareUpdateNotificationManager.app/Contents/MacOS/SoftwareUpdateNotificationManager
+ 1925 /System/Library/CoreServices/UserNotificationCenter.app/Contents/MacOS/UserNotificationCenter
+
+@@fruitctl-status dialog_owners 0@@
+
+@@fruitctl-probe desktop_windows@@
+scope=console_user
+displays=ok
+display|2|0|1
+windows=ok
+
+@@fruitctl-status desktop_windows 0@@

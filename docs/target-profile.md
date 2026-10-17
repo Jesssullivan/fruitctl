@@ -127,6 +127,69 @@ controller. If the process list cannot be read, doctor reports
 Apple Screen Sharing is reported separately as `screen_sharing_input_recent`,
 because it may be Fruitctl's own session.
 
+## Desktop-state sentinel
+
+Before each batch that contains input (clicks, moves, scrolls, keys, typing,
+paste, `type_secret`), the broker reads the target's desktop state over SSH and refuses the
+batch if macOS is showing something that would block or capture that input.
+Nothing is sent to the target in that case, and the lease is kept, so the
+agent can retry after a human has dealt with it. A batch with no input
+(`screenshot`, `health` and the other read actions) is never refused or
+delayed; a batch that mixes observation and input is refused as a whole.
+
+```json
+"desktopState": { "ssh": "alex@office-desktop", "enabled": true }
+```
+
+`desktopState.ssh` is optional. Without it the sentinel uses `wake.ssh`, then
+`hostHelper.sshHost`. With none of them, or with `enabled: false`, there is no
+sentinel: every field is `unknown` (`reason: not_configured`) and nothing is
+refused. An explicit invalid `ssh` stops the broker before it opens its socket.
+The SSH account should be the console user: dialog windows and display sleep
+are only readable from the console user's session, and are `unknown`
+otherwise. The lock state is readable by any account.
+
+The probe is one fixed read-only script: `stat` of `/dev/console`,
+`ioreg` IOConsoleUsers, `pmset -g assertions`, a filtered `ps`, and
+`osascript` reading the on-screen windows of a fixed list of dialog-owning
+processes. It reads no window titles and no pixels, sends no input and never
+answers a dialog. A result is cached for about 2 s; a failed probe is cached
+for 10 s so an unreachable target is not re-probed per action. A probe that
+does not answer within 4 s (or the request's deadline) reads as `unknown`.
+
+Health and screenshot results carry `desktop_state`:
+
+| Field | Values | Refuses input |
+| --- | --- | --- |
+| `sentinel` | `ok`, or `unknown` with `reason` (`not_configured`, `pending`, `probe_failed`, `probe_timeout`) | Never on its own |
+| `locked` | `true` for the lock screen or the login window (`console: loginwindow`) | Yes, `-32015` `target_locked` |
+| `display_asleep` | `true` when the main display is asleep | Yes, `display_asleep` |
+| `consent_dialog` | `{ owner, kind }` for an on-screen window of a dialog owner, else `null` | Yes, `-32014` `human_consent_required` |
+| `screen_saver` | `true` while ScreenSaverEngine has a window on screen | No; the first input dismisses it |
+| `secure_input_holder` | Process holding Secure Input, else `null` | No; typed keys may be dropped |
+| `other_input_owner` | `{ owner, evidence }` for another remote desktop host ([below](#one-input-owner-per-mac)), else `null` | No |
+
+Any field can be `unknown`; an unknown field never refuses. When several
+apply, the refusal is the lock first, then display sleep, then the dialog.
+A `wake` hold starts with the lease, so the first input right after it can
+still see the display asleep; take a screenshot and retry once the cache
+(about 2 s) has expired.
+
+Dialog owners and their `kind`:
+
+| Process | `kind` | Typical dialog |
+| --- | --- | --- |
+| `UserNotificationCenter` | `system_alert` | Privacy (TCC) prompts raised by `tccd`, other system alerts |
+| `universalAccessAuthWarn` | `accessibility_consent` | "would like to control this computer using accessibility features" |
+| `SecurityAgent` | `authorization` | Administrator password, keychain access |
+| `CoreServicesUIAgent` | `gatekeeper` | "downloaded from the Internet", unidentified developer |
+| `SoftwareUpdateNotificationManager` | `software_update` | Install and restart countdowns |
+
+Refusal errors carry `data.reason`; `human_consent_required` also carries
+`data.owner` and `data.kind`, and `target_locked` carries `data.console`
+(`locked` or `loginwindow`). `display_asleep` is the stable D28 code
+([architecture](architecture.md#display-wake-hold)).
+
 ## Not covered
 
 - The probe does not read another account's preferences, and it has no sudo.

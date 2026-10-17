@@ -197,6 +197,38 @@ observations of one target, not qualifications.
   warns `remote_management_vnc_control_disabled`
   ([target profile](target-profile.md#remote-management-rfb-control)).
 
+### macOS desktop state before input
+
+macOS can put UI in front of the desktop that an agent cannot act through: a
+privacy (TCC) prompt such as UserNotificationCenter's "tailscaled would like
+to access data from other apps", an administrator or keychain prompt, a
+Gatekeeper prompt, a Software Update countdown, the lock screen or login
+window, a screen saver, or an asleep display. A click or key sent then can be
+eaten, can answer the prompt, or can land somewhere else.
+
+When a target profile has an SSH destination, the broker reads this state
+before each batch that contains input, and refuses the batch, typed, before
+any event is sent. See [target profile](target-profile.md#desktop-state-sentinel)
+for the profile key and the codes. Health and screenshot results carry the
+state as `desktop_state`.
+
+Observed read-only on PZM (macOS 26.7.1) on 2026-10-17:
+
+- `CoreServicesUIAgent`, `SoftwareUpdateNotificationManager` and
+  `UserNotificationCenter` were running for the whole session with no window
+  on screen. A running process is therefore not a dialog. The sentinel counts
+  only an on-screen window owned by one of these processes, read with
+  `CGWindowListCopyWindowInfo` (owner, layer, size; no titles, no pixels).
+- That window list and `CGDisplayIsAsleep` were readable over SSH when the SSH
+  account was the console user.
+- A Chrome Remote Desktop session was active. WindowServer named
+  `remoting_me2me_host` as the source of recent input, and the sentinel
+  reported it as `other_input_owner`.
+
+Detection of a live dialog, lock or asleep display through this path has not
+yet been qualified on a physical target. Each result is one sample, cached for
+about 2 s, so a dialog that appears during a batch is seen by the next one.
+
 ## Agents
 
 | Agent | Adoption surface | Release status |
