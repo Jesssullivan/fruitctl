@@ -16,7 +16,7 @@ import {
   parseScreenSharingOverride, parseRemoteManagementPrefs, parseNaprivs, evaluateObserveOnly,
   parseRemoteManagementMarker, parseConsoleSessions, parseSecureInputProcesses, parsePmsetAssertions, parsePmsetSettings,
   parseDisplays, parseHostApp, parseTcc, sshProbeArguments, validateSshDestination, runProbe,
-  resolvePreflightTarget, macosPreflight, REMOTE_INPUT_OWNERS, TARGET_PROFILE, parseAssertionHolders,
+  resolvePreflightTarget, macosPreflight, bridgedPreflight, REMOTE_INPUT_OWNERS, TARGET_PROFILE, parseAssertionHolders,
   parseRemoteInputProcesses, evaluateRemoteInputOwners, parseTargetProfile, evaluateTargetProfile,
   parseInputSources, evaluateInputSource, describeRemoteManagementPrefs, evaluateVncControl,
   evaluateAllLocalUsersPrivileges,
@@ -788,4 +788,70 @@ test('CLI scopes --macos to doctor and validates the destination before any SSH'
     '--config', '/nonexistent/fruitctl.json']), error => error.code === 1 && /explicit host/.test(error.stderr));
   const { stdout } = await run(process.execPath, [cliPath, '--help']);
   assert.match(stdout, /doctor --macos/);
+});
+
+function bridgeSpawn({ stdout = '', code = 0 } = {}) {
+  const calls = [];
+  const spawnImpl = (command, args, options) => {
+    const child = new EventEmitter();
+    child.stdout = new PassThrough();
+    child.stderr = new PassThrough();
+    child.exitCode = null;
+    child.signalCode = null;
+    calls.push({ command, args, options });
+    setImmediate(() => {
+      child.stderr.end('remote private diagnostic');
+      child.stdout.end(stdout);
+      child.exitCode = code;
+      setImmediate(() => child.emit('close', code));
+    });
+    return child;
+  };
+  return { spawnImpl, calls };
+}
+
+test('a Linux seat routes doctor --macos through its Darwin bridge, which owns the profile', async t => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'fruitctl-preflight-bridge-'));
+  t.after(() => fs.rm(directory, { recursive: true, force: true }));
+  const absent = path.join(directory, 'absent.json');
+  assert.deepEqual(await resolvePreflightTarget({ configPath: absent, target: 'pzm', environmentBridge: 'neo' }),
+    { bridge: 'neo', remoteCommand: 'fruitctl', target: 'pzm' });
+  assert.deepEqual(await resolvePreflightTarget({ configPath: absent, target: 'pzm', targetSsh: 'pzm', environmentBridge: 'neo' }),
+    { destination: 'pzm', route: 'unknown' }, 'an explicit --target-ssh stays a direct probe from this seat');
+  assert.deepEqual(await resolvePreflightTarget({ configPath: absent, target: 'pzm', targetSsh: 'pzm', bridge: 'operator@neo',
+    remoteCommand: '/nix/store/x/bin/fruitctl' }),
+  { bridge: 'operator@neo', remoteCommand: '/nix/store/x/bin/fruitctl', target: 'pzm', targetSsh: 'pzm' });
+  await assert.rejects(resolvePreflightTarget({ configPath: absent, target: 'pzm', bridge: 'neo', remoteCommand: 'fruitctl; id' }),
+    /absolute executable/);
+  await assert.rejects(resolvePreflightTarget({ configPath: absent, target: "pzm'; id", bridge: 'neo' }), /profile identifier/);
+  await assert.rejects(resolvePreflightTarget({ configPath: absent, target: 'pzm', bridge: '-oProxyCommand=sh' }), /explicit host/);
+
+  const remote = { schema: 'fruitctl.macos-preflight.v1', status: 'warn', route: 'raw', failures: [],
+    warnings: [{ code: 'input_source_mismatch', message: 'fixture' }], unknowns: [] };
+  const ok = bridgeSpawn({ stdout: JSON.stringify({ status: 'drift', targetPreflight: remote }), code: 1 });
+  const home = await fs.mkdtemp(path.join(os.tmpdir(), 'fruitctl-preflight-bridge-home-'));
+  t.after(() => fs.rm(home, { recursive: true, force: true }));
+  const result = await doctor({ home, macos: { bridge: 'operator@neo', remoteCommand: '/nix/store/x/bin/fruitctl',
+    target: 'pzm', targetSsh: 'pzm' } }, { bridgeSpawn: ok.spawnImpl });
+  assert.equal(result.status, 'not-installed', 'the local installer result is unchanged');
+  assert.deepEqual(result.targetPreflight, { ...remote, via: 'bridge', bridge: 'operator@neo' });
+  assert.equal(ok.calls.length, 1);
+  const { command, args, options } = ok.calls[0];
+  assert.equal(command, 'ssh');
+  assert.equal(args.at(-2), 'operator@neo');
+  assert.equal(args.at(-1), "'/nix/store/x/bin/fruitctl' 'doctor' '--macos' '--target' 'pzm' '--target-ssh' 'pzm'");
+  assert.ok(args.includes('-oBatchMode=yes') && args.includes('--'));
+  assert.equal(options.stdio[0], 'ignore');
+  assert.ok(Object.keys(options.env).every(key => ['PATH', 'HOME', 'USER', 'LOGNAME', 'SSH_AUTH_SOCK'].includes(key)));
+  assert.ok(!JSON.stringify(result).includes('remote private diagnostic'));
+
+  const outcomes = [[{ code: 255 }, 'preflight_bridge_unreachable'], [{ code: 127 }, 'preflight_bridge_command_missing'],
+    [{ code: 1, stdout: 'Fruitctl: Unknown target profile: pzm' }, 'preflight_bridge_refused'],
+    [{ code: 0, stdout: JSON.stringify({ status: 'configured' }) }, 'preflight_bridge_refused']];
+  for (const [fixture, code] of outcomes) {
+    const failed = await bridgedPreflight({ bridge: 'neo', target: 'pzm' }, { spawnImpl: bridgeSpawn(fixture).spawnImpl });
+    assert.equal(failed.status, 'fail');
+    assert.equal(failed.via, 'bridge');
+    assert.deepEqual(codes(failed.failures), [code]);
+  }
 });

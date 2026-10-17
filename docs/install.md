@@ -350,7 +350,9 @@ foreground relay in a dedicated Linux terminal:
 
 Use the `linux-arm64` prefix instead on an ARM Linux seat. The relay attaches
 to the existing Darwin broker; it supplies neither a VNC profile nor credentials
-on Linux. Its default local socket is `$XDG_RUNTIME_DIR/fruitctl/relay.sock`,
+on Linux. In current source it reconnects a dropped bridge with capped backoff and
+answers agents with typed bridge errors; `--once` exits on the first loss
+instead, and `relay --health` reports its state. Its default local socket is `$XDG_RUNTIME_DIR/fruitctl/relay.sock`,
 or `~/.local/state/fruitctl/relay.sock` when that variable is absent. Broker,
 relay and agent must agree on each local socket: if an existing
 `FRUITCTL_SOCKET_PATH` or explicit `--socket` selects another path, carry that

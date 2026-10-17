@@ -327,11 +327,33 @@ in {
           KeepAlive = false;
         };
       };
+      # Linux shells and doctor find the managed relay and its bridge without
+      # repeating flags. None of these values is a credential.
+      home.sessionVariables = lib.mkIf (!isDarwin) ({
+        FRUITCTL_SOCKET_PATH = cfg.socketPath;
+        FRUITCTL_BRIDGE_HOST = cfg.bridgeHost;
+      } // lib.optionalAttrs (cfg.bridgeCommand != "fruitctl") {
+        FRUITCTL_BRIDGE_COMMAND = cfg.bridgeCommand;
+      });
       systemd.user.services.fruitctl-relay = lib.mkIf (!isDarwin && cfg.enableService) {
-        Unit.Description = "Fruitctl SSH bridge to the Darwin desktop broker";
+        Unit = {
+          Description = "Fruitctl SSH bridge to the Darwin desktop broker";
+          # The relay reconnects its bridge itself with capped backoff. systemd
+          # restarts only a crashed relay, and stops trying after five starts
+          # in five minutes.
+          StartLimitIntervalSec = 300;
+          StartLimitBurst = 5;
+        };
         Service = {
           ExecStart = lib.escapeShellArgs relayArgs;
-          Restart = "no";
+          Restart = "on-failure";
+          RestartSec = "5s";
+          # 3: owned SSH retirement unconfirmed; reconcile the target first.
+          # 78: configuration error that a restart cannot repair.
+          RestartPreventExitStatus = "3 78";
+          # Stopping or restarting reaps the whole unit, so no SSH child of a
+          # former relay outlives it.
+          KillMode = "control-group";
           TimeoutStopSec = "5s";
           UMask = "0077";
         };

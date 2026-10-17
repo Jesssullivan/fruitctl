@@ -19,7 +19,7 @@ test-host-installer node="node":
 
 # Owned broker/relay retirement, journal/wake/telemetry and inherited-deadline behavior; no desktop.
 test-broker node="node":
-    {{quote(node)}} --test --test-concurrency=1 test/fruitctl-broker.test.js test/fruitctl-broker-review.test.js test/fruitctl-broker-observability.test.js test/fruitctl-deadline-budget.test.js
+    {{quote(node)}} --test --test-concurrency=1 test/fruitctl-broker.test.js test/fruitctl-broker-review.test.js test/fruitctl-broker-observability.test.js test/fruitctl-deadline-budget.test.js test/fruitctl-relay.test.js
 
 # Offline full-raster fixture and streaming-oracle checks; contacts no desktop.
 test-qualification node="node":
