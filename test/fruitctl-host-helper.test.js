@@ -447,6 +447,50 @@ test('qualified exact geometry renews a permit before native input and never rep
   } finally { await executor.close(); }
 });
 
+// D15/D16: a secret is typed only right after a fresh Host renewal; a Stop
+// latched at startup is a typed refusal, and one latched mid-lease fails the
+// renewal before any keystroke.
+test('type_secret renews the Host lease immediately before the native secret', async () => {
+  const config = { ...configuration(), mapping };
+  const { executor, vnc, host } = await fixture({ config });
+  try {
+    const action = { action: 'type_secret', secret: 'fixture-secret' };
+    await executor.execute([action]);
+    assert.deepEqual(vnc.calls.map(call => call.action), ['health', 'adopt_observation', 'type_secret']);
+    assert.deepEqual(host.requests.map(request => request.action),
+      ['health', 'begin_activity', 'capture', 'renew_activity', 'renew_activity']);
+    assert.ok(!JSON.stringify(host.requests).includes('fixture-secret'), 'the Host never sees the secret');
+  } finally { await executor.close(); }
+});
+
+test('a Stop latched before or during the lease refuses type_secret before any keystroke', async () => {
+  const config = { ...configuration(), mapping };
+  const latched = await fixture({ config, helperOptions: { alter(request, response) {
+    if (request.action === 'health') response.result.human_stop_latched = true;
+    return response;
+  } } });
+  try {
+    await assert.rejects(latched.executor.execute([{ action: 'type_secret', secret: 's' }]), error => {
+      assert.equal(error.code, 'human_stop_latched');
+      assert.ok(isPreAdmissionRefusal(error));
+      return true;
+    });
+    assert.deepEqual(latched.vnc.calls, []);
+  } finally { await latched.executor.close(); }
+  let renewals = 0;
+  const stopped = await fixture({ config, helperOptions: { alter(request, response) {
+    // The renewal just before the secret reports the Stop.
+    if (request.action === 'renew_activity' && ++renewals === 2) {
+      Object.assign(response.result, { ready: false, activity_eligible: false, human_stop_latched: true });
+    }
+    return response;
+  } } });
+  try {
+    await assert.rejects(stopped.executor.execute([{ action: 'type_secret', secret: 's' }]), /receipt mismatch/);
+    assert.ok(!stopped.vnc.calls.some(call => call.action === 'type_secret'));
+  } finally { await stopped.executor.close(); }
+});
+
 test('native input settle is waited out before adoption and the native permit, never during it', async () => {
   const config = { ...configuration(), mapping };
   const { executor, vnc, host } = await fixture({ config,

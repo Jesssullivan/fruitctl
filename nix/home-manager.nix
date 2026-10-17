@@ -10,10 +10,30 @@ let
   relayArgs = [ executable "relay" "--bridge" (if cfg.bridgeHost == null then "" else cfg.bridgeHost) "--socket" cfg.socketPath ]
     ++ lib.optionals (cfg.bridgeSocketPath != null) [ "--remote-socket" cfg.bridgeSocketPath ]
     ++ [ "--remote-command" cfg.bridgeCommand ];
+  # D16/D36: a provider declaration names where a secret lives, never its value.
+  # Only the fields of the chosen provider are written.
+  publicSource = source: { inherit (source) provider; } // ({
+    file = { inherit (source) path; } // lib.optionalAttrs source.allowSymlink { allowSymlink = true; };
+    env = { inherit (source) name; };
+    command = { inherit (source) argv; } // lib.optionalAttrs (source.timeoutMs != null) { inherit (source) timeoutMs; };
+    keychain = { inherit (source) service account; } // lib.optionalAttrs (source.keychain != null) { inherit (source) keychain; };
+  }.${source.provider});
+  sourceValid = source: {
+    file = absolute source.path;
+    env = source.name != null && builtins.match "[A-Za-z_][A-Za-z0-9_]{0,127}" source.name != null;
+    command = source.argv != null && source.argv != [ ] && absolute (builtins.head source.argv);
+    keychain = source.service != null && source.service != "" && source.account != null && source.account != ""
+      && (source.keychain == null || absolute source.keychain);
+  }.${source.provider};
   publicTarget = _name: target: {
-    inherit (target) credentialFile;
     # An unset capture deadline stays absent, never null.
     vnc = lib.filterAttrs (_: value: value != null) target.vnc;
+  } // lib.optionalAttrs (target.credentialFile != null) {
+    inherit (target) credentialFile;
+  } // lib.optionalAttrs (target.credential != null) {
+    credential = publicSource target.credential;
+  } // lib.optionalAttrs (target.secrets != { }) {
+    secrets = lib.mapAttrs (_: publicSource) target.secrets;
   } // lib.optionalAttrs (target.targetId != null) {
     inherit (target) targetId;
   } // lib.optionalAttrs (target.inputSource != null) {
@@ -57,6 +77,43 @@ let
     map (target: lib.nameValuePair
       "fruitctl/agents/${agent}/${target}.${if manifest.agents.${agent}.config.format == "toml" then "toml" else "json"}"
       { text = fragment agent target; }) targetNames) cfg.agents);
+  secretSource = lib.types.submodule {
+    options = {
+      provider = lib.mkOption {
+        type = lib.types.enum [ "file" "env" "command" "keychain" ];
+        description = "Where the broker reads this secret when it is needed: an exact file (for example a sops-nix materialized path), a named environment variable (discouraged), an explicit command whose stdout is the secret, or a Darwin login-keychain item.";
+      };
+      path = lib.mkOption {
+        type = lib.types.nullOr lib.types.str;
+        default = null;
+        description = "file: absolute path, as a string (never a Nix path or readFile). The file must be owned by the broker user with no group/other access, in a directory nobody else can write.";
+      };
+      allowSymlink = lib.mkOption {
+        type = lib.types.bool;
+        default = false;
+        description = "file: follow the path when it is itself a symlink. The resolved file passes the same owner, mode and parent checks. sops-nix default paths need no symlink allowance; a custom sops-nix `path` does.";
+      };
+      name = lib.mkOption {
+        type = lib.types.nullOr lib.types.str;
+        default = null;
+        description = "env: variable name in the broker's environment. Discouraged; `fruitctl doctor --secrets` warns env_provider_discouraged. The broker removes it from every child environment.";
+      };
+      argv = lib.mkOption {
+        type = lib.types.nullOr (lib.types.listOf lib.types.str);
+        default = null;
+        example = lib.literalExpression ''[ "''${pkgs.vault}/bin/vault" "kv" "get" "-field=password" "secret/desktop" ]'';
+        description = "command: absolute executable and literal arguments, run without a shell. stdout (one trailing newline removed) is the secret; stderr is discarded unread.";
+      };
+      timeoutMs = lib.mkOption {
+        type = lib.types.nullOr (lib.types.ints.between 100 10000);
+        default = null;
+        description = "command: kill the command after this many milliseconds (default 5000).";
+      };
+      service = lib.mkOption { type = lib.types.nullOr lib.types.str; default = null; description = "keychain: generic-password service (security -s)."; };
+      account = lib.mkOption { type = lib.types.nullOr lib.types.str; default = null; description = "keychain: generic-password account (security -a)."; };
+      keychain = lib.mkOption { type = lib.types.nullOr lib.types.str; default = null; description = "keychain: optional absolute keychain file; default is the search list."; };
+    };
+  };
   profileModule = { ... }: {
     options = {
       targetId = lib.mkOption {
@@ -84,7 +141,18 @@ let
       credentialFile = lib.mkOption {
         type = lib.types.nullOr lib.types.str;
         default = null;
-        description = "Absolute runtime credential file on the Darwin controller. Use a string, never a Nix path or readFile of its contents.";
+        description = "Absolute runtime credential file on the Darwin controller. Use a string, never a Nix path or readFile of its contents. Backward-compatible alias for credential = { provider = \"file\"; path = ...; allowSymlink = true; }.";
+      };
+      credential = lib.mkOption {
+        type = lib.types.nullOr secretSource;
+        default = null;
+        description = "The target's VNC/ARD credential provider on the Darwin controller. Set this or credentialFile, not both.";
+      };
+      secrets = lib.mkOption {
+        type = lib.types.attrsOf secretSource;
+        default = { };
+        example = lib.literalExpression ''{ login-password = { provider = "file"; path = config.sops.secrets."fruitctl/desktop-login".path; }; }'';
+        description = "D16 type_secret allowlist for this target: ref name to provider. An agent can type only these refs, by name; values are resolved on the Darwin broker and never returned, logged or journalled.";
       };
       daemonPath = lib.mkOption {
         type = lib.types.nullOr lib.types.str;
@@ -228,8 +296,14 @@ in {
         { assertion = cfg.bridgeSocketPath == null || absolute cfg.bridgeSocketPath; message = "Fruitctl bridgeSocketPath must be an absolute remote path when supplied."; }
         { assertion = cfg.bridgeCommand == "fruitctl" || absolute cfg.bridgeCommand; message = "Fruitctl bridgeCommand must be fruitctl or an absolute executable path."; }
         { assertion = isDarwin || (cfg.bridgeHost != null && cfg.bridgeHost != "" && !(lib.hasPrefix "-" cfg.bridgeHost) && !(lib.hasInfix "\n" cfg.bridgeHost)); message = "Linux Fruitctl requires an existing Darwin bridgeHost SSH alias."; }
-        { assertion = isDarwin || (cfg.nativePackage == null && builtins.all (name: cfg.targets.${name}.targetId == null && cfg.targets.${name}.inputSource == null && cfg.targets.${name}.credentialFile == null && cfg.targets.${name}.daemonPath == null && cfg.targets.${name}.hostHelper == null && cfg.targets.${name}.vnc.username == "" && cfg.targets.${name}.vnc.host == "127.0.0.1" && cfg.targets.${name}.vnc.port == 15900 && cfg.targets.${name}.vnc.captureTimeoutMs == null) targetNames); message = "Linux declares Fruitctl target names only; configure physical identities, VNC, credentials and native clients on the Darwin bridge."; }
-        { assertion = !isDarwin || builtins.all (name: absolute cfg.targets.${name}.credentialFile && absolute (if cfg.targets.${name}.daemonPath != null then cfg.targets.${name}.daemonPath else nativePath)) targetNames; message = "Each Darwin Fruitctl target requires an absolute credentialFile and a qualified daemonPath or nativePackage."; }
+        { assertion = isDarwin || (cfg.nativePackage == null && builtins.all (name: cfg.targets.${name}.targetId == null && cfg.targets.${name}.inputSource == null && cfg.targets.${name}.credentialFile == null && cfg.targets.${name}.credential == null && cfg.targets.${name}.secrets == { } && cfg.targets.${name}.daemonPath == null && cfg.targets.${name}.hostHelper == null && cfg.targets.${name}.vnc.username == "" && cfg.targets.${name}.vnc.host == "127.0.0.1" && cfg.targets.${name}.vnc.port == 15900 && cfg.targets.${name}.vnc.captureTimeoutMs == null) targetNames); message = "Linux declares Fruitctl target names only; configure physical identities, VNC, credentials and native clients on the Darwin bridge."; }
+        { assertion = !isDarwin || builtins.all (name: let target = cfg.targets.${name}; in
+            (if target.credential != null then target.credentialFile == null && sourceValid target.credential else absolute target.credentialFile)
+            && absolute (if target.daemonPath != null then target.daemonPath else nativePath)) targetNames;
+          message = "Each Darwin Fruitctl target requires exactly one VNC credential provider (credential, or an absolute credentialFile) and a qualified daemonPath or nativePackage."; }
+        { assertion = builtins.all (name: builtins.all (ref: builtins.match "[A-Za-z0-9][A-Za-z0-9_.-]{0,63}" ref != null && sourceValid cfg.targets.${name}.secrets.${ref})
+            (builtins.attrNames cfg.targets.${name}.secrets)) targetNames;
+          message = "Fruitctl secrets need ref names of letters, digits, '.', '_' or '-' and a complete provider: file.path absolute, env.name a variable name, command.argv with an absolute executable, or keychain.service and account."; }
         { assertion = builtins.all (name: let helper = cfg.targets.${name}.hostHelper; in helper == null || (helper.sshHost != "" && builtins.length helper.command == 2 && absolute (builtins.head helper.command) && builtins.elemAt helper.command 1 == "--stdio" && (helper.displayId != null || helper.displayUuid != null) && (helper.displayId == null || helper.displayId > 0) && (helper.displayUuid == null || displayUuid helper.displayUuid))) targetNames; message = "Fruitctl hostHelper requires an SSH alias, [ absolute-executable --stdio ] command and a positive displayId or a displayUuid."; }
         { assertion = builtins.all (name: let helper = cfg.targets.${name}.hostHelper; mapping = if helper == null then null else helper.mapping; in mapping == null || (mapping.qualificationReceipt != "" && mapping.displayId == helper.displayId && sameUuid mapping.displayUuid helper.displayUuid && (mapping.scale == null || (mapping.scale >= 1 && mapping.scale <= 8)) && mapping.displayBounds.width > 0 && mapping.displayBounds.height > 0)) targetNames; message = "Fruitctl hostHelper mapping requires its qualification receipt, matching displayId/displayUuid, a scale within 1-8 when set, and positive display bounds."; }
       ];

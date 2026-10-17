@@ -152,6 +152,9 @@ neither Nix evaluation nor the Linux relay reads their contents.
 
 ```nix
 { config, inputs, ... }: {
+  # sops-nix Home Manager secrets, materialized as private files at activation.
+  sops.secrets."fruitctl/desktop-vnc" = { };
+  sops.secrets."fruitctl/desktop-login" = { };
   programs.fruitctl = {
     enable = true;
     enableService = false; # Install packages/configuration before starting a broker.
@@ -160,13 +163,20 @@ neither Nix evaluation nor the Linux relay reads their contents.
     targets.desktop = {
       targetId = "office-desktop";
       vnc = { host = "127.0.0.1"; port = 15900; username = "alex"; };
-      credentialFile = "${config.home.homeDirectory}/.config/fruitctl/secrets/desktop";
+      # A sops-nix materialized file; see the secret providers page for
+      # command (vault, op, bw, sops), keychain and env providers.
+      credential = { provider = "file"; path = config.sops.secrets."fruitctl/desktop-vnc".path; };
+      # D16 type_secret allowlist: ref name to provider.
+      secrets.login-password = { provider = "file"; path = config.sops.secrets."fruitctl/desktop-login".path; };
     };
   };
 }
 ```
 
-The credential path must already contain a privately provisioned credential.
+The credential provider must already resolve on the controller; check it with
+`fruitctl doctor --secrets`. `credentialFile = "/absolute/path"` remains a
+backward-compatible alias for a file provider. See
+[secret providers](secrets.md) for the provider fields and checks.
 The selected `nativePackage` supplies `bin/claude-kvm-daemon`; alternatively, an
 absolute `targets.<profile>.daemonPath` selects an independently provisioned
 client. The module defaults off and `nativePackage` defaults to null, so no

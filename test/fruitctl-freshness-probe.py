@@ -288,13 +288,18 @@ def resolve_target(profile, config, env):
         if not isinstance(entry, dict):
             raise ProbeRefusal("profile %r not found in %s" % (profile, path))
         vnc = entry.get("vnc")
-        if not isinstance(vnc, dict) or not entry.get("credentialFile"):
+        credential = entry.get("credential")
+        if isinstance(credential, dict) and credential.get("provider") != "file":
+            raise ProbeRefusal("the probe reads file credentials only; export VNC_PASSWORD from the "
+                               "profile's provider instead of --profile")
+        credential_file = credential.get("path") if isinstance(credential, dict) else entry.get("credentialFile")
+        if not isinstance(vnc, dict) or not isinstance(credential_file, str) or not credential_file:
             raise ProbeRefusal("target lacks a VNC credential provider")
         host, port, username = vnc.get("host"), vnc.get("port"), vnc.get("username", "")
         if (not isinstance(host, str) or not host or type(port) is not int or not 1 <= port <= 65535
                 or not isinstance(username, str)):
             raise ProbeRefusal("invalid VNC profile")
-        secret = Path(entry["credentialFile"])
+        secret = Path(credential_file)
         try:
             info = secret.stat()
         except OSError:

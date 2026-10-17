@@ -17,7 +17,7 @@ The source targets Apple silicon macOS 15 or later. Check the
 | Component | What to configure |
 | --- | --- |
 | Agent adapter or Linux SSH bridge | Install the matching adapter; keep credentials on the Darwin controller. |
-| Darwin VNC controller | Configure the target profile and credential provider. It receives target pixels over VNC. |
+| Darwin VNC controller | Configure the target profile and [secret providers](secrets.md). It receives target pixels over VNC. |
 | Target's Apple Screen Sharing | The target owner enables the service and chooses permitted users. |
 | Optional Fruitctl Host on the target | The target user enables capture and grants that app Screen Capture and Accessibility access. |
 

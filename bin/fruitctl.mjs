@@ -34,7 +34,7 @@ try {
   'dry-run': { type: 'boolean' }, 'project-dir': { type: 'string' }, 'install-root': { type: 'string' },
   mux: { type: 'boolean' }, stdio: { type: 'boolean' }, json: { type: 'boolean' },
   timings: { type: 'boolean' }, macos: { type: 'boolean' }, 'target-ssh': { type: 'string' },
-  help: { type: 'boolean' }, 'manifest-url': { type: 'string' },
+  help: { type: 'boolean' }, 'manifest-url': { type: 'string' }, secrets: { type: 'boolean' },
 } }));
 command = positionals[0];
 socketPath = values.socket || defaultSocketPath();
@@ -52,6 +52,7 @@ configPath = values.config || defaultConfigPath();
   }
   if (values.macos && command !== 'doctor') throw new Error('--macos is supported only by doctor');
   if (values['target-ssh'] !== undefined && !values.macos) throw new Error('--target-ssh requires doctor --macos');
+  if (values.secrets && command !== 'doctor') throw new Error('--secrets is supported only by doctor');
   if (values.help || !command) {
     process.stdout.write('Fruitctl\n\nCommands: mcp, broker, relay, attach, install, doctor, rollback, uninstall, journal\n' +
       '  mcp --target PROFILE [--socket PATH]\n' +
@@ -60,12 +61,14 @@ configPath = values.config || defaultConfigPath();
       '  install --agent AGENT --scope user|project --version TAG --target PROFILE [--project-dir PATH] [--install-root ABSOLUTE_DIRECTORY] [--dry-run]\n' +
       '  doctor [--agent AGENT] [--scope user|project] [--project-dir PATH] [--install-root ABSOLUTE_DIRECTORY] --json\n' +
       '  doctor --macos [--target PROFILE] [--config PATH] [--target-ssh USER@HOST]\n' +
+      '  doctor --secrets [--target PROFILE] [--config PATH]\n' +
       '  rollback|uninstall --agent AGENT [--scope user|project] [--project-dir PATH] [--install-root ABSOLUTE_DIRECTORY]\n' +
       '  journal verify FILE\n' +
       '\n--install-root selects Fruitctl runtime/state/launcher storage; registration still follows scope and project/user configuration.\n' +
       'Repeat the selected root for doctor, rollback and uninstall. Explicit-root installation requires explicit scope; omitted root preserves legacy paths.\n' +
       'Install requires explicit --version TAG. Doctor writes JSON: exit 1 for drift, 0 for configured or not-installed.\n' +
       'Doctor --macos adds read-only target checks over SSH (macOS 26.6.1+ or 27, Screen Sharing mode, session, Host grants, other input owners, target profile); a typed failure exits 1.\n' +
+      'Doctor --secrets resolves each declared credential and type_secret ref once on this broker host, prints only provider and status, and exits 1 on a failure.\n' +
       'Add --timings to installer commands for bounded aggregate timings; default output is unchanged.\n');
   } else if (command === 'broker') {
     const { createBroker } = await import('../lib/broker/server.mjs');
@@ -127,8 +130,16 @@ configPath = values.config || defaultConfigPath();
       ...(values.timings === true ? { timings: true } : {}),
       configPath: values.config || process.env.FRUITCTL_CONFIG_PATH,
       manifestUrl: values['manifest-url'], ...(macos ? { macos } : {}) });
+    if (values.secrets) {
+      // D16/D36: values are resolved and discarded; only provider and status print.
+      const { checkSecrets } = await import('../lib/broker/secrets.mjs');
+      const explicitTarget = process.argv.some(argument => argument === '--target' || argument.startsWith('--target='));
+      result.secretsCheck = await checkSecrets(await loadConfig(values.config || defaultConfigPath()),
+        explicitTarget ? { target: values.target } : {});
+    }
     process.stdout.write(JSON.stringify(result, null, 2) + '\n');
-    if (command === 'doctor' && (result.status === 'drift' || result.targetPreflight?.status === 'fail')) process.exitCode = 1;
+    if (command === 'doctor' && (result.status === 'drift' || result.targetPreflight?.status === 'fail' ||
+        result.secretsCheck?.status === 'fail')) process.exitCode = 1;
   } else throw new Error('Unknown Fruitctl command; use --help');
 } catch (error) {
   process.stderr.write(`Fruitctl: ${error.message}\n`);
