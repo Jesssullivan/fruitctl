@@ -7,50 +7,22 @@ through local configuration and the controller's credential provider, not this
 prompt or a checked-in MCP file.
 
 The curated adoption route selects the published
-[v0.1.0-alpha.9 runtime preview](https://github.com/xoxd-ai/fruitctl/releases/tag/v0.1.0-alpha.9),
-producer `1ba90e84d4b6fe464c9146e7c41c4cffc3edf8e3`. Its 13 public
-assets match the reviewed hashes and sizes through anonymous downloads. Its
-accepted public installer scope is Linux x64 stock public bootstrap and Claude project configuration lifecycle: install, help, doctor, timed doctor, reinstall, same-version prior-receipt rollback and uninstall/cache retention; populated project configuration bytes and mode 0640 were restored.
-This does not qualify a complete platform, actual agent frontend or desktop.
-The rendered prompt follows this curated preview, rather than a moving package
-version or source checkout. Portable Host-installer payload/help supplies no
-FruitctlHost app, native Host bundle or automatic setup; Apple trust, consent
-retention and physical capture/Stop remain unqualified.
+[v0.1.0-alpha.11 runtime preview](https://github.com/xoxd-ai/fruitctl/releases/tag/v0.1.0-alpha.11),
+producer `142743262d3242775f210c9d62a6b8e423c3ce5a` (signed annotated tag).
+It ships Linux x64, Linux ARM64 and Darwin ARM64 runtimes with the bundled
+Node.js 24.21.0 runtime, skill and adapters. The Darwin runtime carries the native VNC controller at
+`bin/claude-kvm-daemon`, built, signed (Developer ID) and notarized from the
+same revision; Gatekeeper reports `Notarized Developer ID`. All 13 public assets
+match the [curated inventory](site/versions.json) through anonymous download.
 
-Alpha.9 also has separate [Home Manager-installed Claude synthetic MCP
-component evidence](home-manager.md). Two fresh CLI sessions observed complete
-images, made and reversed input, released their sessions and reconnected.
-That acceptance covers the installed Home Manager package and synthetic
-desktop; public-bootstrap frontend and physical desktop qualification remain
-pending.
-
-Historical alpha.8 is immutable at producer `ceb1d4643b8f3c66f744f536777214285a4d20ad`.
-Its thirteen anonymous asset checks and Linux x64 stock public bootstrap/Claude
-project configuration lifecycle cover dry-run, install, doctor, reinstall,
-same-version prior-receipt rollback and uninstall/cache retention, restoring
-populated configuration including mode 0640. Its separate public-installed and
-Home Manager-installed Claude synthetic component observations remain alpha.8
-results. Older evidence and explicitly alpha.6-pinned examples below also stay
-historical; none transfers to alpha.9.
-
-The historical [v0.1.0-alpha.4 runtime preview](https://github.com/xoxd-ai/fruitctl/releases/tag/v0.1.0-alpha.4)
-is immutable and source-pinned to
-`e0f4d064b076e58b33856d877e0e1c9266f55177`. It installs the bundled Node.js 24.21.0
-runtime, skill and adapter. On Apple Silicon macOS 15+, that runtime also
-installs the signed VNC controller at
-`bin/claude-kvm-daemon` inside its versioned cache. Its original controller-ZIP
-submission is Apple Accepted. The unchanged native controller's original source
-remains `e00fcc86bbac4247d5a0847d7e656369c52cc15f`; that acceptance covers
-the controller, and the complete runtime archive is a separate asset. Linux
-uses the SSH bridge to a configured Darwin controller. Every route needs an operator-configured
-profile, controller-local credentials and owner-enabled target Screen Sharing.
-Alpha.4 passed an offline Darwin ARM64 Junie project lifecycle through the
-bundled installer API and an installed SDK/shared-broker journey through the
-unchanged signed controller to a loopback RFB fixture. That synthetic check
-verified four complete 96×53 frames, one reconnect and two terminal releases.
-Alpha.4 did not qualify Darwin's stock public bootstrap, desktop or frontend.
-Earlier Darwin synthetic image exchanges remain historical
-alpha.2/alpha.3 evidence.
+Linux and Rocky Linux seats use the SSH bridge to a Darwin controller. Every
+route needs an operator-configured target profile, controller-local
+credentials and owner-enabled Screen Sharing on a macOS 26 or 27 target. The
+public runtime supplies no FruitctlHost app or purple indicator. Actual agent
+frontends, the Linux-to-Darwin SSH journey and measured service objectives
+remain pending qualification; the fully qualified product release count is
+zero. Older previews stay immutable and are listed with their hashes in the
+curated inventory.
 
 The canonical docs are live at
 [fruitctl.clients.xoxd.ai](https://fruitctl.clients.xoxd.ai/). If the listed preview lacks your runtime
@@ -94,13 +66,13 @@ password or copy it into the agent configuration.
 
 ## Optional installer timings
 
-The public Linux x64 installed alpha.9 CLI advertised `--timings`; timed doctor emitted the fixed nine-stage report with the same installation result as default doctor. This is optional installer measurement evidence and establishes no latency SLO or speedup.
-Use `--timings` only with the verified alpha.9 installed CLI's `install`,
-`doctor`, `rollback` or `uninstall` command. For example, repeat your recorded
-root and registration scope:
+Installed CLIs from alpha.9 on advertise `--timings` for `install`, `doctor`,
+`rollback` and `uninstall`. It reports bounded aggregate installer elapsed
+times. It is installer measurement, not a latency SLO. For example, repeat your
+recorded root and registration scope:
 
 ```sh
-<installed-alpha9>/bin/fruitctl doctor --agent claude --scope project \
+<installed-runtime>/bin/fruitctl doctor --agent claude --scope project \
   --project-dir "/absolute/path/to/owned/project" \
   --install-root "/absolute/path/to/owned/fruitctl-root" --timings
 ```
@@ -113,7 +85,7 @@ and CLI parsing, contain no per-file paths or credentials, and establish no
 latency SLO or command timeout change. Default result/error output is unchanged
 without the option.
 
-## One terminal paste: published alpha.9
+## One terminal paste: published alpha.11
 
 This pins both the bootstrap source and immutable runtime preview. Choose your
 adapter from the [agent guide](agents.md), replace `default` with your configured
@@ -121,8 +93,8 @@ profile, and preserve any Home Manager-owned configuration through its owner:
 
 ```sh
 (
-  FRUITCTL_SOURCE_SHA='1ba90e84d4b6fe464c9146e7c41c4cffc3edf8e3'
-  FRUITCTL_RELEASE_TAG='v0.1.0-alpha.9'
+  FRUITCTL_SOURCE_SHA='142743262d3242775f210c9d62a6b8e423c3ce5a'
+  FRUITCTL_RELEASE_TAG='v0.1.0-alpha.11'
   FRUITCTL_SCRIPT=$(mktemp)
   trap 'rm -f "$FRUITCTL_SCRIPT"' EXIT
   curl --disable --fail --silent --show-error --location --proto '=https' --proto-redir '=https' \
@@ -144,50 +116,8 @@ The source fetch ignores user `curlrc` options and checks the pinned script's
 SHA-256 before execution. The bootstrap verifies release bytes and uses the
 bundled Node runtime. This paste uses the ordinary user registration and home
 storage layout. For project registration and separate storage, use the
-explicit-root instructions below. Alpha.6's verified installer observations
-cover Darwin ARM64 Junie project scope with an explicit root. This user-scope
-paste, installed SDK terminal acceptance, actual frontends and desktop behavior
-remain unqualified; structural release checks do not establish those outcomes.
-
-On Darwin ARM64, alpha.6's stock public bootstrap installed the Junie project
-adapter into an explicit root. Installed doctor, same-version reinstall and
-same-version history rollback passed. Owned uninstall and post-uninstall doctor
-were verified separately. The combined installer/SDK run remained unsuccessful
-during its SDK phase; retained metadata does not establish its terminal status
-or qualify SDK runtime behavior.
-
-A separate default public uninstall-shell check passed after a fresh
-installation through the bundled installer API using retained immutable cache
-inputs. With `FRUITCTL_EXECUTABLE` absent, the published uninstall shell returned
-`removed` and retained doctor reported `not-installed`. Original project
-configuration bytes and modes were restored; all 3,673 runtime payload files and
-the root descriptor were retained. This separate check did not repeat the stock
-public bootstrap.
-
-These observations verify installer components. Actual Junie and IntelliJ
-frontend images, actions, release and reconnect, desktop and physical indicator
-behavior, and measured service objectives remain unqualified. The fully
-qualified product release count remains zero.
-
-Historical alpha.4 passed an anonymous Linux x64
-stock Junie project bootstrap, installed help, doctor and reinstall. A
-continuation initialized the MCP SDK against Junie's installed MCP launcher
-and called `listTools`, discovering four tool schemas without tool actions. An
-alternate-project-alias dry-run was refused. Uninstall restored original
-unrelated configuration bytes and modes and preserved 3,671 Linux runtime
-payload files, with the generated identity marker accounted for separately.
-Installer history and its directory remain as append-only installation
-records. Frontend image rendering and desktop acceptance remain pending.
-
-Historical alpha.2 checks cover all seven user adapters and Claude project
-scope through anonymous Linux x64 bootstrap. Historical alpha.3 checks cover
-one Claude project bootstrap and installed help, doctor, uninstall and
-post-uninstall doctor. Their runtime hash/mode and configuration restoration
-evidence applies to those releases. Doctor checks
-installed hashes and modes, including the bundled controller. Rollback uses
-the previous verified runtime; uninstall preserves verified versioned caches
-and unrelated configuration. Explicit operator native-path overrides remain
-operator-owned.
+explicit-root instructions below. Installer checks verify installation and
+configuration; they do not qualify a frontend or desktop.
 
 Installation does not start or stop services, launch a GUI, create profiles or
 credentials, enable target Screen Sharing, or grant macOS privacy permission.
@@ -213,54 +143,19 @@ setup and upgrade checks plus a reviewed standard-user policy template for an
 MDM administrator. The template permits the user's approval; it does not grant
 Screen Capture access or install the Host.
 
-## Published alpha.6 pins and qualification
-
-The runtime producer is
-`8653325c6ccc0e058b3e4cf84eb44101cfd270fc`. Its exact bootstrap is
-[scripts/install.sh at that revision](https://raw.githubusercontent.com/xoxd-ai/fruitctl/8653325c6ccc0e058b3e4cf84eb44101cfd270fc/scripts/install.sh),
-SHA-256 `d5aae5f89812def9f5e91e80de4fe8779b4f62263f1e331a26e5734b5fc3ecfc`.
-It puts `--disable` first in each bootstrap curl invocation, preserving the
-HTTPS and download bounds while ignoring user curl configuration. Its source
-checks cover the real-curl parser with offline fixtures. The installer
-observations above separately verify the stated packaged components; neither
-the parser checks nor those components qualify a desktop connection.
-
-The immutable tag is `v0.1.0-alpha.6`, published on 2026-10-08. Its
-`fruitctl-release.json` SHA-256 is
-`0cf5e6f713276da0559ec0761b46696ec0f66c363f01279ac1491e93be9bf749`.
-The [curated inventory](site/versions.json) records the names, sizes and hashes
-of all thirteen published assets, their signed tag and producer bindings.
-The producer-binding asset preserves its build-time candidate status; separate
-publication and public-byte receipts establish delivery. Its pending runtime
-qualification fields are unchanged.
-
-The producer revision is separate from the documentation build revision.
-Installer, installed SDK, actual Junie/IDE frontend,
-desktop, physical indicator exclusion and measurements for service objectives
-must name the exact release. Historical alpha.4/alpha.5 receipts are
-not transferred to alpha.6. The native controller retains its original
-`e00fcc86bbac4247d5a0847d7e656369c52cc15f` producer and corresponding GPL source;
-the original controller-ZIP acceptance does not notarize a complete runtime or
-include the Host prototype.
-
 ## Explicit install root: current preview
 
-The published [v0.1.0-alpha.9 preview](https://github.com/xoxd-ai/fruitctl/releases/tag/v0.1.0-alpha.9)
+The published [v0.1.0-alpha.11 preview](https://github.com/xoxd-ai/fruitctl/releases/tag/v0.1.0-alpha.11)
 implements `--install-root ABSOLUTE_DIRECTORY` for
 `install`, `doctor`, `rollback` and `uninstall`, and the stock bootstrap.
-Its accepted public installer evidence covers only the Linux x64 Claude project
-configuration lifecycle described above. Public-bootstrap frontend, installed
-SDK, Darwin alpha.9 runtime and physical desktop qualification remain pending;
-alpha.9's separate Home Manager-installed Claude component is described above.
-The published
-**alpha.4 bootstrap and runtime do not support
-`--install-root`**. The pinned alpha.9 user-scope paste above deliberately keeps
-the normal-home storage behavior by omitting that option.
+The published **alpha.4 bootstrap and runtime do not support
+`--install-root`**. The pinned user-scope paste above deliberately keeps the
+normal-home storage behavior by omitting that option.
 
 An install root selects Fruitctl's operational storage. Registration remains a
 separate choice: an explicit-root installation must also specify `--scope user`
 or `--scope project`. `--project-dir` selects the registration project and is
-passed through by the alpha.9 bootstrap; when omitted, project scope uses the
+passed through by the bootstrap; when omitted, project scope uses the
 current directory. Choose project scope and an explicit project directory when
 you want registration confined to an owned project.
 
@@ -283,18 +178,18 @@ executable and existing target/configuration fields; they do not pass
 `--install-root`. That storage option is rejected on `mcp`, `broker`, `relay` and
 `attach`.
 
-For alpha.9, replace every pathname/profile placeholder below. Use an
+For alpha.11, replace every pathname/profile placeholder below. Use an
 absolute project path and a dedicated absolute root you own; quote paths that
-contain spaces. Obtain the [exact producer's bootstrap](https://raw.githubusercontent.com/xoxd-ai/fruitctl/1ba90e84d4b6fe464c9146e7c41c4cffc3edf8e3/scripts/install.sh)
+contain spaces. Obtain the [exact producer's bootstrap](https://raw.githubusercontent.com/xoxd-ai/fruitctl/142743262d3242775f210c9d62a6b8e423c3ce5a/scripts/install.sh)
 and verify SHA-256 `d5aae5f89812def9f5e91e80de4fe8779b4f62263f1e331a26e5734b5fc3ecfc`
-before running it. These pins identify alpha.9's bytes; they do not qualify an
+before running it. These pins identify alpha.11's bytes; they do not qualify an
 arbitrary frontend, profile or desktop:
 
 ```text
-sh <verified-alpha9-install.sh> --agent junie --scope project \
+sh <verified-alpha11-install.sh> --agent junie --scope project \
   --project-dir <absolute-project-directory> \
   --install-root <absolute-install-root> \
-  --version v0.1.0-alpha.9 --target <configured-profile> --dry-run
+  --version v0.1.0-alpha.11 --target <configured-profile> --dry-run
 
 <absolute-install-root>/bin/fruitctl doctor --agent junie --scope project \
   --project-dir <absolute-project-directory> --install-root <absolute-install-root>
@@ -346,7 +241,7 @@ migration and purge are unsupported.
 
 ### Older runtimes must refuse explicit-root requests
 
-The alpha.9 bootstrap verifies the selected runtime's install-root capability
+The bootstrap (alpha.9 and later) verifies the selected runtime's install-root capability
 before calling its installer API. The executing installer must also verify that
 capability in the target release before committing its cache or registration,
 including when installing or rolling back to an older version. Missing or
@@ -377,7 +272,7 @@ lane for them.
 
 ### First run without Home Manager
 
-Install the pinned alpha.9 preview above on the controller and, when needed,
+Install the pinned alpha.11 preview above on the controller and, when needed,
 the Linux seat. These examples assume explicit roots `/Users/alex/Tools/fruitctl`
 and `/home/alex/Tools/fruitctl`, with the agent registered for profile `default`.
 Replace all example accounts, roots, project paths, SSH aliases and the reserved
@@ -387,9 +282,8 @@ daemon paths. Omit `--install-root` from doctor and retain the recorded agent,
 scope and project; the doctor example below uses explicit-root storage.
 Keep your real `HOME`.
 
-These are current configuration instructions. Alpha.9's accepted public
-installer scope is the Linux x64 Claude project lifecycle. The Darwin runtime,
-real SSH journey and actual frontend use of that bridge remain unqualified.
+These are current configuration instructions. The real Linux-to-Darwin SSH
+journey and actual frontend use of the bridge remain unqualified.
 
 **Darwin controller.** Use Apple Silicon macOS 15+ and the unchanged bundled
 signed controller. The target owner enables Screen Sharing and handles any
@@ -411,7 +305,7 @@ Save this operator-owned JSON as
       "targetId": "office-desktop",
       "vnc": { "host": "192.0.2.10", "port": 5900, "username": "alex" },
       "credentialFile": "/Users/alex/.config/fruitctl/secrets/desktop",
-      "daemonPath": "/Users/alex/Tools/fruitctl/releases/v0.1.0-alpha.9/darwin-arm64/bin/claude-kvm-daemon"
+      "daemonPath": "/Users/alex/Tools/fruitctl/releases/v0.1.0-alpha.11/darwin-arm64/bin/claude-kvm-daemon"
     }
   }
 }
@@ -430,7 +324,7 @@ In Home Manager the option is `programs.fruitctl.targets.<name>.vnc.captureTimeo
 Run your own broker in a dedicated terminal and leave it running:
 
 ```sh
-"/Users/alex/Tools/fruitctl/releases/v0.1.0-alpha.9/darwin-arm64/bin/fruitctl" \
+"/Users/alex/Tools/fruitctl/releases/v0.1.0-alpha.11/darwin-arm64/bin/fruitctl" \
   broker --config "/Users/alex/.config/fruitctl/controller.json"
 ```
 
@@ -447,9 +341,9 @@ host key trusted and authentication usable without interaction. Start your own
 foreground relay in a dedicated Linux terminal:
 
 ```sh
-"/home/alex/Tools/fruitctl/releases/v0.1.0-alpha.9/linux-x64/bin/fruitctl" \
+"/home/alex/Tools/fruitctl/releases/v0.1.0-alpha.11/linux-x64/bin/fruitctl" \
   relay --bridge desktop-controller \
-  --remote-command "/Users/alex/Tools/fruitctl/releases/v0.1.0-alpha.9/darwin-arm64/bin/fruitctl" \
+  --remote-command "/Users/alex/Tools/fruitctl/releases/v0.1.0-alpha.11/darwin-arm64/bin/fruitctl" \
   --remote-socket "/Users/alex/Library/Application Support/fruitctl/run/broker.sock"
 ```
 
@@ -466,7 +360,7 @@ agent, scope and project recorded by your installation. For a Linux Claude
 project installation, the concrete doctor command is:
 
 ```sh
-"/home/alex/Tools/fruitctl/releases/v0.1.0-alpha.9/linux-x64/bin/fruitctl" \
+"/home/alex/Tools/fruitctl/releases/v0.1.0-alpha.11/linux-x64/bin/fruitctl" \
   doctor --agent claude --scope project --project-dir "/home/alex/Projects/desktop-task" \
   --install-root "/home/alex/Tools/fruitctl" --json
 ```
@@ -487,7 +381,7 @@ and inspect its fresh result. Finish with `task_complete` and a `summary`, or
 unconfirmed release as failure. After reconnect, take and inspect a fresh
 screenshot before further input; never replay uncertain input. Report the exact
 release and observed outcome; registration and these commands alone do not
-qualify a frontend or desktop. Public alpha.9 supplies no Host app or purple
+qualify a frontend or desktop. Public alpha.11 supplies no Host app or purple
 indicator. Installation grants no Screen Recording/Accessibility permission
 or headless TCC provisioning; any independently installed Host requires its
 own consent and capture qualification. Preserve the signed controller bytes.
@@ -559,10 +453,9 @@ verified public release path once it is qualified.
 
 ## Home Manager
 
-The [current tested source pin and managed delivery scope](home-manager.md) use
-alpha.9 producer `1ba90e84d4b6fe464c9146e7c41c4cffc3edf8e3`. Its installed Home Manager
-Claude synthetic component evidence is separate from this public stock
-installer/configuration result.
+The [Home Manager module](home-manager.md) selects the alpha.11 signed
+controller through `nix/native-release.json` on any source pin that includes
+it.
 
 Your Home Manager consumer pins the public producer's source revision and
 signed release bytes. It may configure profiles and wrappers, but must not patch

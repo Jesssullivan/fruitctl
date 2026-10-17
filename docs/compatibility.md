@@ -8,19 +8,19 @@ it to qualified status.
 ## Platforms
 
 The current public preview is
-[v0.1.0-alpha.9](https://github.com/xoxd-ai/fruitctl/releases/tag/v0.1.0-alpha.9),
-runtime producer `1ba90e84d4b6fe464c9146e7c41c4cffc3edf8e3`. Its accepted public Linux installer
-scope is Linux x64 stock public bootstrap and Claude project configuration lifecycle: install, help, doctor, timed doctor, reinstall, same-version prior-receipt rollback and uninstall/cache retention; populated project configuration bytes and mode 0640 were restored.
-See [current installation evidence](install.md) and the
-[macOS permissions guide](permissions.md) for operator setup steps. Nine runtime
-previews are published; fully qualified product releases remain zero.
+[v0.1.0-alpha.11](https://github.com/xoxd-ai/fruitctl/releases/tag/v0.1.0-alpha.11),
+runtime producer `142743262d3242775f210c9d62a6b8e423c3ce5a` with a signed annotated tag. All 13 public assets match
+the curated hashes through anonymous download.
+See the [installation guide](install.md) and the
+[macOS permissions guide](permissions.md) for operator setup steps. Eleven
+runtime previews are published; fully qualified product releases remain zero.
 
 | Role | Baseline | Status |
 | --- | --- | --- |
-| Darwin ARM64 runtime installer | Junie project scope; explicit storage root | Historical alpha.6 stock bootstrap, doctor, reinstall, same-version rollback and owned uninstall verified as components; separate default public uninstall shell from offline-cache setup passed; alpha.9 installed runtime/frontend/desktop pending |
-| Native controller | Apple Silicon; macOS 15+ | Alpha.9 bundles the unchanged signed controller from source e00fcc86; its original controller-ZIP submission is Apple Accepted; historical alpha.4 synthetic SDK/broker/RFB check passed; physical desktop pending |
+| Darwin ARM64 runtime installer | Junie project scope; explicit storage root | Historical alpha.6 stock bootstrap, doctor, reinstall, same-version rollback and owned uninstall verified as components; separate default public uninstall shell from offline-cache setup passed; alpha.11 installed runtime/frontend/desktop pending |
+| Native controller | Apple Silicon; macOS 15+ | Alpha.11 bundles a controller built, Developer ID-signed and notarized from its own revision (Gatekeeper: Notarized Developer ID); five published-bytes input journeys to a macOS 26.7.1 target passed with fresh captures; real agent frontends pending |
 | Public Node relay | Bundled Node.js 24.21.0 | Alpha.4 Darwin synthetic MCP journey and Linux MCP metadata checked; real SSH journey pending |
-| Linux x64 runtime | Rootless alpha.9 preview bundle | Linux x64 stock public bootstrap and Claude project configuration lifecycle: install, help, doctor, timed doctor, reinstall, same-version prior-receipt rollback and uninstall/cache retention; populated project configuration bytes and mode 0640 were restored. Complete frontend/SSH/physical desktop pending |
+| Linux x64 runtime | Rootless preview bundle | Alpha.9: Linux x64 stock public bootstrap and Claude project configuration lifecycle: install, help, doctor, timed doctor, reinstall, same-version prior-receipt rollback and uninstall/cache retention; populated project configuration bytes and mode 0640 were restored. Alpha.11 installer lifecycle, complete frontend/SSH/physical desktop pending |
 | Linux arm64 runtime | Preview bundle available | Archive integrity checked; runtime execution pending |
 | Home Manager vendoring | Opt-in Linux x64 alpha.9 consumer | October 12 package: 665 passing checks and one declared curl skip; normal serialized canary/follower delivery to one enabled Linux seat, with canary consumer default-off. Separate canonical installed-package two-task Claude synthetic MCP component observed; real SSH, physical desktop and complete frontend qualification pending |
 | Linux agent seat | SSH bridge to Darwin controller | Initial supported design; acceptance pending |
@@ -32,17 +32,14 @@ previews are published; fully qualified product releases remain zero.
 | Purple target indicator | Qualified filtered macOS capture only | Unqualified source prototype; no public Host binary or automatic setup |
 
 `project.yml` targets macOS 15.0 and `arm64`. This is a build baseline, not a
-claim that every later OS version is tested. The immutable alpha.9 preview
+claim that every later OS version is tested. The immutable alpha.11 preview
 publishes Darwin arm64, Linux x64 and Linux arm64 runtime archives. Its Darwin
-runtime reuses `bin/claude-kvm-daemon` from source
-`e00fcc86bbac4247d5a0847d7e656369c52cc15f`, with exact Developer ID signature,
-Apple Accepted controller-ZIP submission and corresponding source evidence.
-That acceptance does not cover the whole runtime archive. A bare binary has no
-stapled ticket. Linux still needs a configured Darwin controller through
-SSH. The older alpha1 preview retains its existing-controller prerequisite.
+runtime bundles `bin/claude-kvm-daemon` built, Developer ID-signed and
+notarized from `142743262d3242775f210c9d62a6b8e423c3ce5a`; the notarization covers the controller submission, not
+the whole runtime archive, and a bare binary has no stapled ticket. Linux still
+needs a configured Darwin controller through SSH.
 `versions.json` records scoped preview checks separately from
-fully qualified product releases. Its alpha.9 installer acceptance covers
-only the recorded public Linux package/configuration journey. An installed MCP entry and `doctor` result do not
+fully qualified product releases. An installed MCP entry and `doctor` result do not
 establish tool actions, returned-image rendering or target behavior.
 
 Historical alpha.8 public asset integrity, Linux bootstrap/configuration lifecycle and public-installed two-task Claude synthetic component observations remain scoped to alpha.8. They do not qualify alpha.9. The current Home Manager component has its own recorded evidence below.

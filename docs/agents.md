@@ -14,8 +14,9 @@ reference describes the current workflow; use your installed release's skill
 and discovered tool schemas when their versions differ.
 
 Frontends whose models were trained on the Anthropic `computer` tool or OpenAI
-`computer_call` can use the `computer` MCP tool. It is included in source after
-alpha.9 and is not in alpha.9 or earlier releases. It translates those action
+`computer_call` can use the `computer` MCP tool. It ships from alpha.10. In
+alpha.10 and alpha.11 the alias refuses `hold_key` and modifier clicks; later
+sources map them onto native `hold_key` and `mouse_click` modifiers. It translates those action
 shapes into ordinary Fruitctl batches with the same deadline, ownership and
 route labels. Actions the backend does not advertise are refused with
 `unsupported_action`; it never emulates them. The tool is reached through the
@@ -33,111 +34,25 @@ it does not mean a desktop session or native binary has been qualified.
 ## Install a pinned release
 
 The curated current preview is immutable
-[v0.1.0-alpha.9](https://github.com/xoxd-ai/fruitctl/releases/tag/v0.1.0-alpha.9),
-pinned to runtime producer `1ba90e84d4b6fe464c9146e7c41c4cffc3edf8e3`.
+[v0.1.0-alpha.11](https://github.com/xoxd-ai/fruitctl/releases/tag/v0.1.0-alpha.11),
+pinned to runtime producer `142743262d3242775f210c9d62a6b8e423c3ce5a` with a signed annotated tag.
 It provides the runtime, skill and adapters. The Darwin arm64 runtime includes
-the Developer ID-signed controller at `bin/claude-kvm-daemon`. Apple accepted
-its original controller-ZIP submission, produced from
-`e00fcc86bbac4247d5a0847d7e656369c52cc15f`. Alpha.9 reuses those unchanged
-native bytes; the complete runtime archive is separate and is not covered by
-that acceptance. Linux uses the separately configured SSH bridge to Darwin. The broker, target
-profile, credential provider, target Screen Sharing and any macOS consent remain
-operator-owned. The Host application and purple indicator remain source
-prototypes with private lab binaries and are not distributed in this preview.
-The runtime includes portable Host-installer payload and help only.
+the native controller at `bin/claude-kvm-daemon`, built, Developer ID-signed
+and notarized from the same revision. Linux, including Rocky Linux, uses the
+separately configured SSH bridge to Darwin. The broker, target profile,
+credential provider, target Screen Sharing and any macOS consent remain
+operator-owned. The Host application and purple indicator are not distributed
+in this preview; the runtime includes portable Host-installer payload and help
+only.
 
-Alpha.9 public installer scope is Linux x64 stock public bootstrap and Claude project configuration lifecycle: install, help, doctor, timed doctor, reinstall, same-version prior-receipt rollback and uninstall/cache retention; populated project configuration bytes and mode 0640 were restored. Complete platform, physical desktop, real SSH, native Host, consent and whole-frontend qualification remain pending; Gateway/Junie remains deferred.
-
-### Historical alpha.8 public installation and component evidence
-
-Alpha.8 public installer evidence is limited to
-Linux x64 stock public bootstrap and Claude project configuration lifecycle: dry-run, install, doctor, reinstall, same-version prior-receipt rollback and uninstall/cache retention; the populated project configuration was restored exactly, including mode 0640. Complete platform,
-real frontend and target desktop qualification remain pending. Use the
-[current installation guide](install.md); alpha.6 and older evidence below is
-historical and does not qualify alpha.8.
-
-Two fresh Claude Code CLI sessions used the public alpha.8 Linux x64 runtime and shipped skill against an owned synthetic desktop. The first observed three full images and made/reversed two clicks; the second reconnected and observed the restored scene. Both released their sessions.
-This is public-installed Claude synthetic MCP component evidence only. Physical
-desktop, SSH, native Host, consent and complete frontend qualification remain
-open; Gateway/Junie remains deferred.
-
-### Installed alpha.9 Home Manager component evidence
-
-On October 12, two fresh Claude Code CLI sessions used the installed alpha.9
-Home Manager package and shipped skill against an owned synthetic desktop.
-They observed four complete images, made and reversed two inputs, awaited two
-session releases and reconnected to the restored scene. Normal settings were
-retained without authentication, model or provider overrides. This is a
-canonical installed Home Manager synthetic MCP component observation, separate
-from the public bootstrap/configuration lifecycle. Real SSH, physical desktop,
-native Host, macOS consent, complete frontend, Gateway/Junie and product SLO
-qualification remain open. See the [current Home Manager pin and delivery
-scope](home-manager.md).
-
-### Historical alpha.8 Home Manager component evidence
-
-Separately, on October 11, two fresh Claude Code CLI sessions used the installed
-alpha.8 Home Manager package and shipped skill against an owned synthetic
-desktop. The first observed three complete images and made and reversed two
-inputs; the second reconnected and observed the restored scene. Both awaited
-session release. Normal settings digests and metadata remained intact at the
-recorded checks, without authentication or model overrides. This is a distinct
-installed Home Manager synthetic MCP component result; it does not transfer
-public-bootstrap, real SSH, physical desktop, native Host, macOS consent,
-complete frontend, Gateway/Junie or product SLO qualification. See the
-[current Home Manager pin and delivery scope](home-manager.md).
-
-These dated alpha.8 public-installed and Home Manager-installed components do not qualify alpha.9.
-
-### Historical installation evidence
-
-Historical alpha.6 has anonymous public asset verification and scoped Darwin
-ARM64 Junie project installer evidence; it does not qualify alpha.7 or any real
-frontend.
-
-Alpha.4 passed an anonymous Linux x64 stock Junie project bootstrap, installed
-help/doctor/reinstall, alternate-project-alias dry-run refusal and uninstall. A
-continuation initialized the MCP SDK against Junie's installed MCP launcher
-and called `listTools`, discovering four tool schemas without tool actions.
-Original unrelated configuration bytes/modes and 3,671 Linux runtime payload
-files were preserved; the generated identity marker is separate and installer
-history remains append-only. Actual frontend image/input/release/reconnect
-acceptance remains pending.
-
-On Darwin ARM64, alpha.4 passed an offline Junie project lifecycle through the
-bundled installer API and an installed SDK/shared-broker journey through the
-unchanged signed controller to a loopback RFB fixture. It verified four complete
-96×53 frames, one reconnect and release through both `task_complete` and
-`task_failed`. This is synthetic protocol evidence; the Darwin stock public
-bootstrap and actual frontends remain pending.
-
-Historical alpha.3 evidence: an anonymous Linux x64 stock bootstrap installed
-Claude project scope. A subsequent installed CLI continuation passed help,
-doctor, uninstall and post-uninstall doctor, preserving unrelated configuration
-bytes and modes.
-Its separate bundled-installer API checks cover 14 user/project lifecycle
-cases across seven adapters. Neither scope proves a real frontend or desktop
-journey.
-
-Historical alpha.2 evidence (release published 2026-10-06): its Linux x64 public
-download and bootstrap passed anonymous HTTPS
-acceptance on Rocky Linux 10.2 using isolated home and project paths containing
-spaces. All seven user adapters and Claude project installation, the bundled
-Node.js 24.21.0 launcher, all runtime hashes and permissions, aggregate doctor
-and every uninstall passed. Uninstalls restored unrelated configuration exactly.
-This evidence covers public packaging and configuration; each real frontend
-still needs image, input and lease acceptance.
-
-The immutable [v0.1.0-alpha.1 runtime preview](https://github.com/xoxd-ai/fruitctl/releases/tag/v0.1.0-alpha.1)
-remains pinned to `7064d349890a9b18717b62a142452363629681ee` and requires an
-existing Darwin native controller. Its earlier anonymous Codex user and Claude
-project bootstrap checks remain historical evidence for that release.
+Complete platform, physical desktop, real SSH, native Host, consent and
+whole-frontend qualification remain pending; Gateway/Junie remains deferred.
 
 ### Current install and recovery commands
 
 ```sh
-fruitctl install --agent codex --scope user --version v0.1.0-alpha.9 --target <profile> --dry-run
-fruitctl install --agent codex --scope user --version v0.1.0-alpha.9 --target <profile>
+fruitctl install --agent codex --scope user --version v0.1.0-alpha.11 --target <profile> --dry-run
+fruitctl install --agent codex --scope user --version v0.1.0-alpha.11 --target <profile>
 fruitctl doctor --agent codex --scope user
 fruitctl doctor --json
 fruitctl rollback --agent codex --scope user
@@ -160,7 +75,7 @@ manifest digest fail explicitly. No agent or GUI is launched and no root access
 or package-manager install scripts are needed.
 
 For one terminal operation, use the
-[published alpha.9 paste](install.md#one-terminal-paste-published-alpha-9).
+[published alpha.11 paste](install.md#one-terminal-paste-published-alpha-11).
 For installation by an agent, copy the
 [rendered prompt](https://fruitctl.clients.xoxd.ai/install-prompt.md).
 Replace `default` with your configured profile. Those routes select the same
@@ -179,20 +94,17 @@ process or service, create a target profile or credential, or grant macOS consen
 
 ## Install root and registration: current preview
 
-The current [v0.1.0-alpha.9 preview](https://github.com/xoxd-ai/fruitctl/releases/tag/v0.1.0-alpha.9)
+The current [v0.1.0-alpha.11 preview](https://github.com/xoxd-ai/fruitctl/releases/tag/v0.1.0-alpha.11)
 separates operational storage from adapter registration with
-`--install-root ABSOLUTE_DIRECTORY`. Its accepted public installer evidence is
-limited to Linux x64 stock public bootstrap and Claude project configuration lifecycle: install, help, doctor, timed doctor, reinstall, same-version prior-receipt rollback and uninstall/cache retention; populated project configuration bytes and mode 0640 were restored;
-Darwin alpha.9 runtime, installed SDK and actual frontend qualification remain
-pending. **Alpha.4 does not support this option.**
+`--install-root ABSOLUTE_DIRECTORY`. **Alpha.4 does not support this option.**
 See the
 [explicit install-root guide](install.md#explicit-install-root-current-preview)
-for the exact alpha.9 bootstrap pin, storage layout and recovery commands.
+for the exact alpha.11 bootstrap pin, storage layout and recovery commands.
 
 An explicit-root installation requires an explicit `--scope`. Use
 `--scope project --project-dir <absolute-project-directory>` to choose the
 project's MCP and skill destinations independently of the runtime cache, private
-installer state and launcher beneath the install root. The alpha.9 bootstrap
+installer state and launcher beneath the install root. The bootstrap
 passes `--project-dir` through; project scope still uses the current directory
 when it is omitted. With `--scope user`, registration still uses the supported
 user configuration and adapter environment rules. Choosing a storage root does
@@ -214,7 +126,7 @@ ignores an unknown `installRoot` property; passing it directly does not select
 storage. Omitting the option preserves the existing defaults, legacy receipts
 and older-release compatibility.
 
-Optional installer `--timings` is limited to the verified installed alpha.9 CLI and its installer commands; see [timing scope](install.md#optional-installer-timings). Do not pass it to the shell bootstrap, MCP or Host installer. Alpha.8 lacks that flag.
+Optional installer `--timings` is limited to an installed CLI from alpha.9 on and its installer commands; see [timing scope](install.md#optional-installer-timings). Do not pass it to the shell bootstrap, MCP or Host installer. Alpha.8 lacks that flag.
 
 ## Configuration destinations
 

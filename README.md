@@ -17,57 +17,17 @@ verified release, configures a named target, and checks a fresh observation
 before input. If the release does not support your controller and agent, it
 reports the missing prerequisite instead of claiming installation succeeded.
 
-The published immutable [v0.1.0-alpha.9 runtime preview](https://github.com/xoxd-ai/fruitctl/releases/tag/v0.1.0-alpha.9)
-uses producer `1ba90e84d4b6fe464c9146e7c41c4cffc3edf8e3`. Its 13
-public assets match the reviewed hashes and sizes through anonymous downloads.
-The bootstrap disables user curl configuration and retains explicit install-root
-support, normal-home storage and separate user/project registration choices.
-Its accepted public installer scope is Linux x64 stock public bootstrap and Claude project configuration lifecycle: install, help, doctor, timed doctor, reinstall, same-version prior-receipt rollback and uninstall/cache retention; populated project configuration bytes and mode 0640 were restored.
-Complete agent/IDE frontend, real SSH desktop control, optional Host and measured
-service objectives remain pending. The runtime includes portable Host-installer
-payload/help and optional installer `--timings`; neither supplies a native Host
-bundle, macOS grants or a latency SLO. The public Linux x64 installed alpha.9 CLI advertised `--timings`; timed doctor emitted the fixed nine-stage report with the same installation result as default doctor. This is optional installer measurement evidence and establishes no latency SLO or speedup.
-See the [exact install pins and component evidence](docs/install.md).
-
-Historical alpha.8 remains immutable at producer `ceb1d4643b8f3c66f744f536777214285a4d20ad`.
-Its anonymous thirteen-asset integrity, Linux x64 public bootstrap/configuration
-lifecycle and separate two-task Claude synthetic component observations remain
-scoped to alpha.8. Its installed Home Manager package and two-task synthetic
-journey are separate dated components. None transfers to alpha.9.
-
-Historical alpha.7 remains immutable at producer `cd34bbcdcc9e70bf25f77cbcfd1f129e1eac30db`.
-Its accepted public evidence covers Linux x64 stock bootstrap and Claude project
-configuration lifecycle: dry-run, install, doctor, reinstall, same-version
-prior-receipt rollback and uninstall, with unrelated configuration restored
-exactly. That evidence is historical and does not qualify alpha.8.
-
-Alpha.5 introduced the explicit install-root contract. Its producer
-`00beadf9a62189c6306f147c7d2aad128ff133d7` and older qualification records remain
-separate from alpha.7; older receipts qualify their recorded releases only.
-
-Historical alpha.6 Darwin ARM64 Junie project installer components are verified.
-Its combined installer/SDK run was unsuccessful; that evidence does not qualify
-alpha.7 or an actual Junie frontend.
-
-The historical immutable [v0.1.0-alpha.4 runtime preview](https://github.com/xoxd-ai/fruitctl/releases/tag/v0.1.0-alpha.4)
-ships bundled Node.js 24.21.0, the installer, shared skill and MCP/broker code.
-Its portable source is `e0f4d064b076e58b33856d877e0e1c9266f55177`. The Apple
-Silicon macOS 15+ runtime reuses the unchanged Developer ID-signed VNC
-controller originally produced from `e00fcc86bbac4247d5a0847d7e656369c52cc15f`.
-Apple accepted that original controller-ZIP submission; the complete runtime
-archive is separate.
-
-Alpha.4's anonymous Linux x64 Junie project bootstrap, installed CLI lifecycle
-and four-tool MCP metadata discovery have scoped evidence. No desktop tool
-action or frontend image rendering was exercised. On Darwin ARM64, alpha.4
-passed an offline Junie project lifecycle through the bundled installer API and
-an installed SDK/shared-broker journey through the unchanged signed controller
-to a loopback RFB fixture: four complete 96×53 frames, one reconnect and two
-terminal releases. These are synthetic protocol checks. Earlier seven-adapter,
-Claude bootstrap and Darwin image checks remain historical alpha.2/alpha.3
-evidence. Real frontends, desktop journeys, physical overlay exclusion, SSH
-adoption and measured service objectives remain pending. Linux uses the SSH
-bridge to a configured Darwin controller.
+The current preview is the immutable
+[v0.1.0-alpha.11 runtime preview](https://github.com/xoxd-ai/fruitctl/releases/tag/v0.1.0-alpha.11),
+producer `142743262d3242775f210c9d62a6b8e423c3ce5a` with a signed annotated
+tag. Its 13 public assets match the curated hashes through anonymous download.
+The Darwin ARM64 runtime bundles the native controller, built, Developer
+ID-signed and notarized from that revision. Linux, including Rocky Linux,
+reaches it through the SSH relay. Real agent frontends, the Linux-to-Darwin
+SSH journey, the optional Host and measured service objectives remain pending;
+no release is fully qualified yet. Older previews stay immutable and are listed
+in the [curated release inventory](docs/site/versions.json). See the
+[installation guide](docs/install.md) for exact pins.
 
 The canonical public documentation is live at
 [fruitctl.clients.xoxd.ai](https://fruitctl.clients.xoxd.ai/), with verified
