@@ -45,10 +45,11 @@ expected adoption posture. Claude Code and Codex are the first frontends to
 qualify; until a release carries their receipts they, like every other adapter,
 stay runtime experimental (see the evidence labels below).
 
-As of alpha.11 the broker reads the target credential from a private file only.
-Vault CLI and keychain providers with `type_secret` (TIN-6599), and refusing
-input while a system dialog, lock screen or sleep covers the desktop, are in
-review and not yet in a release.
+Alpha.11 reads the target credential from a private file only. The file,
+command (vault CLI), keychain and environment providers and `type_secret`
+(TIN-6599) are on `main` for the next release; see [secrets](secrets.md).
+Refusing input while a system dialog, lock screen or sleep covers the desktop
+is still in review.
 
 ### Non-goals
 
