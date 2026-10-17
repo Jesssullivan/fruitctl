@@ -73,6 +73,12 @@ final class HostApplicationController: NSObject, NSApplicationDelegate, NSMenuDe
     private var lastUIHeartbeat: UInt64?
     private var captureInProgress = false
     private var axSnapshotInProgress = false
+    private var axActionInProgress = false
+    /// The latest successful AX snapshot of the current activity; refs in
+    /// click_element/focus_element resolve only against it.
+    private var axGeneration: HostAXGeneration?
+    private var axGenerationCounter: UInt64 = 0
+    private var axPendingVerification: HostAXPendingVerification?
     /// UUID of the display capture is bound to; nil when it has none or the
     /// configured UUID is no longer online.
     private var boundDisplayUUID: String?
@@ -418,6 +424,28 @@ final class HostApplicationController: NSObject, NSApplicationDelegate, NSMenuDe
     private func clearActivityUI() {
         renderer.hide()
         captureReady = false; overlayReady = false; lastUIHeartbeat = nil
+        // Lease end, Stop, release and display change all discard element refs.
+        axGeneration = nil; axPendingVerification = nil
+    }
+
+    /// Ready lease owner on an unchanged display with nothing else in flight.
+    /// Runs before and again after every awaited AX step, so Stop (D15), a
+    /// lost lease (D14) or a display change between them wins.
+    private func requireAXOwner(session: String, connectionID: UUID, displayID: CGDirectDisplayID,
+                                geometry: HostDisplayGeometry) throws -> HostActivityLease {
+        let checkedAt = clock.milliseconds()
+        let current = try lease.requireOwner(sessionID: session, connectionID: connectionID,
+                                             displayGeneration: generation, now: checkedAt)
+        try requireAvailable()
+        guard accessibility.isTrusted() else { throw HostAccessibilityError.permissionRequired }
+        guard capture.displayID == displayID, HostDisplayGeometry.current(displayID) == geometry else {
+            throw HostLeaseError.displayChanged
+        }
+        guard HostLeaseState.isReady(now: checkedAt, uiHeartbeatAt: lastUIHeartbeat, captureReady: captureReady,
+                                     overlayReady: overlayReady && renderer.hasVisibleDisplayPanels) else {
+            throw HostLeaseError.notReady
+        }
+        return current
     }
 
     private func validateDisplay(_ request: HostRequest) throws {
@@ -504,7 +532,7 @@ final class HostApplicationController: NSObject, NSApplicationDelegate, NSMenuDe
                 status["idle_reference_exporting"] = .boolean(idleReference.isExporting)
                 status["capabilities"] = .array(["capture", "begin_activity", "renew_activity",
                                                  "release_activity", "export_idle_reference",
-                                                 "ax_snapshot"].map { .string($0) })
+                                                 "ax_snapshot", "ax_action"].map { .string($0) })
                 status["input_service"] = .boolean(false)
                 return .ok(request, status)
             case "begin_activity":
@@ -568,7 +596,7 @@ final class HostApplicationController: NSObject, NSApplicationDelegate, NSMenuDe
                                             displayGeneration: generation, now: now)
                 guard HostLeaseState.isReady(now: now, uiHeartbeatAt: lastUIHeartbeat,
                     captureReady: captureReady, overlayReady: overlayReady && renderer.hasVisibleDisplayPanels),
-                    !captureInProgress, !axSnapshotInProgress, !idleReference.isExporting else {
+                    !captureInProgress, !axSnapshotInProgress, !axActionInProgress, !idleReference.isExporting else {
                     throw HostLeaseError.notReady
                 }
                 captureInProgress = true
@@ -601,7 +629,7 @@ final class HostApplicationController: NSObject, NSApplicationDelegate, NSMenuDe
                                             displayGeneration: generation, now: now)
                 guard HostLeaseState.isReady(now: now, uiHeartbeatAt: lastUIHeartbeat,
                     captureReady: captureReady, overlayReady: overlayReady && renderer.hasVisibleDisplayPanels),
-                    !captureInProgress, !axSnapshotInProgress, !idleReference.isExporting else {
+                    !captureInProgress, !axSnapshotInProgress, !axActionInProgress, !idleReference.isExporting else {
                     throw HostLeaseError.notReady
                 }
                 guard accessibility.isTrusted() else { throw HostAccessibilityError.permissionRequired }
@@ -610,7 +638,7 @@ final class HostApplicationController: NSObject, NSApplicationDelegate, NSMenuDe
                     throw HostCaptureError.displayUnavailable
                 }
                 let applications = accessibility.applications(focusedOnly: axRequest.focusedApplicationOnly,
-                                                              excluding: getpid())
+                                                              menuExtras: axRequest.menuExtras, excluding: getpid())
                 guard !applications.isEmpty else { throw HostAccessibilityError.applicationUnavailable }
                 axSnapshotInProgress = true
                 defer { axSnapshotInProgress = false }
@@ -619,9 +647,10 @@ final class HostApplicationController: NSObject, NSApplicationDelegate, NSMenuDe
                     // UI heartbeat and display notifications stay responsive.
                     let deadline = DispatchTime.now().uptimeNanoseconds
                         + HostAccessibilitySnapshot.budgetNanoseconds
-                    let snapshot = try await Task.detached(priority: .userInitiated) {
-                        try HostAccessibilitySnapshot.build(applications: applications, request: axRequest,
-                            geometry: geometry) { DispatchTime.now().uptimeNanoseconds >= deadline }
+                    let number = axGenerationCounter &+ 1
+                    let built = try await Task.detached(priority: .userInitiated) {
+                        try HostAccessibilitySnapshot.buildRetained(applications: applications, request: axRequest,
+                            geometry: geometry, generation: number) { DispatchTime.now().uptimeNanoseconds >= deadline }
                     }.value
                     let completedAt = clock.milliseconds()
                     let current = try lease.requireOwner(sessionID: session, connectionID: connectionID,
@@ -635,12 +664,20 @@ final class HostApplicationController: NSObject, NSApplicationDelegate, NSMenuDe
                         captureReady: captureReady, overlayReady: overlayReady && renderer.hasVisibleDisplayPanels) else {
                         throw HostLeaseError.notReady
                     }
+                    axGenerationCounter = number
+                    axGeneration = HostAXGeneration(number: number, sessionID: session,
+                        displayGeneration: generation, geometry: geometry, elements: built.elements)
+                    axPendingVerification = nil
                     return .ok(request, readiness(now: completedAt, activity: current)
-                        .merging(snapshot) { _, value in value })
+                        .merging(built.value) { _, value in value })
                 } catch {
                     if lease.release(connectionID: connectionID, sessionID: session) { clearActivityUI() }
                     throw error
                 }
+            case "ax_action":
+                return .ok(request, try await axAction(request, connectionID: connectionID))
+            case "ax_verify":
+                return .ok(request, try await axVerify(request, connectionID: connectionID))
             case "export_idle_reference":
                 try validateDisplay(request)
                 guard try request.requiredString("instance_id") == instanceID else {
@@ -669,8 +706,135 @@ final class HostApplicationController: NSObject, NSApplicationDelegate, NSMenuDe
             return .failure(id: request.id, message: error.rawValue)
         } catch let error as HostAccessibilityError {
             return .failure(id: request.id, message: error.rawValue)
+        } catch let error as HostAXActionError {
+            return .failure(id: request.id, message: error.rawValue)
         } catch {
             return .failure(id: request.id, message: "host_action_failed")
+        }
+    }
+
+    /// click_element / focus_element. Reads the element off the main actor,
+    /// re-checks the lease and Stop, then makes exactly one AX call on the main
+    /// actor so Stop cannot interleave between the check and the call. An
+    /// unsupported action returns a framebuffer point for the broker's VNC
+    /// click instead; an indeterminate one is never retried or clicked.
+    private func axAction(_ request: HostRequest, connectionID: UUID) async throws -> [String: HostValue] {
+        try validateDisplay(request)
+        try requireAvailable()
+        let axRequest = try HostAXActionRequest.parse(request.params)
+        let session = try request.requiredString("session_id")
+        let displayID = capture.displayID
+        guard let geometry = HostDisplayGeometry.current(displayID) else { throw HostCaptureError.displayUnavailable }
+        _ = try requireAXOwner(session: session, connectionID: connectionID, displayID: displayID, geometry: geometry)
+        guard !captureInProgress, !axSnapshotInProgress, !axActionInProgress, !idleReference.isExporting else {
+            throw HostLeaseError.notReady
+        }
+        guard let snapshot = axGeneration else { throw HostAXActionError.staleRef }
+        let target = try snapshot.resolve(axRequest, sessionID: session, displayGeneration: generation,
+                                          geometry: geometry)
+        let surface = snapshot.surface(of: axRequest.ref)
+        axActionInProgress = true
+        defer { axActionInProgress = false }
+        do {
+            let deadline = DispatchTime.now().uptimeNanoseconds + HostAXActionPlanner.budgetNanoseconds
+            let node = target.node
+            let read = await Task.detached(priority: .userInitiated) { node.liveState() }.value
+            let state: HostAXLiveState
+            switch read {
+            case .invalid: throw HostAXActionError.staleRef
+            case .unresponsive: throw HostAXActionError.unreachable
+            case .live(let live): state = live
+            }
+            let remote = state.ownerProcessID.map {
+                $0 != target.processID && accessibility.isSystemRemoteViewService(processID: $0)
+            } ?? false
+            let plan = try HostAXActionPlanner.plan(axRequest.kind, state: state, surface: surface,
+                geometry: geometry, remoteViewService: remote, vncFallback: axRequest.vncFallback)
+            _ = try requireAXOwner(session: session, connectionID: connectionID, displayID: displayID,
+                                   geometry: geometry)
+            let outcome: HostAXActionOutcome
+            func fallback(_ x: Int, _ y: Int) -> HostAXActionOutcome {
+                axPendingVerification = HostAXPendingVerification(generation: axRequest.generation,
+                    ref: axRequest.ref, kind: axRequest.kind, before: state)
+                return HostAXActionOutcome(request: axRequest, surface: surface, state: state,
+                    path: "vnc_click_required", axResult: nil, verified: nil, point: (x, y))
+            }
+            switch plan {
+            case .vncClick(let x, let y):
+                outcome = fallback(x, y)
+            case .perform(let operation):
+                switch node.perform(operation) {
+                case .invalid: throw HostAXActionError.staleRef
+                case .permissionRequired: throw HostAccessibilityError.permissionRequired
+                case .unsupported:
+                    // The element refused before acting: the same rules as
+                    // planning decide whether a VNC click is safe.
+                    guard case .vncClick(let x, let y) = try HostAXActionPlanner.vncClick(state: state,
+                        geometry: geometry, remoteViewService: remote, allowed: axRequest.vncFallback) else {
+                        throw HostAXActionError.unsupported
+                    }
+                    outcome = fallback(x, y)
+                case let result:
+                    let kind = axRequest.kind
+                    let verified = await Task.detached(priority: .userInitiated) {
+                        HostAXVerifier.poll(kind, operation: operation, before: state, read: { node.liveState() },
+                            expired: { DispatchTime.now().uptimeNanoseconds >= deadline },
+                            pause: { usleep(useconds_t(HostAXActionPlanner.pollNanoseconds / 1_000)) })
+                    }.value
+                    outcome = HostAXActionOutcome(request: axRequest, surface: surface, state: state,
+                        path: operation.path, axResult: result, verified: verified, point: nil)
+                }
+            }
+            let current = try requireAXOwner(session: session, connectionID: connectionID, displayID: displayID,
+                                              geometry: geometry)
+            return readiness(now: clock.milliseconds(), activity: current)
+                .merging(["ax_action": .object(outcome.metadata)]) { _, value in value }
+        } catch {
+            if lease.release(connectionID: connectionID, sessionID: session) { clearActivityUI() }
+            throw error
+        }
+    }
+
+    /// Verifies the broker's VNC fallback click against the before-state that
+    /// ax_action recorded. Consumes that record; it cannot be replayed.
+    private func axVerify(_ request: HostRequest, connectionID: UUID) async throws -> [String: HostValue] {
+        try validateDisplay(request)
+        try requireAvailable()
+        let axRequest = try HostAXActionRequest.parse(request.params)
+        let session = try request.requiredString("session_id")
+        let displayID = capture.displayID
+        guard let geometry = HostDisplayGeometry.current(displayID) else { throw HostCaptureError.displayUnavailable }
+        _ = try requireAXOwner(session: session, connectionID: connectionID, displayID: displayID, geometry: geometry)
+        guard !captureInProgress, !axSnapshotInProgress, !axActionInProgress, !idleReference.isExporting else {
+            throw HostLeaseError.notReady
+        }
+        guard let pending = axPendingVerification, pending.matches(axRequest) else {
+            throw HostLeaseError.invalidParameters
+        }
+        axPendingVerification = nil
+        guard let snapshot = axGeneration else { throw HostAXActionError.staleRef }
+        let node = try snapshot.resolve(axRequest, sessionID: session, displayGeneration: generation,
+                                        geometry: geometry).node
+        axActionInProgress = true
+        defer { axActionInProgress = false }
+        do {
+            let deadline = DispatchTime.now().uptimeNanoseconds + HostAXActionPlanner.budgetNanoseconds
+            let kind = axRequest.kind
+            let before = pending.before
+            let verified = await Task.detached(priority: .userInitiated) {
+                HostAXVerifier.poll(kind, operation: nil, before: before, read: { node.liveState() },
+                    expired: { DispatchTime.now().uptimeNanoseconds >= deadline },
+                    pause: { usleep(useconds_t(HostAXActionPlanner.pollNanoseconds / 1_000)) })
+            }.value
+            let current = try requireAXOwner(session: session, connectionID: connectionID, displayID: displayID,
+                                              geometry: geometry)
+            return readiness(now: clock.milliseconds(), activity: current).merging(["ax_verify": .object([
+                "ref": .string(axRequest.ref), "action": .string(kind.rawValue),
+                "generation": .integer(Int64(clamping: axRequest.generation)), "verified": .boolean(verified)])
+            ]) { _, value in value }
+        } catch {
+            if lease.release(connectionID: connectionID, sessionID: session) { clearActivityUI() }
+            throw error
         }
     }
 
@@ -703,7 +867,8 @@ struct FruitctlHostMain {
                 The local menu can enable/disable capture; IPC cannot change the opt-in.
                 Permission requests require the explicit
                 --enable-capture --request-screen-capture attended application flags.
-                Raw VNC exclusion is unsupported. Input stays on the controlling Darwin seat.
+                Raw VNC exclusion is unsupported. Input stays on the controlling Darwin seat;
+                the Host performs only single Accessibility element actions under a lease.
                 """)
             case .doctor:
                 var info = stat()

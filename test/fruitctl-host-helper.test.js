@@ -1399,3 +1399,149 @@ test('a Host accessibility refusal keeps its sanitized typed reason', async () =
     });
   } finally { await executor.close(); }
 });
+
+// TIN-6603 M2b part 2: ref-addressed click_element / focus_element.
+const pressed = params => ({ ref: params.ref, action: params.action, generation: params.generation,
+  path: params.action === 'press' ? 'ax_press' : 'ax_focus', surface: 'sheet', role: 'AXButton',
+  ax_result: 'performed', verified: true });
+const axActionHost = ({ outcome = pressed, verified = true, snapshot = axSnapshot({ generation: 4 }),
+  events = [], refuse } = {}) => ({ alter(request, response) {
+  events.push(request.action);
+  if (refuse?.[request.action]) return refused(request, refuse[request.action]);
+  const altered = axHost({ snapshot }).alter(request, response);
+  if (!altered.success) return altered;
+  if (request.action === 'health') altered.result.capabilities.push('ax_action');
+  if (request.action === 'ax_action') altered.result.ax_action = outcome(request.params);
+  if (request.action === 'ax_verify') altered.result.ax_verify = { ref: request.params.ref,
+    action: request.params.action, generation: request.params.generation, verified };
+  return altered;
+} });
+
+test('click_element and focus_element act through the Host on a ref from the latest snapshot', async () => {
+  const { executor, vnc, host } = await fixture({ helperOptions: axActionHost() });
+  try {
+    assert.ok(['click_element', 'focus_element'].every(action => executor.capabilities.actions.includes(action)));
+    await executor.execute([{ action: 'ax_snapshot' }]);
+    const [clicked] = await executor.execute([{ action: 'click_element', ref: 'ax:77:0.0' }]);
+    const request = host.requests.find(entry => entry.action === 'ax_action');
+    assert.deepEqual({ ref: request.params.ref, action: request.params.action, generation: request.params.generation,
+      vnc_fallback: request.params.vnc_fallback, session: request.params.session_id },
+    { ref: 'ax:77:0.0', action: 'press', generation: 4, vnc_fallback: false, session: host.state().session_id });
+    assert.deepEqual(clicked.result.ax_action, { ref: 'ax:77:0.0', action: 'click_element', surface: 'sheet',
+      role: 'AXButton', path: 'ax_press', verified: true, ax_result: 'performed' });
+    assert.equal(clicked.result.detail, 'click_element ax:77:0.0: ax_press, verified true');
+    const [focused] = await executor.execute([{ action: 'focus_element', ref: 'ax:77:0' }]);
+    assert.equal(focused.result.ax_action.path, 'ax_focus');
+    assert.equal(host.requests.filter(entry => entry.action === 'ax_action').at(-1).params.action, 'focus');
+    // The AX path never touches VNC input.
+    assert.deepEqual(vnc.calls, []);
+  } finally { await executor.close(); }
+});
+
+test('element actions refuse before admission without a current ref, a capable Host or the grant', async () => {
+  const refusedWith = (code, pattern) => error => isPreAdmissionRefusal(error) &&
+    (code === undefined || error.code === code) && pattern.test(error.message);
+  {
+    const { executor, host } = await fixture({ helperOptions: axActionHost() });
+    try {
+      await assert.rejects(executor.execute([{ action: 'click_element', ref: 'ax:77:0.0' }]),
+        refusedWith('stale_ref', /latest ax_snapshot/));
+      assert.deepEqual(host.requests.map(entry => entry.action), ['health']);
+      await executor.execute([{ action: 'ax_snapshot' }]);
+      for (const ref of ['ax:77:0.5', undefined]) {
+        await assert.rejects(executor.execute([{ action: 'focus_element', ref }]), error => isPreAdmissionRefusal(error));
+      }
+      await assert.rejects(executor.execute([{ action: 'click_element', ref: 'ax:77:0.0;x' }]),
+        refusedWith(undefined, /Invalid click_element ref/));
+      assert.equal(host.requests.some(entry => entry.action === 'ax_action'), false);
+    } finally { await executor.close(); }
+  }
+  {
+    // A snapshot from a Host without element actions yields no refs.
+    const { executor, host } = await fixture({ helperOptions: axHost() });
+    try {
+      assert.equal(executor.capabilities.actions.includes('click_element'), false);
+      await executor.execute([{ action: 'ax_snapshot' }]);
+      await assert.rejects(executor.execute([{ action: 'click_element', ref: 'ax:77:0.0' }]),
+        refusedWith(undefined, /predates it/));
+      assert.equal(host.requests.some(entry => entry.action === 'ax_action'), false);
+    } finally { await executor.close(); }
+  }
+  const { executor } = await fixture({ helperOptions: axActionHost({ snapshot: axSnapshot({ generation: 2 }) }) });
+  try {
+    await executor.execute([{ action: 'ax_snapshot' }]);
+    // D15: a Host that last reported the human Stop latch gets no element action.
+    executor.humanStopLatched = true;
+    await assert.rejects(executor.execute([{ action: 'focus_element', ref: 'ax:77:0.0' }]),
+      refusedWith('human_stop_latched', /Stop is latched/));
+    executor.humanStopLatched = false;
+    executor.accessibilityTrusted = false;
+    await assert.rejects(executor.execute([{ action: 'click_element', ref: 'ax:77:0.0' }]),
+      refusedWith('accessibility_permission_required', /Accessibility grant/));
+  } finally { await executor.close(); }
+});
+
+test('Host element refusals keep a typed code and retire the lane with no VNC click', async () => {
+  for (const reason of ['stale_ref', 'ax_unreachable', 'ax_action_unsupported']) {
+    const { executor, vnc } = await fixture({ config: { ...configuration(), mapping },
+      helperOptions: axActionHost({ refuse: { ax_action: reason } }) });
+    try {
+      await executor.execute([{ action: 'ax_snapshot' }]);
+      await assert.rejects(executor.execute([{ action: 'click_element', ref: 'ax:77:0.0' }]), error =>
+        error.code === reason && !isPreAdmissionRefusal(error) && error.message.includes(reason));
+      assert.ok(executor.failed);
+      assert.equal(vnc.calls.some(action => action.action === 'mouse_click'), false);
+    } finally { await executor.close(); }
+  }
+});
+
+test('an unsupported AX action falls back to one VNC click through the qualified input path, then verifies', async () => {
+  const events = [];
+  const fallback = params => ({ ref: params.ref, action: params.action, generation: params.generation,
+    path: 'vnc_click_required', surface: 'menu_extra', role: 'AXMenuBarItem', subrole: 'AXMenuExtra',
+    fallback_point: { x: 101, y: 61 } });
+  const { executor, vnc, host } = await fixture({ config: { ...configuration(), mapping },
+    nativeOptions: { run(actions) { events.push(...actions.map(action => `native:${action.action}`));
+      return actions.map(() => ({ id: 'native-input', result: { detail: 'input acknowledged' } })); } },
+    helperOptions: axActionHost({ outcome: fallback, verified: false, events }) });
+  try {
+    await executor.execute([{ action: 'ax_snapshot' }]);
+    events.length = 0;
+    const [response] = await executor.execute([{ action: 'click_element', ref: 'ax:77:0.0' }]);
+    assert.equal(host.requests.find(entry => entry.action === 'ax_action').params.vnc_fallback, true);
+    // Framebuffer (101, 61) of 512x256 lands at (50, 30) in the 256x128 mapped display.
+    assert.deepEqual(vnc.calls.filter(action => action.action === 'mouse_click'), [{ action: 'mouse_click', x: 50, y: 30 }]);
+    // The click follows the mapping check and the native observation handshake.
+    assert.deepEqual(vnc.calls.map(action => action.action), ['health', 'adopt_observation', 'mouse_click']);
+    assert.deepEqual(events.filter(name => ['ax_action', 'capture', 'native:mouse_click', 'ax_verify'].includes(name)),
+      ['ax_action', 'capture', 'native:mouse_click', 'ax_verify']);
+    const verify = host.requests.find(entry => entry.action === 'ax_verify').params;
+    assert.deepEqual([verify.ref, verify.action, verify.generation], ['ax:77:0.0', 'press', 4]);
+    assert.deepEqual(response.result.ax_action, { ref: 'ax:77:0.0', action: 'click_element', surface: 'menu_extra',
+      role: 'AXMenuBarItem', subrole: 'AXMenuExtra', path: 'vnc_click', verified: false, point: { x: 50, y: 30 } });
+  } finally { await executor.close(); }
+});
+
+test('AX action receipts that do not answer the request fail closed', async t => {
+  const cases = {
+    'other ref': params => ({ ...pressed(params), ref: 'ax:77:0' }),
+    'press reported as focus': params => ({ ...pressed(params), path: 'ax_focus' }),
+    'missing verdict': params => { const { verified, ...rest } = pressed(params); return rest; },
+    'unknown surface': params => ({ ...pressed(params), surface: 'dock' }),
+    'unoffered fallback': params => ({ ref: params.ref, action: params.action, generation: params.generation,
+      path: 'vnc_click_required', surface: 'window', role: 'AXImage', fallback_point: { x: 1, y: 1 } }),
+    'fallback outside framebuffer': params => ({ ref: params.ref, action: params.action, generation: params.generation,
+      path: 'vnc_click_required', surface: 'window', role: 'AXImage', fallback_point: { x: 512, y: 1 } }),
+  };
+  for (const [name, outcome] of Object.entries(cases)) {
+    await t.test(name, async () => {
+      const { executor, vnc } = await fixture({ helperOptions: axActionHost({ outcome }) });
+      try {
+        await executor.execute([{ action: 'ax_snapshot' }]);
+        await assert.rejects(executor.execute([{ action: 'click_element', ref: 'ax:77:0.0' }]),
+          /Invalid host-helper AX action receipt|outside the qualified mapping/);
+        assert.equal(vnc.calls.some(action => action.action === 'mouse_click'), false);
+      } finally { await executor.close(); }
+    });
+  }
+});

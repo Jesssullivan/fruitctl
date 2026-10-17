@@ -45,8 +45,16 @@ const ignore = () => z.array(rect()).max(MAX_REGIONS)
   .describe('Scaled-space rectangles excluded from comparison (clocks, cursors, spinners)');
 const stableMs = () => z.number().int().min(50).max(10000);
 // D16: the name of a secret the operator allowlisted for this target.
-const secretRef = () => z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$/).optional()
+const SECRET_NAME = /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$/;
+const secretRef = () => z.string().regex(SECRET_NAME).optional()
   .describe('type_secret: operator-allowlisted secret name (never the secret itself)');
+// An element ref from ax_snapshot. The two forms are disjoint (a secret name
+// has no colon), and each action accepts only its own.
+const AX_ELEMENT_REF = /^ax:[0-9]{1,10}:0(\.[0-9]{1,3}){0,12}$/;
+const commandRef = () => z.string()
+  .regex(/^(?:[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}|ax:[0-9]{1,10}:0(?:\.[0-9]{1,3}){0,12})$/).optional()
+  .describe('type_secret: operator-allowlisted secret name (never the secret itself); ' +
+    'click_element / focus_element: an element ref from the latest ax_snapshot');
 
 export function validateActionParameters(input) {
   const required = {
@@ -57,9 +65,17 @@ export function validateActionParameters(input) {
     hold_key: ['key', 'duration_ms'], mouse_down: ['x', 'y'],
     zoom: ['x', 'y', 'width', 'height'], wait_for_stable: ['stable_ms', 'timeout_ms'],
     expect_change: ['x', 'y', 'width', 'height'],
+    click_element: ['ref'], focus_element: ['ref'],
   }[input.action] || [];
   for (const field of required) {
     if (input[field] === undefined) throw new Error(`Missing ${field} for ${input.action}`);
+  }
+  if (input.ref !== undefined && (input.action === 'click_element' || input.action === 'focus_element') &&
+      !AX_ELEMENT_REF.test(input.ref)) {
+    throw new Error(`${input.action} takes an element ref from ax_snapshot`);
+  }
+  if (input.action === 'type_secret' && input.ref !== undefined && !SECRET_NAME.test(input.ref)) {
+    throw new Error('type_secret takes an allowlisted secret name');
   }
   // D16: a secret is named, never sent. The broker resolves the ref.
   if (input.action === 'type_secret') {
@@ -139,8 +155,11 @@ export function vncCommandTool() {
       '                                            (clicks x,y first); the value is never returned',
       '  clipboard_read                          → target clipboard text, when the profile enables it',
       '  detect_elements                         → OCR text detection with bounding boxes',
-      '  ax_snapshot    {depth?, focused_app?}   → Host route only: live Accessibility tree with',
-      '                                            role/label/value/frame and structural refs',
+      '  ax_snapshot    {depth?, focused_app?, menu_extras?} → Host route only: live Accessibility',
+      '                                            tree with role/label/value/frame and element refs',
+      '  click_element  {ref}                    → Host route only: AXPress a ref from the latest',
+      '                                            ax_snapshot; result names the path and verified',
+      '  focus_element  {ref}                    → Host route only: focus a ref (AXFocused)',
       '  configure      {<params>}               → set timing/display params at runtime',
       '  configure      {reset: true}            → reset all params to defaults',
       '  get_timing                              → get current timing + display params',
@@ -157,7 +176,7 @@ export function vncCommandTool() {
         'mouse_click', 'mouse_double_click', 'mouse_move', 'hover', 'nudge',
         'mouse_drag', 'scroll',
         'key_tap', 'key_combo', 'key_type', 'paste', 'type_secret', 'clipboard_read',
-        'detect_elements', 'ax_snapshot',
+        'detect_elements', 'ax_snapshot', 'click_element', 'focus_element',
         'configure', 'get_timing',
         'wait', 'health', 'shutdown',
         'triple_click', 'cursor_position', 'hold_key', 'mouse_down', 'mouse_up',
@@ -174,7 +193,7 @@ export function vncCommandTool() {
       key: z.string().optional().describe('Key name or combo string (e.g. "cmd+c")'),
       keys: z.array(z.string()).optional().describe('Array of key names for combo (e.g. ["cmd","shift","3"])'),
       text: z.string().optional().describe('Text to type or paste'),
-      ref: secretRef(),
+      ref: commandRef(),
       direction: z.enum(['up', 'down', 'left', 'right']).optional().describe('Scroll direction'),
       amount: z.number().int().min(1).max(20).optional().describe('Scroll amount (default 3)'),
       ms: z.number().int().min(50).max(10000).optional().describe('Wait duration in ms (default 500)'),
@@ -187,6 +206,8 @@ export function vncCommandTool() {
         .describe('wait_for_stable: give up with a typed stable_timeout error after this long'),
       depth: z.number().int().min(1).max(12).optional().describe('ax_snapshot levels below each application (default 6)'),
       focused_app: z.boolean().optional().describe('ax_snapshot: frontmost application only (default true)'),
+      menu_extras: z.boolean().optional()
+        .describe('ax_snapshot: also read menu-bar extras, Control Center and their open menus (default false)'),
       // Configure params (runtime timing/display adjustment)
       reset: z.boolean().optional().describe('Reset all params to defaults'),
       max_dimension: z.number().int().min(320).max(3840).optional()

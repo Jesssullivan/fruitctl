@@ -75,13 +75,13 @@ request OS consent; Disable capture persists opt-out, clears the current lease,
 hides panels, and prevents begin/capture. Neither action clears human stop or
 creates a lease. IPC cannot enable capture, grant permission, or change these
 preferences. Stop immediately invalidates
-the app's lease, hides panels, and latches begin/renew/capture/AX snapshot unavailable. Only
+the app's lease, hides panels, and latches begin/renew/capture/AX snapshot/AX action unavailable. Only
 the local menu's Allow action clears that latch; IPC and session/display wake
 events cannot clear it. Allow establishes no lease and does not override other
 readiness checks. The latch lasts for the resident process lifetime; restarting
 the app is a new attended launch. The menu uses AppKit and requests no
-Accessibility permission; `ax_snapshot` only uses a grant the user made in
-System Settings.
+Accessibility permission; `ax_snapshot`, `ax_action` and `ax_verify` only use a
+grant the user made in System Settings.
 
 The persistent capture choice and process-local human stop latch are distinct.
 After any restart, a controller still needs a fresh lease and complete excluded
@@ -119,6 +119,8 @@ Each connection is serialized, and at most eight same-user connections attach.
 | `release_activity` | `session_id`; releases only this connection's activity and hides the indicator. |
 | `capture` / `screenshot` | `session_id`, optional `max_dimension` (256–4096; default 1280), same configured display. Requires a live ready lease. Returns a complete PNG with image and display mapping metadata. |
 | `ax_snapshot` | `session_id`, optional `depth` (1–12; default 6) and boolean `focused_app` (default `true`: frontmost application only; `false`: every regular visible application). Requires the same live ready lease as capture and the Accessibility grant. Reads the live tree off the main thread within a 200 ms budget, breadth first, at most 1,500 nodes and 200 children per element. Returns readiness plus `ax_snapshot`. |
+| `ax_action` | `session_id`, `generation` (from the latest `ax_snapshot` of this lease), `ref`, `action` (`press` or `focus`), optional boolean `vnc_fallback`. Requires the same live ready lease, the Accessibility grant and no other capture or AX work in flight. Reads the element off the main thread, re-checks the lease, Stop latch and display, then makes exactly one AX call on the main thread: `AXPress` (or `AXShowMenu` for a menu-bar item without it) or `AXFocused` (or `AXRaise` for a window). It then polls the element for up to 250 ms in total. Returns readiness plus `ax_action`. |
+| `ax_verify` | `session_id`, `generation`, `ref`, `action`, matching the one `ax_action` that returned `vnc_click_required`. Consumes that record and polls the element against its pre-click state. Returns readiness plus `ax_verify: {ref, action, generation, verified}`. |
 | `export_idle_reference` | `instance_id` must match the resident app; `reference_id` must match the transient local-menu arm reported by `health`. Optional display/backend must match configuration. Consumes the arm once and exports one full-native PNG plus a hashed private receipt while naturally idle. Creates no lease, readiness or input observation. |
 
 Unknown actions, including OCR, diff, ordinary baseline and custom input, fail explicitly
@@ -146,12 +148,37 @@ node_count, truncated}`. Each node has `ref`, `parent`, `depth`, `role` and,
 when present, `subrole`, `label` (title or description), `value` and `frame`.
 Frames are the element's visible part on the configured display in framebuffer
 pixels, or null when it has none. Refs such as `ax:<pid>:0.2.1` are structural
-paths: they stay stable while the tree's shape is unchanged and are not handles.
-Secure text fields report `value_redacted: true` and never a value. Text is
-bounded to 256 characters. Every call reads live state; nothing is cached, and
-the snapshot authorizes no input. Missing trust fails with
+paths within one snapshot. The snapshot also reports `generation` and
+`menu_extras`; with `menu_extras: true` the extras menu bar is the first child
+of each application read. Secure text fields report `value_redacted: true` and
+never a value. Text is bounded to 256 characters. Every call reads live state,
+and the snapshot authorizes no input. Missing trust fails with
 `accessibility_permission_required`; no candidate application fails with
 `accessibility_application_unavailable`.
+
+The Host keeps only the latest successful snapshot of the current lease as the
+generation `ax_action` resolves refs against. Each ref keeps its element handle,
+so it acts on the same element object or fails, never on a successor at the
+same position. A lease end, release, Stop, display change or newer snapshot
+discards the generation. `ax_action` fails with typed messages:
+
+- `stale_ref`: a different generation, session, display generation or
+  geometry; an unknown ref; or the element was destroyed.
+- `ax_unreachable`: the element's owner did not answer, or it is hosted by a
+  system remote view service (an out-of-process, non-regular Apple process) and
+  cannot act.
+- `ax_action_unsupported`: no AX action applies and a VNC click is not safe. A
+  click is not safe when `vnc_fallback` is false, the element is a container, or
+  it has no visible frame.
+
+When the element definitely cannot act (no applicable action, or
+`kAXErrorActionUnsupported` / `kAXErrorAttributeUnsupported`) and a click is
+safe, `ax_action` returns `path: "vnc_click_required"` with `fallback_point` in
+framebuffer pixels. A timeout or generic failure is `ax_result:
+"indeterminate"` and is verified, never clicked. The result names `path`,
+`surface` (nearest sheet, popover, menu, menu bar, menu extra, Control Center,
+window or application), `role`, `subrole` and `verified`. Element values are
+compared on the Host and never returned.
 A display-change notification invalidates the lease, advances generation, and
 rebuilds all display panels. A capture with changed/incomplete geometry fails.
 `activity_eligible` reports the current owned console-session and awake-display

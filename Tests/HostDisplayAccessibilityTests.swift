@@ -16,6 +16,8 @@ private final class FakeAXNode: HostAXNode {
 
     func attributes() -> HostAXAttributes { attributeReads += 1; return values }
     func children(limit: Int) -> [HostAXNode] { childReads += 1; return Array(nested.prefix(limit)) }
+    func liveState() -> HostAXLiveRead { .invalid }
+    func perform(_ operation: HostAXOperation) -> HostAXPerformResult { .unsupported }
 }
 
 private struct FakeAccessibilityProvider: HostAccessibilityProvider {
@@ -23,9 +25,10 @@ private struct FakeAccessibilityProvider: HostAccessibilityProvider {
     var focused: [HostAXApplication]
     var all: [HostAXApplication]
     func isTrusted() -> Bool { trusted }
-    func applications(focusedOnly: Bool, excluding processID: pid_t) -> [HostAXApplication] {
+    func applications(focusedOnly: Bool, menuExtras: Bool, excluding processID: pid_t) -> [HostAXApplication] {
         (focusedOnly ? focused : all).filter { $0.processID != processID }
     }
+    func isSystemRemoteViewService(processID: pid_t) -> Bool { false }
 }
 
 final class HostDisplayAccessibilityTests: XCTestCase {
@@ -113,8 +116,10 @@ final class HostDisplayAccessibilityTests: XCTestCase {
         XCTAssertEqual(try HostAXRequest.parse([:]), HostAXRequest(depth: 6, focusedApplicationOnly: true))
         XCTAssertEqual(try HostAXRequest.parse(["depth": .integer(2), "focused_app": .boolean(false)]),
                        HostAXRequest(depth: 2, focusedApplicationOnly: false))
+        XCTAssertEqual(try HostAXRequest.parse(["menu_extras": .boolean(true)]).menuExtras, true)
         for invalid: [String: HostValue] in [["depth": .integer(0)], ["depth": .integer(13)],
-                                              ["depth": .string("3")], ["focused_app": .string("true")]] {
+                                              ["depth": .string("3")], ["focused_app": .string("true")],
+                                              ["menu_extras": .integer(1)]] {
             XCTAssertThrowsError(try HostAXRequest.parse(invalid))
         }
     }
@@ -199,8 +204,8 @@ final class HostDisplayAccessibilityTests: XCTestCase {
         let other = HostAXApplication(processID: 4, bundleID: nil, name: nil, root: FakeAXNode("AXApplication"))
         let provider = FakeAccessibilityProvider(trusted: false, focused: [own], all: [own, other])
         XCTAssertFalse(provider.isTrusted())
-        XCTAssertTrue(provider.applications(focusedOnly: true, excluding: 9).isEmpty)
-        XCTAssertEqual(provider.applications(focusedOnly: false, excluding: 9).map(\.processID), [4])
+        XCTAssertTrue(provider.applications(focusedOnly: true, menuExtras: false, excluding: 9).isEmpty)
+        XCTAssertEqual(provider.applications(focusedOnly: false, menuExtras: false, excluding: 9).map(\.processID), [4])
     }
 
     func testCancelledTraversalReturnsNoSnapshot() async throws {
