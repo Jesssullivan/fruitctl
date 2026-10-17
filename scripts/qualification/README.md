@@ -197,7 +197,7 @@ Mac, and the scene fixture (`test/qualification/generate.mjs`) shown full screen
 so the background is a known neutral.
 
 ```sh
-just qualification-overlay-gate PROFILE /absolute/control.png /absolute/new-output-dir
+just qualification-overlay-gate PROFILE /absolute/control.png /absolute/new-output-dir [--save-frames ...]
 ```
 
 Defaults are 600 captures at a 100 ms cadence (the 600-frame/60-second gate).
@@ -221,9 +221,14 @@ captures within `--latency-limit-ms` (default 5000, the warm-capture SLO) fails.
 was really visible and the detector would have seen it through the same colour
 pipeline. During the run, capture the same display through a path that does not
 exclude the overlay (for example a Chrome Remote Desktop screenshot) and save
-it at the `--control` path. The gate reads it after the last frame and requires
-the signature on at least half of the outer ring on every side. Without that
-control the result is `unanchored` (exit 1), never `passed`.
+it at the `--control` path. The image must be the remote display alone, edge to
+edge (Chrome Remote Desktop full screen, or cropped to the remote display): the
+gate checks the outer ring, so local window chrome around it cannot anchor. The
+gate reads it after the last frame and requires the signature on at least half
+of the outer ring on every side, and a file modification time no earlier than
+the start of the series, so a control left from an earlier run cannot anchor a
+new one. Without such a control the result is `unanchored` (exit 1), never
+`passed`. An unreadable agent frame fails as `undecodable_frame` and is saved.
 
 `overlay-exclusion-receipt.json` in the new output directory records each
 frame's hash, latency, overlay pixel count and label failures. Exit 0 is

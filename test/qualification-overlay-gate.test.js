@@ -85,8 +85,11 @@ const hostLabels = { route: 'host', indicator: 'present', capture_backend: 'owne
 const shot = (frame, labels = hostLabels) => ({ content: [{ type: 'image', mimeType: 'image/png', data: png(frame).toString('base64') }],
   structuredContent: labels });
 
-function harness(frames, { latencies = [], control = controlPNG } = {}) {
+// Wall-clock time the series starts at; a control saved during it is newer.
+const startedAtMs = 1_800_000_000_000;
+function harness(frames, { latencies = [], control = controlPNG, controlModifiedAtMs = startedAtMs + 30_000 } = {}) {
   let clock = 0, index = 0;
+  const saved = [];
   const actions = [];
   const call = async action => {
     actions.push(action);
@@ -94,8 +97,10 @@ function harness(frames, { latencies = [], control = controlPNG } = {}) {
     clock += latencies[index] ?? 50;
     return frames[index++];
   };
-  return { actions, options: { call, readControl: async () => control, frames: frames.length, intervalMs: 100,
-    now: () => clock, sleep: async ms => { clock += ms; } } };
+  return { actions, saved, options: { call, frames: frames.length, intervalMs: 100,
+    readControl: async () => control && { bytes: control, modifiedAtMs: controlModifiedAtMs },
+    now: () => clock, wallNow: () => startedAtMs, sleep: async ms => { clock += ms; },
+    onFrame: async (png, record) => { saved.push(record.number); } } };
 }
 
 test('gate: clean Host frames with an anchored control pass and report latency', async () => {
@@ -130,6 +135,21 @@ test('gate: clean frames without a control showing the overlay are unanchored, n
     const { options } = harness([shot(fixture())], { control });
     assert.equal((await runGate(options)).status, 'unanchored');
   }
+});
+
+test('gate: a control saved before the series started cannot anchor it', async () => {
+  const { options } = harness([shot(fixture())], { controlModifiedAtMs: startedAtMs - 1 });
+  const result = await runGate(options);
+  assert.equal(result.status, 'unanchored');
+  assert.deepEqual([result.control.capturedDuringRun, controlAnchored(overlaySignature(overlaid))], [false, true]);
+});
+
+test('gate: an undecodable frame fails the series and is still handed over for saving', async () => {
+  const broken = { ...shot(fixture()), content: [{ type: 'image', mimeType: 'image/png', data: Buffer.from('not a png').toString('base64') }] };
+  const { options, saved } = harness([shot(fixture(1)), broken, shot(fixture(3))]);
+  const result = await runGate(options);
+  assert.deepEqual([result.status, result.failure.number, result.failure.reason, result.framesCaptured], ['failed', 2, 'undecodable_frame', 2]);
+  assert.deepEqual(saved, [1, 2]);
 });
 
 test('gate: fewer than 95% of captures within the SLO limit fails on latency', async () => {
