@@ -9,7 +9,7 @@
 // action a plan needs must be supported: the shipped baseline when capability
 // metadata is unknown, otherwise exactly the advertised list. Anything else is
 // refused before input with a typed `unsupported_action` error naming the alias
-// action, so newer backend methods (mouse_down, key_down, zoom, ...) light up
+// action, so newer backend methods (hold_key, triple_click, zoom, ...) light up
 // here as soon as a backend advertises them, with no alias change.
 
 import { z } from 'zod';
@@ -142,17 +142,30 @@ function secondsToMs(value, action, { min = 50 } = {}) {
   return ms;
 }
 
-// Anthropic click/scroll modifiers ("shift", "ctrl+shift") are held with
-// key_down/key_up inside the same batch; the backend force-releases any hold
-// still live at batch end or abort (D27).
-const MODIFIER_ACTIONS = new Set(['left_click', 'right_click', 'middle_click', 'double_click',
-  'triple_click', 'scroll']);
+// Anthropic click modifiers ("shift", "ctrl+shift") map onto mouse_click's
+// native `modifiers`, which the controller holds around the click and releases
+// in the same call (#101). They shipped with hold_key in that input-parity
+// controller; an older controller ignores the field and would click unmodified,
+// so a modifier click also requires hold_key to be advertised. Only a single
+// click carries modifiers natively: double/triple clicks and scrolls with
+// modifiers are refused rather than emulated.
+const MODIFIER_KEYS = new Set(['shift', 'rshift', 'ctrl', 'rctrl', 'alt', 'ralt', 'cmd', 'rcmd']);
+export const MODIFIER_CLICK_REQUIRES = 'hold_key';
 
-function withModifiers(steps, modifiers, action) {
+function clickModifiers(value, action) {
+  const keys = chordKeys(text(value, action, 'text (modifiers)'), action);
+  if (!keys.every(key => MODIFIER_KEYS.has(key))) {
+    throw invalid(action, `modifiers must be shift, ctrl, alt or cmd keys, not ${value}`);
+  }
+  if (new Set(keys).size !== keys.length) throw invalid(action, `modifiers must name distinct keys: ${value}`);
+  return keys;
+}
+
+function withoutModifiers(steps, modifiers, action) {
   if (modifiers === undefined || modifiers === '') return steps;
-  const keys = chordKeys(text(modifiers, action, 'text (modifiers)'), action);
-  return [...keys.map(key => ({ action: 'key_down', key })), ...steps,
-    ...keys.toReversed().map(key => ({ action: 'key_up', key }))];
+  const error = unsupported(`${action} with modifiers`, 'modifiers apply only to a single left, right or middle click');
+  error.action = action;
+  throw error;
 }
 
 // ── Anthropic computer tool ──────────────────────────────────────────────────
@@ -162,10 +175,13 @@ function anthropicSteps(input) {
   const at = () => point(input.coordinate, action, 'coordinate');
   switch (action) {
     case 'screenshot': return [{ action: 'screenshot' }];
-    case 'left_click': case 'right_click': case 'middle_click':
-      return withModifiers([{ action: 'mouse_click', ...at(), button: action.split('_')[0] }], input.text, action);
-    case 'double_click': return withModifiers([{ action: 'mouse_double_click', ...at() }], input.text, action);
-    case 'triple_click': return withModifiers([{ action: 'triple_click', ...at() }], input.text, action);
+    case 'left_click': case 'right_click': case 'middle_click': {
+      const click = { action: 'mouse_click', ...at(), button: action.split('_')[0] };
+      if (input.text === undefined || input.text === '') return [click];
+      return [{ ...click, modifiers: clickModifiers(input.text, action) }];
+    }
+    case 'double_click': return withoutModifiers([{ action: 'mouse_double_click', ...at() }], input.text, action);
+    case 'triple_click': return withoutModifiers([{ action: 'triple_click', ...at() }], input.text, action);
     case 'mouse_move': return [{ action: 'mouse_move', ...at() }];
     case 'left_click_drag': {
       if (input.start_coordinate === undefined) throw invalid(action, 'start_coordinate is required');
@@ -183,10 +199,12 @@ function anthropicSteps(input) {
       return chords.map(chord => chordStep(chordKeys(chord, action)));
     }
     case 'hold_key': {
+      // Native hold_key presses one key for duration_ms and releases it before
+      // the call returns; a chord would need held keys that never cross calls.
       const keys = chordKeys(text(input.text, action), action);
-      const ms = secondsToMs(input.duration, action);
-      return [...keys.map(key => ({ action: 'key_down', key })), { action: 'wait', ms },
-        ...keys.toReversed().map(key => ({ action: 'key_up', key }))];
+      const duration_ms = secondsToMs(input.duration, action);
+      if (keys.length !== 1) throw unsupported(action, 'hold_key holds exactly one key; send a chord with key');
+      return [{ action: 'hold_key', key: keys[0], duration_ms }];
     }
     case 'type': return [{ action: 'key_type', text: text(input.text, action) }];
     case 'scroll': {
@@ -198,7 +216,7 @@ function anthropicSteps(input) {
       if (!Number.isInteger(amount) || amount < 1 || amount > 20) {
         throw invalid(action, 'scroll_amount must be an integer from 1 to 20');
       }
-      return withModifiers([{ action: 'scroll', ...at(), direction, amount }], input.text, action);
+      return withoutModifiers([{ action: 'scroll', ...at(), direction, amount }], input.text, action);
     }
     case 'cursor_position': return [{ action: 'cursor_position' }];
     case 'zoom': {
@@ -280,8 +298,8 @@ export function translateComputerAction(input) {
   let plan;
   if (typeof raw === 'string') {
     plan = { shape: 'anthropic', action: raw, steps: anthropicSteps(input) };
-    // A refusal names what the caller asked for, including held modifiers.
-    if (MODIFIER_ACTIONS.has(raw) && input.text) plan.label = `${raw} with modifiers`;
+    // A refusal names what the caller asked for, including click modifiers.
+    if (plan.steps.some(step => step.modifiers)) plan.label = `${raw} with modifiers`;
   } else if (raw && typeof raw === 'object' && !Array.isArray(raw) && typeof raw.type === 'string') {
     plan = { shape: 'openai', action: raw.type, steps: openaiSteps(raw) };
     if (raw.type === 'drag' && plan.steps.length > 1) plan.label = 'drag with a multi-point path';
@@ -292,9 +310,12 @@ export function translateComputerAction(input) {
   return plan;
 }
 
+// Advertised methods one translated step needs.
+const requiredMethods = step => step.modifiers ? [step.action, MODIFIER_CLICK_REQUIRES] : [step.action];
+
 /** Fruitctl methods a plan needs that are not in the shipped baseline. */
 export function extendedActions(plan) {
-  return [...new Set(plan.steps.map(step => step.action).filter(action => !BASELINE_ACTIONS.has(action)))];
+  return [...new Set(plan.steps.flatMap(requiredMethods).filter(action => !BASELINE_ACTIONS.has(action)))];
 }
 
 /**
@@ -304,7 +325,7 @@ export function extendedActions(plan) {
 export function admitComputerPlan(plan, capabilities) {
   const supported = capabilities?.known === true
     ? new Set(capabilities.actions) : BASELINE_ACTIONS;
-  const missing = [...new Set(plan.steps.map(step => step.action).filter(action => !supported.has(action)))];
+  const missing = [...new Set(plan.steps.flatMap(requiredMethods).filter(action => !supported.has(action)))];
   if (missing.length) {
     const error = unsupported(plan.label ?? plan.action, `backend does not advertise ${missing.join(', ')}`);
     error.action = plan.action;
@@ -341,7 +362,7 @@ export function computerTool() {
       ]).describe('Anthropic action name, or OpenAI computer_call action object'),
       coordinate: z.array(z.number()).optional().describe('Anthropic [x, y] in the current scaled display'),
       start_coordinate: z.array(z.number()).optional().describe('Anthropic left_click_drag start [x, y]'),
-      text: z.string().optional().describe('Keys (xdotool syntax), typed text, or click/scroll modifiers'),
+      text: z.string().optional().describe('Keys (xdotool syntax), typed text, or single-click modifiers'),
       scroll_direction: z.string().optional().describe('Anthropic scroll direction: up, down, left or right'),
       scroll_amount: z.number().optional().describe('Anthropic scroll ticks (1-20, default 3)'),
       duration: z.number().optional().describe('Seconds for wait or hold_key (0.05-10)'),
