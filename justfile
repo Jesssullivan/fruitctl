@@ -26,8 +26,9 @@ test-qualification node="node":
     {{quote(node)}} --test --test-concurrency=1 test/qualification.test.js test/qualification-stream.test.js test/qualification-overlay-gate.test.js
 
 # Attended Host-route overlay exclusion gate (observation only; see scripts/qualification/README.md).
-qualification-overlay-gate target control output_dir node="node" *args:
-    {{quote(node)}} scripts/qualification/overlay_exclusion_gate.mjs --attended --target {{quote(target)}} --control {{quote(control)}} --output-dir {{quote(output_dir)}} {{args}}
+# Extra gate flags follow the three paths; there is no optional positional before them.
+qualification-overlay-gate target control output_dir *args:
+    node scripts/qualification/overlay_exclusion_gate.mjs --attended --target {{quote(target)}} --control {{quote(control)}} --output-dir {{quote(output_dir)}} {{args}}
 
 # Developer file-only NDJSON oracle; its private prepared series arrives on stdin.
 qualification-scene-stream node="node":

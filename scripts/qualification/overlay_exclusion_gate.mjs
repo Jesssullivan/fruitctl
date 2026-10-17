@@ -4,7 +4,7 @@
 // Fruitctl MCP target and nothing else. It never launches the Host, grants a
 // permission, sends input, or masks pixels.
 import { createHash } from 'node:crypto';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, open, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
@@ -71,11 +71,13 @@ function imageOf(result) {
 
 /**
  * Run N Host-route captures at a fixed cadence and stop at the first failure.
- * `call(action)` returns an MCP tool result; `readControl()` returns the
- * control PNG bytes or null. Both are injected so offline tests use real logic.
+ * `call(action)` returns an MCP tool result; `readControl()` returns
+ * `{ bytes, modifiedAtMs }` for the control PNG, or null. Both are injected so
+ * offline tests use real logic. `wallNow` is the clock the control's
+ * modification time is compared against.
  */
 export async function runGate({ call, readControl, frames = 600, intervalMs = 100,
-  latencyLimitMs = SLO_LATENCY_MS, now = () => performance.now(),
+  latencyLimitMs = SLO_LATENCY_MS, now = () => performance.now(), wallNow = () => Date.now(),
   sleep = ms => new Promise(resolve => setTimeout(resolve, ms)), onFrame = async () => {} }) {
   if (!Number.isSafeInteger(frames) || frames < 1 || frames > 10000) throw new Error('frames must be 1..10000');
   if (!Number.isSafeInteger(intervalMs) || intervalMs < 0) throw new Error('interval must be a non-negative integer');
@@ -83,6 +85,9 @@ export async function runGate({ call, readControl, frames = 600, intervalMs = 10
     if (!ALLOWED_ACTIONS.has(action)) throw new Error(`observation-only gate refuses ${action}`);
     return call(action);
   };
+  // A control written before the series started cannot show that the overlay
+  // was on screen while these frames were taken.
+  const startedAtMs = wallNow();
   const health = await guarded('health');
   const records = [];
   let failure = health?.isError || health?.structuredContent?.route !== 'host'
@@ -101,8 +106,18 @@ export async function runGate({ call, readControl, frames = 600, intervalMs = 10
       break;
     }
     const labels = labelFailures(result.structuredContent);
-    const signature = overlaySignature(decodePNG(png));
-    const record = { number, latencyMs, sha256: createHash('sha256').update(png).digest('hex'),
+    const sha256 = createHash('sha256').update(png).digest('hex');
+    let signature;
+    try { signature = overlaySignature(decodePNG(png)); } catch (error) {
+      // Keep the frame and the receipt: an unreadable frame is a gate failure,
+      // not a transport error that loses the run's evidence.
+      const record = { number, latencyMs, sha256, labelFailures: labels, ok: false, decodeError: error.message };
+      records.push(record);
+      await onFrame(png, record);
+      failure = { number, reason: 'undecodable_frame', detail: error.message };
+      break;
+    }
+    const record = { number, latencyMs, sha256,
       width: signature.width, height: signature.height, overlayPixels: signature.tinted,
       overlayBounds: signature.bounds, labelFailures: labels, ok: !labels.length && signature.tinted === 0 };
     records.push(record);
@@ -116,16 +131,22 @@ export async function runGate({ call, readControl, frames = 600, intervalMs = 10
   const latency = { count: latencies.length, p50: percentile(latencies, 0.5), p95: percentile(latencies, 0.95),
     max: latencies.at(-1) ?? null, withinLimit: within, limitMs: latencyLimitMs };
   // The control is read last, so it can be captured while this series runs.
-  const controlBytes = await readControl();
-  const control = controlBytes ? overlaySignature(decodePNG(controlBytes)) : null;
-  const anchored = Boolean(control && controlAnchored(control));
+  const controlFile = await readControl();
+  let control = null, controlError = null;
+  if (controlFile) {
+    try { control = overlaySignature(decodePNG(controlFile.bytes)); } catch (error) { controlError = error.message; }
+  }
+  const capturedDuringRun = Boolean(controlFile && Number.isFinite(controlFile.modifiedAtMs) &&
+    controlFile.modifiedAtMs >= startedAtMs);
+  const anchored = Boolean(control && capturedDuringRun && controlAnchored(control));
   if (!failure && records.length === frames && within / frames < SLO_FRACTION) {
     failure = { number: null, reason: 'latency', detail: latency };
   }
   const status = failure ? 'failed' : anchored ? 'passed' : 'unanchored';
   return { schema: 'fruitctl.overlay-exclusion-gate.v1', status, failure, framesRequested: frames,
     framesCaptured: records.length, intervalMs, durationMs, latency,
-    control: control && { anchored, ring: control.ring, sides: control.sides, overlayPixels: control.tinted },
+    control: controlFile && { anchored, capturedDuringRun, modifiedAtMs: controlFile.modifiedAtMs, startedAtMs,
+      ...(control ? { ring: control.ring, sides: control.sides, overlayPixels: control.tinted } : { error: controlError }) },
     overlay: { rgb: OVERLAY_RGB, purpleExcessThreshold: PURPLE_EXCESS_THRESHOLD },
     records, scope: 'Host-route agent frames versus the Host overlay only; no scene, consent, Stop, input or SLO qualification' };
 }
@@ -156,7 +177,14 @@ async function main() {
     receipt = await runGate({ frames: Number(values.frames), intervalMs: Number(values['interval-ms']),
       latencyLimitMs: Number(values['latency-limit-ms']),
       call: action => client.callTool({ name: 'vnc_command', arguments: { action } }),
-      readControl: () => readFile(values.control).catch(error => { if (error.code === 'ENOENT') return null; throw error; }),
+      readControl: async () => {
+        let handle;
+        try { handle = await open(values.control, 'r'); } catch (error) { if (error.code === 'ENOENT') return null; throw error; }
+        try {
+          const { mtimeMs } = await handle.stat();
+          return { bytes: await handle.readFile(), modifiedAtMs: mtimeMs };
+        } finally { await handle.close(); }
+      },
       onFrame: (png, record) => (values['save-frames'] || !record.ok)
         ? writeFile(path.join(output, `frame-${String(record.number).padStart(4, '0')}.png`), png, { flag: 'wx', mode: 0o600 })
         : undefined });
