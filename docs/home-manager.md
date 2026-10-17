@@ -280,11 +280,58 @@ persistent SSH attachment and stops within five seconds. SSH host keys and
 authentication remain owned by your SSH
 configuration. Linux gets no broker credential document and no native package.
 
-The preview disables automatic restart on both platforms: Darwin uses
-`KeepAlive = false`, and Linux uses `Restart = "no"`. Recovery is an operator-owned
-action. If owned input cleanup is unconfirmed, reconcile the target and verify
-held input is cleared before restarting the broker or relay. The broker's
-quarantine is process-local; restarting it does not prove cleanup succeeded.
+The Linux relay keeps its local socket when the bridge drops and reconnects
+on its own. Backoff starts at about one second and doubles to a 30-second cap,
+with ±20% jitter. It resets once the remote `attach --mux` says hello. A
+successor SSH child starts only after the previous one has exited. Nothing a
+client sent over a lost link is replayed:
+
+| Client state when the link fails | Typed error |
+| --- | --- |
+| Nothing answered yet (no `opened`, so no input was possible) | the classified cause, for example `bridge_auth_refused` |
+| Answered, with work possibly in flight | `bridge_lost` (execution is uncertain) |
+| Connects while the bridge is down | the last classified cause, answered at once |
+
+The classified causes are `bridge_unreachable`, with reason `dns`, `refused`,
+`network`, `ssh` or `ssh_unavailable`, and `bridge_auth_refused`,
+`bridge_host_key`, `bridge_command_missing`, `bridge_attach_failed`,
+`bridge_protocol` and `bridge_broker_unavailable`. They come from SSH's exit
+status and stderr, which is read only on the seat: its text never reaches a
+client, the journal or a log line.
+
+Two exit statuses tell systemd not to restart the relay. Status 3 means the
+relay could not confirm that a lost SSH child exited; reconcile the target
+first. Status 78 means the command line is wrong, so a restart cannot help.
+Any other failure restarts the relay after 5 s, up to five starts in five
+minutes. `KillMode = control-group` stops any child of a former relay from
+outliving it.
+
+`fruitctl relay --health` asks the running relay for its state without
+touching the bridge. It prints a `fruitctl.relay-health.v1` document with
+`state` (`connecting`, `up`, `down` or `closing`), `attempts`, `retryInMs` and
+`lastError`, and it exits 0 only while the bridge is up. An older Darwin
+`attach` sends no hello, so with one the relay reports `connecting` until the
+first session is answered.
+
+On Linux, the module exports `FRUITCTL_SOCKET_PATH` and `FRUITCTL_BRIDGE_HOST`,
+plus `FRUITCTL_BRIDGE_COMMAND` when `bridgeCommand` is not the default. Health
+and doctor then find the managed relay and bridge without extra flags.
+`fruitctl doctor --macos --target <profile>` runs the target preflight on the
+Darwin bridge, through this seat's SSH configuration for that alias, because
+the bridge owns the profile. `--target-ssh` is forwarded to the bridge when
+`--bridge` is explicit; without `--bridge`, `--target-ssh` stays a direct probe
+from this seat.
+
+A `type_secret` action crosses the bridge as a reference only (D16). The relay
+applies the broker's own shape check, `{ref, x?, y?}`. Any other shape is
+refused with `invalid_secret_request` before it leaves the seat, so a value
+never reaches the bridge.
+
+The Darwin broker keeps `KeepAlive = false`, and its recovery is an
+operator-owned action. If owned input cleanup is unconfirmed, reconcile the
+target and verify held input is cleared before restarting the broker. The
+broker's quarantine is process-local; restarting it does not prove cleanup
+succeeded.
 
 This is the initial Rocky/Linux architecture. A passing Nix evaluation proves
 configuration shape; an initialize, changing-frame capture and control journey

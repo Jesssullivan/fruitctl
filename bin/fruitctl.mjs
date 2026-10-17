@@ -11,14 +11,14 @@ async function packageVersion() {
   return metadata.version;
 }
 
-function lifecycle(service) {
+function lifecycle(service, { unconfirmedExitCode = 1 } = {}) {
   let stopping = false;
   const stop = async () => {
     if (stopping) return;
     stopping = true;
     try { await service.close(); } catch {
       process.stderr.write('Fruitctl: owned session cleanup unconfirmed; reconcile the target before restarting\n');
-      process.exitCode = 1;
+      process.exitCode = unconfirmedExitCode;
     }
   };
   process.once('SIGINT', stop);
@@ -35,6 +35,8 @@ try {
   mux: { type: 'boolean' }, stdio: { type: 'boolean' }, json: { type: 'boolean' },
   timings: { type: 'boolean' }, macos: { type: 'boolean' }, 'target-ssh': { type: 'string' },
   help: { type: 'boolean' }, 'manifest-url': { type: 'string' }, secrets: { type: 'boolean' },
+  help: { type: 'boolean' }, 'manifest-url': { type: 'string' },
+  once: { type: 'boolean' }, health: { type: 'boolean' },
 } }));
 command = positionals[0];
 socketPath = values.socket || defaultSocketPath();
@@ -53,14 +55,16 @@ configPath = values.config || defaultConfigPath();
   if (values.macos && command !== 'doctor') throw new Error('--macos is supported only by doctor');
   if (values['target-ssh'] !== undefined && !values.macos) throw new Error('--target-ssh requires doctor --macos');
   if (values.secrets && command !== 'doctor') throw new Error('--secrets is supported only by doctor');
+  if ((values.once || values.health) && command !== 'relay') throw new Error('--once and --health are supported only by relay');
   if (values.help || !command) {
     process.stdout.write('Fruitctl\n\nCommands: mcp, broker, relay, attach, install, doctor, rollback, uninstall, journal\n' +
       '  mcp --target PROFILE [--socket PATH]\n' +
       '  broker [--config PATH] [--socket PATH]\n' +
-      '  relay --bridge USER@HOST [--socket PATH] [--remote-socket PATH]\n' +
+      '  relay --bridge USER@HOST [--socket PATH] [--remote-socket PATH] [--remote-command PATH] [--once]\n' +
+      '  relay --health [--socket PATH]\n' +
       '  install --agent AGENT --scope user|project --version TAG --target PROFILE [--project-dir PATH] [--install-root ABSOLUTE_DIRECTORY] [--dry-run]\n' +
       '  doctor [--agent AGENT] [--scope user|project] [--project-dir PATH] [--install-root ABSOLUTE_DIRECTORY] --json\n' +
-      '  doctor --macos [--target PROFILE] [--config PATH] [--target-ssh USER@HOST]\n' +
+      '  doctor --macos [--target PROFILE] [--config PATH] [--target-ssh USER@HOST] [--bridge USER@HOST [--remote-command PATH]]\n' +
       '  doctor --secrets [--target PROFILE] [--config PATH]\n' +
       '  rollback|uninstall --agent AGENT [--scope user|project] [--project-dir PATH] [--install-root ABSOLUTE_DIRECTORY]\n' +
       '  journal verify FILE\n' +
@@ -69,6 +73,9 @@ configPath = values.config || defaultConfigPath();
       'Install requires explicit --version TAG. Doctor writes JSON: exit 1 for drift, 0 for configured or not-installed.\n' +
       'Doctor --macos adds read-only target checks over SSH (macOS 26.6.1+ or 27, Screen Sharing mode, session, Host grants, other input owners, target profile); a typed failure exits 1.\n' +
       'Doctor --secrets resolves each declared credential and type_secret ref once on this broker host, prints only provider and status, and exits 1 on a failure.\n' +
+      'From a Linux seat, doctor --macos runs the probe on the Darwin bridge (--bridge or FRUITCTL_BRIDGE_HOST), which owns the profile.\n' +
+      'The relay reconnects with capped backoff and answers clients with typed bridge errors; --once exits on the first bridge loss.\n' +
+      'relay --health prints the running relay\'s state as JSON and exits 0 only while its bridge is up.\n' +
       'Add --timings to installer commands for bounded aggregate timings; default output is unchanged.\n');
   } else if (command === 'broker') {
     const { createBroker } = await import('../lib/broker/server.mjs');
@@ -84,19 +91,27 @@ configPath = values.config || defaultConfigPath();
     const result = await verifyJournal(positionals[2]);
     process.stdout.write(JSON.stringify(result, null, 2) + '\n');
     if (!result.ok) process.exitCode = 1;
+  } else if (command === 'relay' && values.health) {
+    const { queryRelayHealth } = await import('../lib/broker/relay.mjs');
+    const health = await queryRelayHealth({ socketPath });
+    process.stdout.write(JSON.stringify(health, null, 2) + '\n');
+    if (health.state !== 'up') process.exitCode = 1;
   } else if (command === 'relay') {
-    const { createRelay } = await import('../lib/broker/relay.mjs');
-    const service = await createRelay({ socketPath, bridge: values.bridge,
-      remoteSocket: values['remote-socket'], remoteCommand: values['remote-command'] });
-    lifecycle(service);
+    const { createRelay, RELAY_EXIT } = await import('../lib/broker/relay.mjs');
+    const log = message => process.stderr.write(`${message}\n`);
+    const service = await createRelay({ socketPath, bridge: values.bridge ?? process.env.FRUITCTL_BRIDGE_HOST,
+      remoteSocket: values['remote-socket'], remoteCommand: values['remote-command'],
+      reconnect: !values.once, log });
+    lifecycle(service, { unconfirmedExitCode: RELAY_EXIT.unconfirmed });
     process.stderr.write('Fruitctl relay ready\n');
     service.failure.catch(async error => {
-      process.stderr.write(`${error.message}\n`);
+      process.stderr.write(`Fruitctl relay: ${error.code || 'bridge_lost'}: ${error.message}\n`);
+      let exitCode = error.exitCode ?? 1;
       try { await service.close(); } catch {
-      process.stderr.write('Fruitctl: owned session cleanup unconfirmed; reconcile the target before restarting\n');
-      process.exitCode = 1;
-    }
-      process.exitCode = 1;
+        process.stderr.write('Fruitctl: owned session cleanup unconfirmed; reconcile the target before restarting\n');
+        exitCode = RELAY_EXIT.unconfirmed;
+      }
+      process.exitCode = exitCode;
     });
   } else if (command === 'attach') {
     if (!values.mux) throw new Error('Attach requires --mux; agents use mcp --target PROFILE');
@@ -119,7 +134,9 @@ configPath = values.config || defaultConfigPath();
     if (values.macos) {
       const { resolvePreflightTarget } = await import('../lib/install/macos-preflight.mjs');
       macos = await resolvePreflightTarget({ targetSsh: values['target-ssh'], target: values.target,
-        configPath: values.config || process.env.FRUITCTL_CONFIG_PATH || defaultConfigPath() });
+        configPath: values.config || process.env.FRUITCTL_CONFIG_PATH || defaultConfigPath(),
+        bridge: values.bridge, environmentBridge: process.env.FRUITCTL_BRIDGE_HOST,
+        remoteCommand: values['remote-command'] ?? process.env.FRUITCTL_BRIDGE_COMMAND });
     }
     const installer = await import('../lib/install/index.mjs');
     if (values.timings) installerTimingsForError = installer.timingsForError;
@@ -143,7 +160,7 @@ configPath = values.config || defaultConfigPath();
   } else throw new Error('Unknown Fruitctl command; use --help');
 } catch (error) {
   process.stderr.write(`Fruitctl: ${error.message}\n`);
-  process.exitCode = 1;
+  process.exitCode = Number.isInteger(error.exitCode) ? error.exitCode : 1;
   if (values?.timings === true && installerTimingsForError) {
     try {
       const timings = installerTimingsForError(error);

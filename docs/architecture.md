@@ -31,6 +31,14 @@ or bridge loss; late closure cannot revise that result or replay input. This
 source repair is newer than immutable alpha.7 and is not installed-runtime or
 Home Manager delivery qualification.
 
+As a service, the relay keeps its listener when the bridge drops. It answers
+clients with a typed bridge error and reconnects with capped, jittered backoff.
+A successor SSH child starts only after its predecessor drained `close`. Lost
+work is never replayed. If a lost child cannot be confirmed closed, the relay
+exits with status 3 and does not start a successor. `fruitctl relay --once`
+keeps the single-link behaviour. See
+[Linux SSH controller](home-manager.md#linux-ssh-controller).
+
 ## Backend capabilities
 
 Current source advertises a bounded native action list at readiness and includes
