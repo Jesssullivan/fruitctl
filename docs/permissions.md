@@ -271,7 +271,10 @@ input refusal such as `hold_outside_batch`, or `-32012` for an unmet
 `wait_for_stable` or queue expectation). A local refusal made
 before anything ran keeps its string code: `unsupported_action`,
 `unsupported_on_route` (the Host route refuses raw-pixel observations) or
-`unsupported_expectation` (a reserved queue expectation). Any other transport
+`unsupported_expectation` (a reserved queue expectation). A Linux relay or
+broker-socket failure keeps its string code too: `bridge_lost`,
+`bridge_protocol` or `bridge_unconfirmed` (work may have been in flight), any
+other `bridge_*` code or `broker_unavailable` (not delivered). Any other transport
 or local failure carries `message` only. A failed `action_queue` adds `completed`
 and `failedIndex` and puts its first failure in the same `error` object. A
 failure never attests the overlay, so the Host route reports `indicator:

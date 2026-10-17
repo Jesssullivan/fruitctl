@@ -63,6 +63,14 @@ the human to answer it, wait, then take a screenshot before continuing. Code
 human to unlock; never type a password. `display_asleep` means no current
 pixels exist: report it and ask; do not wake the Mac with input.
 
+From a Linux seat the MCP server reaches the Mac through an SSH relay. Codes
+`bridge_lost`, `bridge_protocol` and `bridge_unconfirmed` mean the link failed
+while work may have been in flight: input was not replayed, and whether it ran
+is unknown, so take a screenshot before repeating anything. Any other
+`bridge_*` code, or `broker_unavailable`, means the request was not
+delivered. That MCP session stays failed; report the code and ask for the
+server to be reconnected rather than retrying in a loop.
+
 Inspect the current
 image and its scaled coordinates, perform authorized bounded input, and obtain
 a new screenshot to verify the result. OCR, a process health response, or an

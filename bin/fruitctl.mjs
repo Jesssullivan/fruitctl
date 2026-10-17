@@ -35,7 +35,6 @@ try {
   mux: { type: 'boolean' }, stdio: { type: 'boolean' }, json: { type: 'boolean' },
   timings: { type: 'boolean' }, macos: { type: 'boolean' }, 'target-ssh': { type: 'string' },
   help: { type: 'boolean' }, 'manifest-url': { type: 'string' }, secrets: { type: 'boolean' },
-  help: { type: 'boolean' }, 'manifest-url': { type: 'string' },
   once: { type: 'boolean' }, health: { type: 'boolean' },
 } }));
 command = positionals[0];
@@ -159,7 +158,9 @@ configPath = values.config || defaultConfigPath();
         result.secretsCheck?.status === 'fail')) process.exitCode = 1;
   } else throw new Error('Unknown Fruitctl command; use --help');
 } catch (error) {
-  process.stderr.write(`Fruitctl: ${error.message}\n`);
+  // A relay or broker refusal at MCP startup keeps its typed code (D20).
+  const typed = typeof error.code === 'string' && /^(bridge_[a-z_]+|broker_unavailable)$/.test(error.code);
+  process.stderr.write(`Fruitctl: ${typed ? `${error.code}: ` : ''}${error.message}\n`);
   process.exitCode = Number.isInteger(error.exitCode) ? error.exitCode : 1;
   if (values?.timings === true && installerTimingsForError) {
     try {
