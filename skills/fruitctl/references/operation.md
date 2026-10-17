@@ -263,11 +263,11 @@ work around it.
 
 Health and screenshot results may carry `desktop_state` from the broker's
 sentinel. Before input, the broker refuses a batch, with nothing sent, when it
-sees a blocking state. `-32014` `human_consent_required` names the dialog in
+sees a blocking state. `human_consent_required` names the dialog in
 `data.owner` and `data.kind`: a privacy, accessibility, authorization,
 Gatekeeper or Software Update prompt is on screen. Never click, type into or
 dismiss it, and never use a stored secret for it; ask the human to answer it,
-then take a screenshot and continue. `-32015` `target_locked` means the lock
+then take a screenshot and continue. `target_locked` means the lock
 screen or the login window; ask the human to unlock, never type a password. A
 `secure_input_holder` means typed keys may be dropped; an `other_input_owner`
 means another remote desktop may also be moving the pointer. Report both. An

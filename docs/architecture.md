@@ -142,16 +142,19 @@ Before a batch that contains input, the broker reads the target's desktop
 state with one fixed, read-only script over the profile's SSH destination
 (`desktopState.ssh`, else `wake.ssh`, else `hostHelper.sshHost`) and refuses
 the batch before it starts or uses the VNC executor when the state is known
-to block input: `-32015` `target_locked` for the lock screen or login window,
-`display_asleep` for an asleep main display, and `-32014`
-`human_consent_required` for an on-screen window of a consent or system
-dialog owner. The refusal is pre-admission: nothing is sent, the executor is
+to block input: `target_locked` for the lock screen or login window,
+`display_asleep` for an asleep main display, and `human_consent_required` for
+an on-screen window of a consent or system dialog owner. These are broker
+string codes; numeric JSON-RPC codes stay with the native controller. The refusal is pre-admission: nothing is sent, the executor is
 not retired and the lease is kept. The journal records it as `refused`. The
 script shares doctor's probe fragments and parsers; it reads no window titles
 or pixels and never answers a dialog (D16). Results are cached for about 2 s.
 Health and screenshot results carry `desktop_state`; a screenshot never waits
-for a probe, and health waits at most 1.5 s for one already running. An
-unreachable, slow or unconfigured sentinel is `unknown` and refuses nothing.
+for a probe and reports a cached sample only while it is fresh (else `unknown`,
+`stale`), and health waits at most 1.5 s, within its deadline, for one already
+running. Before input the probe gets at most half of the batch's remaining
+budget. An unreachable, slow or unconfigured sentinel is `unknown` and refuses
+nothing.
 Fields and codes: [target profile](target-profile.md#desktop-state-sentinel).
 
 ### Action journal

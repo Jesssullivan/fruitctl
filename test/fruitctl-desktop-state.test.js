@@ -16,7 +16,8 @@ import { parseProbeOutput } from '../lib/install/macos-preflight.mjs';
 import { createBroker, TargetLane } from '../lib/broker/server.mjs';
 import { BrokerExecutor } from '../lib/broker/client.mjs';
 import { McpSession } from '../lib/mcp/server.js';
-import { isPreAdmissionRefusal, HUMAN_CONSENT_REQUIRED_CODE, TARGET_LOCKED_CODE } from '../lib/mcp/capabilities.js';
+import { isPreAdmissionRefusal, HUMAN_CONSENT_REQUIRED_CODE, TARGET_LOCKED_CODE, CLIPBOARD_UNAVAILABLE_CODE,
+  desktopRefusalData } from '../lib/mcp/capabilities.js';
 
 const PNG = Buffer.from('89504e470d0a1a0a0000000d49484452', 'hex').toString('base64');
 const base = await fs.readFile(new URL('./fixtures/desktop-state/pzm-26.7.1-crd-session.txt', import.meta.url), 'utf8');
@@ -53,6 +54,8 @@ test('an on-screen consent window is human_consent_required naming its owner', (
   assert.equal(refusal.code, HUMAN_CONSENT_REQUIRED_CODE);
   assert.deepEqual(refusal.data, { reason: 'human_consent_required', owner: 'UserNotificationCenter', kind: 'system_alert' });
   assert.ok(isPreAdmissionRefusal(refusal), 'nothing was admitted, so the lease survives');
+  // The native controller's -32014 is clipboard_unavailable, never a dialog.
+  assert.equal(desktopRefusalData({ code: CLIPBOARD_UNAVAILABLE_CODE, data: { reason: 'clipboard_unavailable' } }), undefined);
   assert.deepEqual(refusal.responses, []);
   assert.deepEqual(state({ desktop_windows: windows('window|824|8|500|300|1') }).consent_dialog,
     { owner: 'CoreServicesUIAgent', kind: 'gatekeeper' });
@@ -247,7 +250,7 @@ test('without a destination nothing is probed or refused and observations say no
   assert.deepEqual([shot.result.desktop_state.sentinel, shot.result.desktop_state.reason], ['unknown', 'not_configured']);
 });
 
-test('a lock reaches the MCP result as -32015 with its data, through the broker socket', async t => {
+test('a lock reaches the MCP result as target_locked with its data, through the broker socket', async t => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'fruitctl-desk-'));
   t.after(() => fs.rm(dir, { recursive: true, force: true }));
   const socketPath = path.join(dir, 'broker.sock');
@@ -274,4 +277,45 @@ test('a lock reaches the MCP result as -32015 with its data, through the broker 
   assert.equal(broker.status().targets.desktop.desktop_state.sentinel, 'ok');
   await assert.rejects(createBroker({ socketPath: path.join(dir, 'bad.sock'),
     config: { targets: { desktop: { desktopState: { ssh: '-oX' } } } } }), /desktopState/);
+});
+
+test('a hanging probe never runs a short batch into its deadline or past it', async t => {
+  const { factory, sent } = recordingFactory();
+  const lane = new TargetLane({ desktopState: { ssh: 'op@mac' } }, factory,
+    { desktopProbe: () => new Promise(() => {}) });
+  t.after(() => lane.close());
+  lane.acquire('owner');
+  // A 3 s budget leaves 1.5 s of work; the probe may take only half of it.
+  const [click] = await lane.execute([{ action: 'mouse_click', x: 1, y: 1 }], { timeoutMs: 3000 });
+  assert.equal(click.result.detail, 'mouse_click done');
+  assert.equal(lane.owner, 'owner');
+  assert.ok(!lane.releasing, 'an unknown state did not retire the lane');
+  // Health waits for the probe only within its own deadline.
+  const started = performance.now();
+  const [health] = await lane.execute([{ action: 'health' }], { timeoutMs: 400 });
+  assert.ok(performance.now() - started < 400, 'health answered inside its deadline');
+  assert.equal(health.result.desktop_state.reason, 'probe_timeout');
+  assert.deepEqual(sent, ['mouse_click', 'health']);
+});
+
+test('a screenshot never reports an expired sample as the current desktop state', async t => {
+  let now = 0;
+  const { probe, calls } = sentinelProbe([variant({ desktop_windows: windows(UNC_ALERT) }),
+    () => delay(50).then(() => variant())]);
+  const { factory } = recordingFactory();
+  const lane = new TargetLane({ desktopState: { ssh: 'op@mac' } }, factory, { desktopProbe: probe });
+  lane.desktop.now = () => now;
+  t.after(() => lane.close());
+  await assert.rejects(lane.execute([{ action: 'mouse_click', x: 1, y: 1 }]),
+    error => error.code === HUMAN_CONSENT_REQUIRED_CODE);
+  // A human answers the dialog; a minute later the agent looks again. The
+  // probe this screenshot starts has not answered when the capture returns.
+  now = 60000;
+  const [shot] = await lane.execute([{ action: 'screenshot' }]);
+  assert.deepEqual([shot.result.desktop_state.sentinel, shot.result.desktop_state.reason], ['unknown', 'stale']);
+  assert.equal(shot.result.desktop_state.consent_dialog, 'unknown');
+  await lane.desktop.inflight;
+  assert.equal(calls.length, 2);
+  const [next] = await lane.execute([{ action: 'screenshot' }]);
+  assert.equal(next.result.desktop_state.consent_dialog, null);
 });
