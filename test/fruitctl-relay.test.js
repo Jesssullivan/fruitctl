@@ -15,6 +15,7 @@ import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
 import { createRelay, attachMux, classifyBridgeExit, queryRelayHealth, sshArguments } from '../lib/broker/relay.mjs';
 import { BrokerExecutor } from '../lib/broker/client.mjs';
+import { McpSession } from '../lib/mcp/server.js';
 import { readFrames, writeFrame } from '../lib/broker/protocol.mjs';
 
 const run = promisify(execFile);
@@ -147,6 +148,51 @@ test('losing an answered link fails in-flight work as uncertain and never replay
   await waitUntil(() => relay.health().state === 'up', 'successor up');
   await delay(20);
   assert.deepEqual(children[1].packets, [], 'the uncertain click is not replayed');
+});
+
+test('a bridge loss reaches the agent as a typed MCP code, in flight and on every later call', async t => {
+  const { socketPath, children } = await supervisedRelay(t);
+  const executor = openExecutor(socketPath);
+  await waitUntil(() => children[0].packets.length === 1, 'open forwarded');
+  children[0].reply(children[0].packets[0].channel, { v: 1, kind: 'opened', clientId: 'fixture' });
+  await executor.opened;
+  const session = new McpSession(executor);
+
+  const queued = session.queue({ actions: [{ action: 'wait', duration: 1 }] });
+  await waitUntil(() => children[0].packets.length === 2, 'execute forwarded');
+  children[0].exit(255, 'Connection to darwin-bridge closed by remote host.\r\n');
+  const inFlight = await queued;
+  assert.equal(inFlight.isError, true);
+  assert.equal(inFlight.structuredContent.error.code, 'bridge_lost');
+
+  // The session does not reopen; its next call names the same cause instead
+  // of an untyped "closed", and nothing reaches any link.
+  const later = await session.command({ action: 'screenshot' });
+  assert.equal(later.structuredContent.error.code, 'bridge_lost');
+  assert.match(later.structuredContent.error.message, /uncertain/);
+  assert.equal(children[0].packets.length, 2);
+});
+
+test('broker_unavailable is reserved for a socket that never connected', async t => {
+  const root = await directory(t);
+  const absent = new BrokerExecutor({ socketPath: path.join(root, 'absent.sock'), target: 'desktop' });
+  await assert.rejects(absent.opened, error => error.code === 'broker_unavailable');
+
+  const brokerSocket = path.join(root, 'broker.sock');
+  const connections = new Set();
+  const broker = net.createServer(socket => connections.add(socket) && readFrames(socket, frame => {
+    if (frame.kind === 'open') writeFrame(socket, { v: 1, kind: 'opened', clientId: 'fixture' });
+  }, () => socket.destroy()));
+  await new Promise(resolve => broker.listen(brokerSocket, resolve));
+  t.after(() => new Promise(resolve => { for (const socket of connections) socket.destroy(); broker.close(resolve); }));
+  const executor = new BrokerExecutor({ socketPath: brokerSocket, target: 'desktop' });
+  await executor.opened;
+  const running = executor.execute([{ action: 'wait', duration: 1 }], { timeoutMs: 5000 });
+  await waitUntil(() => connections.size === 1, 'broker accepted');
+  await delay(10);
+  executor.socket.emit('error', Object.assign(new Error('read ECONNRESET'), { code: 'ECONNRESET' }));
+  await assert.rejects(running, error => error.code === undefined && /uncertain/.test(error.message),
+    'a connected socket error is not reported as undelivered');
 });
 
 test('a lost child that does not drain blocks any successor and exits unconfirmed', async t => {

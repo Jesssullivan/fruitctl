@@ -295,14 +295,17 @@ client sent over a lost link is replayed:
 | --- | --- |
 | Nothing answered yet (no `opened`, so no input was possible) | the classified cause, for example `bridge_auth_refused` |
 | Answered, with work possibly in flight | `bridge_lost` (execution is uncertain) |
-| Connects while the bridge is down | the last classified cause, answered at once |
+| Connects while the bridge is down | the last classified cause, answered at once, or `bridge_unreachable` with reason `reconnecting` when the last loss was `bridge_lost` or `bridge_protocol` |
 
 The classified causes are `bridge_unreachable`, with reason `dns`, `refused`,
-`network`, `ssh` or `ssh_unavailable`, and `bridge_auth_refused`,
+`network`, `ssh`, `ssh_unavailable` or `reconnecting`, and `bridge_auth_refused`,
 `bridge_host_key`, `bridge_command_missing`, `bridge_attach_failed`,
 `bridge_protocol` and `bridge_broker_unavailable`. They come from SSH's exit
 status and stderr, which is read only on the seat: its text never reaches a
-client, the journal or a log line.
+client, the journal or a log line. The agent's MCP result carries the same
+code in `error.code`, both for a call in flight and for every later call on
+that MCP session; the session does not reopen itself, so reconnect it (in
+Claude Code, `/mcp`) once the relay reports `up`.
 
 Two exit statuses tell systemd not to restart the relay. Status 3 means the
 relay could not confirm that a lost SSH child exited; reconcile the target
