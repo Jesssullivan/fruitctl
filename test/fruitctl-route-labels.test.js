@@ -238,6 +238,11 @@ test('the raw route refuses Host-only AX actions with typed unsupported_on_route
     return actions.map(() => ({ result: { detail: 'OK' } }));
   } };
   const session = new McpSession(executor);
+  // type_secret and the element actions share `ref`; each takes only its own form.
+  for (const wrong of [{ action: 'click_element', ref: 'vault-login' }, { action: 'type_secret', ref: 'ax:1:0.2' }]) {
+    assert.equal((await session.command(wrong)).isError, true);
+  }
+  assert.deepEqual(calls, []);
   const refused = await session.command({ action: 'ax_snapshot', depth: 2 });
   assert.equal(refused.isError, true);
   assert.equal(refused.structuredContent.error.code, 'unsupported_on_route');
